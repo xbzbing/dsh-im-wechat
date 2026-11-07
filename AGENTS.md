@@ -12,13 +12,14 @@
 | --- | --- |
 | `index.ts` | 包入口，只 re-export host 入口 |
 | `src/host/index.ts` | Cordis 入口：只装配与接线 |
-| `src/host/ilink/` | iLink 协议客户端：登录、长轮询收消息、发送与媒体上传；只用 Node 内置模块 |
-| `src/host/superagent/` | `my-superagent/v1` 桥适配：协议类型（结构描述，不 import 核心包）、`BridgeProvider` 实现、收发转换 |
-| `src/host/`（后续） | `runtime.ts` 装配、`panel-rpc.ts` 面板 RPC、`config-store.ts` 配置与登录态存储 |
+| `src/host/ilink/` | iLink 协议客户端：`types`/`api`（端点、请求头、错误分类）、`json`（64 位消息 id 保真）、`identity`（入站身份）、`login`、`poll`、`send`、`media`、`session-guard`；只用 Node 内置模块 |
+| `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`link`（延后注册的 `BridgeBinder`） |
+| `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`；目录 `0700`、文件 `0600`、原子写 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`panel-rpc.ts` 面板 RPC、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |
-| `src/shared/` | 跨上下文的纯函数 |
+| `src/shared/` | 跨上下文的纯函数：版本常量、二维码编码器 |
 | `test/unit/`、`test/fixtures/` | 单元测试与夹具 |
-| `scripts/` | `build.mjs`（host tsc + client esbuild）、`verify-package.mjs`（打包自洽校验） |
+| `scripts/` | `build.mjs`（host tsc + client esbuild）、`verify-package.mjs`（打包自洽校验）、`dev-bridge.mjs`（不开面板的真机自测） |
 | `docs/adr/` | 架构决策记录；`docs/local/` 只留本地，已 gitignore |
 
 依赖方向：协议类型 ← 领域与桥适配 ← 装配入口。`ilink/` 不感知超级助理，`superagent/` 不感知传输细节，两者在装配层接线。
@@ -33,6 +34,8 @@
 - 任何密钥、令牌、登录态不进日志、审计与面板快照；需要展示时只给「已设置」与状态。
 - 子进程一律 argv 数组、不经 shell。
 - 文件不超过约 500 行；超出先拆分再加功能。
+- 面板 RPC 契约版本（`HOST_CONTRACT` / `REQUIRED_CONTRACT`）两半必须一致：加端点或改返回结构时一起递增，否则「新面板 + 旧 host」会打到不存在的端点。
+- 凭据与 `context_token` 不进日志、不进面板快照；面板只显示账号尾号（`accountTail`）。
 - 注释只写实现逻辑与不明显的约束，不写演进过程。
 
 ## 开发流程
@@ -53,7 +56,8 @@ npm run verify     # 打包自洽：产物可由源码确定性重建、清单�
 npm run check      # 提交前门禁：typecheck + test + verify
 ```
 
-- 需要在主人的 web profile 验收时：先 `dsh plugin --profile web remove dsh-im-wechat`，再 `dsh plugin --profile web add file:<仓库路径>`；host 半改动靠卸载重装生效，只改 client 半刷新页面即可。
+- 需要在主人的 web profile 验收时：先 `dsh plugin --profile web remove dsh-im-wechat`，再 `dsh plugin --profile web add file:<仓库路径>`；host 半改动靠卸载重装生效，只改 client 半刷新页面即可。**首次安装新插件要重启 `dsh web`**（运行中的进程在启动时就把插件集定下来了）。
+- 真机自测不必开面板：`node scripts/dev-bridge.mjs login` 在终端画二维码并落盘登录态，`node scripts/dev-bridge.mjs run` 起长轮询（对 `ping` 回 `pong`），走的是 `src/` 里同一套实现。
 - 插件 info 日志只进 Cordis 内存缓冲，终端看不到；排障写测试复现或后续在面板看最近错误。
 - 本项目的 OpenViking 记忆写入项目 peer `viking://user/xubingzhen/peers/github.com-xbzbing-dsh-im-wechat/`（由仓库 origin 自动派生），不写用户级记忆。
 

@@ -43,11 +43,15 @@ const EXTENSION: Record<OwnerImage['mediaType'], string> = {
   'image/gif': 'gif',
 };
 
-function imageItems(itemList: readonly WeixinItem[] | undefined): ImageItem[] {
+/** 图片条目与它的 `msg_id` 一起取出：两者必须一一对应，单独过滤会错位。 */
+function imageItems(itemList: readonly WeixinItem[] | undefined): { item: ImageItem; itemId?: string | number }[] {
   if (!itemList?.length) return [];
-  return itemList
-    .filter((item) => item?.type === MessageItemType.IMAGE && item.image_item)
-    .map((item) => item.image_item as ImageItem);
+  const out: { item: ImageItem; itemId?: string | number }[] = [];
+  for (const entry of itemList) {
+    if (entry?.type !== MessageItemType.IMAGE || !entry.image_item) continue;
+    out.push({ item: entry.image_item, ...(entry.msg_id !== undefined ? { itemId: entry.msg_id } : {}) });
+  }
+  return out;
 }
 
 /** `name` 只用于核心侧展示：带扩展名、截到 200 字以内。 */
@@ -94,10 +98,9 @@ async function collectImages(message: WeixinMessage, options: InboundOptions): P
   const items = imageItems(message.item_list);
   if (items.length === 0) return [];
 
-  const sourceItems = (message.item_list ?? []).filter((item) => item?.type === MessageItemType.IMAGE);
   const images: OwnerImage[] = [];
   for (let index = 0; index < items.length && images.length < OWNER_IMAGES_MAX; index += 1) {
-    const item = items[index];
+    const { item, itemId } = items[index];
     const result = await downloadImage(item, {
       cdnBaseUrl: options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
       ...(options.fetch ? { fetch: options.fetch } : {}),
@@ -113,7 +116,6 @@ async function collectImages(message: WeixinMessage, options: InboundOptions): P
       options.logger?.warn?.(`微信图片超过 ${OWNER_IMAGE_DATA_MAX} 字符上限，已丢弃`);
       continue;
     }
-    const itemId = sourceItems[index]?.msg_id;
     images.push({
       mediaType: result.mediaType,
       data,

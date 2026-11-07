@@ -50,6 +50,8 @@ interface SessionRecord {
   running: boolean;
   /** 本回合里是否问过问题（问过就不再发长任务提醒，问题提醒已经打扰过）。 */
   interacted: boolean;
+  /** 目标的一句话描述：提醒里说清「这是在干什么」。 */
+  objective: string;
 }
 
 const UNTITLED_SESSION = '未命名会话';
@@ -82,13 +84,18 @@ function durationText(ms: number): string {
 /** 提醒正文：标题、耗时、结果，空一行再给结论。 */
 export function longTaskText(params: {
   title: string;
+  objective?: string;
   durationMs: number;
   failed: boolean;
   answer: string;
   maxChars: number;
 }): string {
   const heading = `长任务提醒 · ${params.title}`;
-  const meta = [`耗时：${durationText(params.durationMs)}`, `结果：${params.failed ? '执行失败' : '已完成'}`].join('\n');
+  const meta = [
+    `耗时：${durationText(params.durationMs)}`,
+    params.objective ? `目标：${params.objective.slice(0, 120)}` : '',
+    `结果：${params.failed ? '执行失败' : '已完成'}`,
+  ].filter(Boolean).join('\n');
   const body = params.answer.trim();
   const text = body === '' ? `${heading}\n\n${meta}\n\n没有可提取的文本结论，请到 Web 查看。` : `${heading}\n\n${meta}\n\n${body}`;
   return text.length <= params.maxChars ? text : `${text.slice(0, Math.max(0, params.maxChars - 1))}…`;
@@ -100,6 +107,8 @@ export class LongTaskNotifier {
   readonly #thresholdMs: number;
   readonly #maxChars: number;
   readonly #records = new Map<string, SessionRecord>();
+  /** 目标先于回合到达时暂存，`turn/start` 时带上。 */
+  readonly #objectives = new Map<string, string>();
   #enabled = false;
 
   constructor(options: LongTaskNotifierOptions) {
@@ -132,6 +141,17 @@ export class LongTaskNotifier {
     const at = typeof entry.time === 'number' && Number.isFinite(entry.time) ? entry.time : this.#now();
 
     switch (entry.type) {
+      case 'goal/change': {
+        // 目标变化时记下 objective，提醒里带上；clear 就忘掉。
+        const operation = typeof data.operation === 'string' ? data.operation : '';
+        const goal = asRecord(data.goal);
+        const objective = typeof goal?.objective === 'string' ? goal.objective.trim() : '';
+        if (operation === 'clear' || objective === '') return;
+        const record = this.#records.get(sessionId);
+        if (record) record.objective = objective;
+        else this.#objectives.set(sessionId, objective);
+        return;
+      }
       case 'turn/start':
         this.#start(sessionId, typeof data.turn === 'number' ? data.turn : undefined, at);
         return;
@@ -159,10 +179,12 @@ export class LongTaskNotifier {
   /** 会话被销毁时清掉跟踪。 */
   clearSession(sessionId: string): void {
     this.#records.delete(sessionId);
+    this.#objectives.delete(sessionId);
   }
 
   clear(): void {
     this.#records.clear();
+    this.#objectives.clear();
   }
 
   #isRoot(sessionId: string): boolean {
@@ -176,7 +198,8 @@ export class LongTaskNotifier {
   #start(sessionId: string, turn: number | undefined, at: number): void {
     const existing = this.#records.get(sessionId);
     if (existing?.running && existing.turn === turn) return;
-    this.#records.set(sessionId, { startedAt: at, turn, answer: '', running: true, interacted: false });
+    const objective = this.#objectives.get(sessionId) ?? '';
+    this.#records.set(sessionId, { startedAt: at, turn, answer: '', running: true, interacted: false, objective });
     while (this.#records.size > TRACKED_MAX) {
       const oldest = this.#records.keys().next();
       if (oldest.done) break;
@@ -202,6 +225,7 @@ export class LongTaskNotifier {
     const title = this.#title(sessionId);
     const text = longTaskText({
       title,
+      ...(record.objective !== '' ? { objective: record.objective } : {}),
       durationMs: duration,
       failed,
       answer: record.answer,

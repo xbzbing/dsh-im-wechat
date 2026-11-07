@@ -97,6 +97,24 @@ test('失败回合标注执行失败；没有标题时用「未命名会话」',
   assert.match(h.sent[0], /结果：执行失败/);
 });
 
+test('目标先到、后到都能出现在提醒里', async () => {
+  const h = harness();
+  // 先到：goal/change 在 turn/start 之前。
+  h.notifier.handleEvent('s1', { type: 'goal/change', time: 0, data: { operation: 'create', goal: { id: 'g', phase: 'active', objective: '把设置页重做' } } });
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 20 * 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(h.sent[0], /目标：把设置页重做/);
+
+  // 后到：回合进行中才建目标。
+  const h2 = harness();
+  h2.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h2.notifier.handleEvent('s1', { type: 'goal/change', time: 1_000, data: { operation: 'create', goal: { id: 'g', phase: 'active', objective: '补测试' } } });
+  h2.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 20 * 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(h2.sent[0], /目标：补测试/);
+});
+
 test('超长结论截断而不是整条丢弃', () => {
   const text = longTaskText({
     title: '任务',

@@ -76,6 +76,8 @@ async function withHarness(
   try {
     await run(h);
   } finally {
+    // 等 context_token 的写盘队排空，否则删目录会与落盘撞上（ENOTEMPTY）。
+    await h.tokens.flush();
     await rm(h.dir, { recursive: true, force: true });
   }
 }

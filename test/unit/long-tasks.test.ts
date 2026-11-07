@@ -10,7 +10,8 @@ import {
 } from '../../src/host/long-tasks.ts';
 import { RootAgents } from '../../src/host/host-agents.ts';
 
-const THRESHOLD = 10 * 60_000;
+/** harness 显式配一个 10 分钟的阈值：默认值另有测试，这里只验证机制。 */
+const TEN_MINUTES_MS = 10 * 60_000;
 
 function event(type: string, data: Record<string, unknown> = {}, time = 0): Record<string, unknown> {
   return { type, seq: 1, time, data };
@@ -37,7 +38,7 @@ function harness(options: { sendOk?: boolean; root?: boolean } = {}) {
     isRoot: () => options.root !== false,
     titleOf: (id) => (id === 's1' ? '重构设置页' : null),
     now: () => clock,
-    thresholdMs: THRESHOLD,
+    thresholdMs: TEN_MINUTES_MS,
   });
   notifier.configure(true);
   return { notifier, sent, advance: (ms: number) => { clock += ms; } };

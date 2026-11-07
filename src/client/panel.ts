@@ -94,6 +94,8 @@ export function WeixinSettingsPanel(props: any) {
   }, [refresh]);
 
   const threshold = status?.longTaskThresholdMinutes;
+  /** Host 比面板旧（契约对不上）：新端点还没实现，阈值控件要禁用。 */
+  const hostOlder = isHostOlder(status, REQUIRED_CONTRACT);
   useEffect(() => {
     if (minutesDirty || typeof threshold !== 'number') return;
     setMinutes(String(threshold));
@@ -192,7 +194,7 @@ export function WeixinSettingsPanel(props: any) {
         h(StateDot, { state: !enabled ? 'idle' : loggedIn ? healthDot(String(health.state ?? 'ok')) : 'warning' }),
         !enabled ? t('已停用') : loggedIn ? t('已登录') : t('未登录')),
       h('div', { className: 'wx-spacer' }),
-      isHostOlder(status, REQUIRED_CONTRACT) ? h(Pill, null, t('请重启 dsh web：面板比 Host 新')) : null,
+      hostOlder ? h(Pill, null, t('请重启 dsh web：面板比 Host 新')) : null,
       h(Button, {
         variant: 'ghost',
         size: 'sm',
@@ -334,6 +336,8 @@ export function WeixinSettingsPanel(props: any) {
             value: minutes,
             placeholder: '30',
             'aria-label': t('提醒阈值（分钟）'),
+            // 保存中禁用：回包会按 Host 的值回显，这期间敲的字会被冲掉。
+            disabled: busy !== '' || hostOlder,
             onChange: (event: any) => {
               setMinutesDirty(true);
               setMinutes(String(event.target.value));
@@ -343,7 +347,7 @@ export function WeixinSettingsPanel(props: any) {
           h(Button, {
             variant: 'ghost',
             size: 'sm',
-            disabled: busy !== '' || !canSaveMinutes,
+            disabled: busy !== '' || !canSaveMinutes || hostOlder,
             onClick: () => void saveMinutes(),
           }, t('保存')))),
       minutesDirty

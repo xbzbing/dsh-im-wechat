@@ -181,7 +181,7 @@ export function WeixinSettingsPanel(props: any) {
     h('div', { style: S.card },
       h('h5', { style: S.cardTitle }, t('状态')),
       h(Field, { label: t('账号'), value: status?.accountTail }),
-      h(Field, { label: t('登录时间'), value: formatTime(status?.login?.startedAt) }),
+      h(Field, { label: t('登录时间'), value: formatTime(status?.loggedInAt) }),
       h(Field, { label: t('状态'), value: describeHealth(health) }),
       h(Field, {
         label: t('已接入超级助理'),

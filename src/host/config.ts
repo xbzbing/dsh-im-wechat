@@ -10,6 +10,8 @@
  * 不再做防御式判空（AGENTS.md）。
  */
 
+import { join } from 'node:path';
+
 import { readJsonIfPresent, writePrivateFile } from './state/files.ts';
 import type { StateLogger } from './state/files.ts';
 import { resolveDataDir } from './state/paths.ts';
@@ -90,7 +92,7 @@ export class LocalConfigStore {
   readonly #logger: StateLogger | undefined;
 
   constructor(options: { dir: string; logger?: StateLogger }) {
-    this.#path = `${options.dir}/config.json`;
+    this.#path = join(options.dir, 'config.json');
     this.#logger = options.logger;
   }
 

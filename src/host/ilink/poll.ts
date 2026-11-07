@@ -200,7 +200,10 @@ export class PollLoop {
   async #pauseForStaleToken(signal: AbortSignal): Promise<boolean> {
     const pauseMs = this.#options.guard.pause(this.#options.account);
     this.#options.onHealth?.({ state: 'down', code: 'auth-expired', reason: 'token 已失效，需要重新扫码登录' });
-    this.#options.logger?.warn?.(`iLink token 失效，暂停 ${Math.ceil((pauseMs - Date.now()) / 60_000)} 分钟`);
+    void pauseMs;
+    this.#options.logger?.warn?.(
+      `iLink token 失效，暂停 ${Math.ceil(this.#options.guard.remaining(this.#options.account) / 60_000)} 分钟`,
+    );
     await this.#sleep(this.#options.guard.remaining(this.#options.account), signal);
     return !signal.aborted;
   }

@@ -50,6 +50,8 @@ export interface RuntimeStatus {
   enabled: boolean;
   loggedIn: boolean;
   accountTail?: string;
+  /** 上次扫码成功的时间；面板的「登录时间」用它。 */
+  loggedInAt?: number;
   login: LoginSnapshot;
   health: BridgeHealth;
   bridge: { registered: boolean; id?: string; features: string[] };
@@ -170,7 +172,7 @@ export class WeixinRuntime {
       version: PLUGIN_VERSION,
       enabled: this.#enabled,
       loggedIn: login !== null,
-      ...(login ? { accountTail: accountTail(login.account) } : {}),
+      ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
       login: this.#loginController.snapshot(),
       health: bridge?.health() ?? this.#health,
       bridge: {

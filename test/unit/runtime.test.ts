@@ -273,6 +273,49 @@ test('stop() 会取消进行中的扫码登录，确认后不再连回', async (
   });
 });
 
+test('关掉「接入我的超级助理」会注销桥，并让自有功能生效', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const superagent = fakeSuperagent();
+    const binder = new BridgeBinder();
+    binder.attach(superagent.scope);
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    runtime.attachBinder(binder);
+    await runtime.start();
+    await waitFor(() => runtime.status().bridge.registered, '桥注册');
+    assert.equal(runtime.status().superagent, true);
+    assert.equal(runtime.status().ownFeatures, false);
+
+    const status = await runtime.setSuperagent(false);
+    assert.equal(status.superagent, false);
+    assert.equal(status.bridge.registered, false);
+    assert.equal(status.ownFeatures, true);
+
+    const persisted = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')) as { superagent?: boolean };
+    assert.equal(persisted.superagent, false);
+
+    // 重新打开后桥回来。
+    const again = await runtime.setSuperagent(true);
+    assert.equal(again.bridge.registered, true);
+    assert.equal(again.ownFeatures, false);
+    await runtime.stop();
+  });
+});
+
+test('两项面板开关互不覆盖（合并保存）', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    await runtime.start();
+    await runtime.setEnabled(false);
+    await runtime.setSuperagent(false);
+    const stored = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')) as Record<string, unknown>;
+    assert.equal(stored.enabled, false);
+    assert.equal(stored.superagent, false);
+    await runtime.stop();
+  });
+});
+
 test('登出清掉登录态与桥注册', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);

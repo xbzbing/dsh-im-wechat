@@ -21,6 +21,7 @@ export const ENDPOINTS = Object.freeze({
   LOGIN_CANCEL: 'login.cancel',
   LOGOUT: 'logout',
   ENABLED_SET: 'enabled.set',
+  SUPERAGENT_SET: 'superagent.set',
 } as const);
 
 export type Endpoint = (typeof ENDPOINTS)[keyof typeof ENDPOINTS];
@@ -86,6 +87,11 @@ async function handleEndpoint(
       const enabled = payloadOf(payload).enabled;
       if (typeof enabled !== 'boolean') throw codedError('enabled 必须是布尔值', 'invalid-config');
       return runtime.setEnabled(enabled);
+    }
+    case ENDPOINTS.SUPERAGENT_SET: {
+      const enabled = payloadOf(payload).enabled;
+      if (typeof enabled !== 'boolean') throw codedError('enabled 必须是布尔值', 'invalid-config');
+      return runtime.setSuperagent(enabled);
     }
     default:
       throw codedError(`未知的面板端点：${endpoint}`, 'unknown-endpoint');

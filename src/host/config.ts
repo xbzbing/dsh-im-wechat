@@ -18,8 +18,10 @@ import { resolveDataDir } from './state/paths.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 
 export interface PluginConfig {
-  /** 静态默认开关。 */
+  /** 静态默认开关：是否接入微信（收发）。 */
   enabled?: boolean;
+  /** 静态默认开关：是否接入「我的超级助理」。 */
+  superagent?: boolean;
   /** 覆盖数据目录（默认 `$DSH_HOME/dsh-im-wechat`）。 */
   dataDir?: string;
   /** 覆盖 API 域名。 */
@@ -56,6 +58,8 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   const config: PluginConfig = {};
   const enabled = asBoolean(record.enabled);
   if (enabled !== undefined) config.enabled = enabled;
+  const superagent = asBoolean(record.superagent);
+  if (superagent !== undefined) config.superagent = superagent;
   const dataDir = asString(record.dataDir);
   if (dataDir !== undefined) config.dataDir = dataDir;
   const baseUrl = asString(record.baseUrl);
@@ -82,14 +86,18 @@ export function defaultBotAgent(): string {
 export interface StoredConfig {
   version: number;
   enabled?: boolean;
+  /** 是否接入「我的超级助理」；缺省视为接入。 */
+  superagent?: boolean;
 }
 
 export const STORED_CONFIG_VERSION = 1;
 
-/** 面板开关的持久化：只存 `enabled`，其余配置归 profile 管。 */
+/** 面板开关的持久化：只存面板能改的两项，其余配置归 profile 管。 */
 export class LocalConfigStore {
   readonly #path: string;
   readonly #logger: StateLogger | undefined;
+  /** 已落盘的文档：保存单项时合并，避免把另一项抹掉。 */
+  #document: StoredConfig = { version: STORED_CONFIG_VERSION };
 
   constructor(options: { dir: string; logger?: StateLogger }) {
     this.#path = join(options.dir, 'config.json');
@@ -102,18 +110,25 @@ export class LocalConfigStore {
 
   async load(): Promise<StoredConfig> {
     const raw = await readJsonIfPresent(this.#path, { logger: this.#logger });
-    if (raw === null || typeof raw !== 'object') return { version: STORED_CONFIG_VERSION };
+    if (raw === null || typeof raw !== 'object') {
+      this.#document = { version: STORED_CONFIG_VERSION };
+      return this.#document;
+    }
     const record = raw as Record<string, unknown>;
     const enabled = asBoolean(record.enabled);
-    return {
+    const superagent = asBoolean(record.superagent);
+    this.#document = {
       version: STORED_CONFIG_VERSION,
       ...(enabled !== undefined ? { enabled } : {}),
+      ...(superagent !== undefined ? { superagent } : {}),
     };
+    return this.#document;
   }
 
-  async save(patch: { enabled?: boolean }): Promise<StoredConfig> {
-    const next: StoredConfig = { version: STORED_CONFIG_VERSION, ...patch };
-    await writePrivateFile(this.#path, `${JSON.stringify(next, null, 2)}\n`);
-    return next;
+  /** 合并保存：没给的字段沿用上一次落盘的值。 */
+  async save(patch: { enabled?: boolean; superagent?: boolean }): Promise<StoredConfig> {
+    this.#document = { ...this.#document, ...patch, version: STORED_CONFIG_VERSION };
+    await writePrivateFile(this.#path, `${JSON.stringify(this.#document, null, 2)}\n`);
+    return { ...this.#document };
   }
 }

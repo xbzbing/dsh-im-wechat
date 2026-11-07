@@ -48,6 +48,10 @@ export interface RuntimeStatus {
   contract: number;
   version: string;
   enabled: boolean;
+  /** 是否接入「我的超级助理」。关掉后插件自带的问题与长任务提醒接管。 */
+  superagent: boolean;
+  /** 自有功能（问题提醒、长任务提醒）是否生效。 */
+  ownFeatures: boolean;
   loggedIn: boolean;
   accountTail?: string;
   /** 上次扫码成功的时间；面板的「登录时间」用它。 */
@@ -90,6 +94,7 @@ export class WeixinRuntime {
   #health: BridgeHealth = { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
   #errors: { at: number; message: string }[] = [];
   #enabled = true;
+  #superagent = true;
   #started = false;
   #stopped = false;
 
@@ -132,7 +137,7 @@ export class WeixinRuntime {
 
   attachBinder(binder: BridgeBinder): void {
     this.#binder = binder;
-    if (this.#bridge) binder.bind(this.#bridge);
+    if (this.#bridge) binder.bind(this.#superagent ? this.#bridge : null);
   }
 
   /** 读登录态、按需连接。失败不抛：面板要能看到「为什么没连上」。 */
@@ -141,6 +146,7 @@ export class WeixinRuntime {
     this.#started = true;
     const stored = await this.#localConfig.load();
     this.#enabled = stored.enabled ?? this.#config.enabled ?? true;
+    this.#superagent = stored.superagent ?? this.#config.superagent ?? true;
     this.#loginState = await this.#loginStore.load();
     if (!this.#loginState) {
       this.#health = { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
@@ -174,6 +180,8 @@ export class WeixinRuntime {
       contract: HOST_CONTRACT,
       version: PLUGIN_VERSION,
       enabled: this.#enabled,
+      superagent: this.#superagent,
+      ownFeatures: this.#ownFeaturesActive(),
       loggedIn: login !== null,
       ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
       login: this.#loginController.snapshot(),
@@ -185,6 +193,16 @@ export class WeixinRuntime {
       },
       ...(lastError ? { lastError } : {}),
     };
+  }
+
+  /**
+   * 自有功能是否生效：插件在跑（启用 + 已登录）且**没有**接入超级助理。
+   *
+   * 与如流桥同一套语义：核心接管后，问题与长任务提醒由核心发交付，插件自己那份要停掉，
+   * 否则同一条提醒会来两遍。
+   */
+  #ownFeaturesActive(): boolean {
+    return this.#enabled && !this.#superagent && this.#loginState !== null && !this.#stopped;
   }
 
   /** 开始扫码登录；返回初始快照（含二维码内容）。 */
@@ -222,6 +240,14 @@ export class WeixinRuntime {
     return this.status();
   }
 
+  /** 保存「接入我的超级助理」开关：立即切换，不重连微信。 */
+  async setSuperagent(enabled: boolean): Promise<RuntimeStatus> {
+    this.#superagent = enabled;
+    await this.#localConfig.save({ superagent: enabled });
+    this.#binder?.bind(enabled ? this.#bridge : null);
+    return this.status();
+  }
+
   /** 面板开关：停用后不再收消息，桥也向核心报告不可用。 */
   async setEnabled(enabled: boolean): Promise<RuntimeStatus> {
     this.#enabled = enabled;
@@ -256,7 +282,7 @@ export class WeixinRuntime {
       health: () => this.#health,
       isEnabled: () => this.#enabled,
     });
-    this.#binder?.bind(this.#bridge);
+    this.#binder?.bind(this.#superagent ? this.#bridge : null);
     this.#startPolling();
   }
 

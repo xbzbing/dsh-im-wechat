@@ -29,6 +29,10 @@ function harness(): Harness {
       calls.push(`enabled:${enabled}`);
       return { contract: 1, enabled };
     },
+    setSuperagent: async (enabled: boolean) => {
+      calls.push(`superagent:${enabled}`);
+      return { contract: 1, superagent: enabled };
+    },
   };
   let route: PanelRoute | null = null;
   const ctx: PluginContext = {
@@ -111,7 +115,8 @@ test('登录动作转发给运行期', async () => {
   await call(h, envelope(ENDPOINTS.LOGIN_START));
   await call(h, envelope(ENDPOINTS.LOGIN_CODE, { code: ' 123456 ' }));
   await call(h, envelope(ENDPOINTS.ENABLED_SET, { enabled: false }));
-  assert.deepEqual(h.calls, ['startLogin', 'code: 123456 ', 'enabled:false']);
+  await call(h, envelope(ENDPOINTS.SUPERAGENT_SET, { enabled: false }));
+  assert.deepEqual(h.calls, ['startLogin', 'code: 123456 ', 'enabled:false', 'superagent:false']);
 });
 
 test('入参校验：验证码不能为空、enabled 必须是布尔', async () => {

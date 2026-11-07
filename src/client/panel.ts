@@ -228,7 +228,8 @@ export function WeixinSettingsPanel(props: any) {
           h('p', { className: 'wx-eyebrow' }, t('连接')),
           h('h4', { className: 'wx-section-title' }, loggedIn ? t('微信已连接') : t('连接微信'))),
         h('span', { className: 'wx-version' }, `${t('插件版本')} ${status?.version ?? ''}`)),
-      h('div', { className: 'wx-connection-grid' },
+      // 没有二维码时不留右列：整张卡拉通，避免右半边空着、左半边挤到截断。
+      h('div', { className: `wx-connection-grid${showLoginPanel ? ' wx-connection-split' : ''}` },
         h('div', { className: 'wx-connection-main' },
           h('div', { className: 'wx-connection-status' },
             h(StateDot, { state }),
@@ -261,8 +262,11 @@ export function WeixinSettingsPanel(props: any) {
                   disabled: busy !== '',
                   onClick: () => void run('logout', () => rpcCall(ENDPOINTS.logout)),
                 }, t('登出'))
-                : null,
-              loggedIn ? h('span', { className: 'wx-action-hint' }, t('登出后需要重新扫码才能继续接收微信消息。')) : null)
+                : null)
+            : null,
+          // 提示独立成行：宽版时拉通整行，不跟按钮挤在右侧格子里。
+          !showLoginPanel && loggedIn
+            ? h('span', { className: 'wx-action-hint' }, t('登出后需要重新扫码才能继续接收微信消息。'))
             : null),
 
         showLoginPanel

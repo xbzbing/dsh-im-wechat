@@ -37,6 +37,8 @@ export interface PollTimings {
   maxConsecutiveFailures: number;
   /** 本地重复帧缓存容量：只挡「最近见过」的重放，核心侧仍按 messageId 去重。 */
   dedupeCapacity: number;
+  /** 空响应的最小间隔：服务端没真正挂住长轮询时，别把请求打成一串。 */
+  minPollGapMs: number;
 }
 
 export const DEFAULT_POLL_TIMINGS: PollTimings = {
@@ -45,6 +47,7 @@ export const DEFAULT_POLL_TIMINGS: PollTimings = {
   backoffDelayMs: 30_000,
   maxConsecutiveFailures: 3,
   dedupeCapacity: 2_000,
+  minPollGapMs: 500,
 };
 
 export interface PollLoopOptions {
@@ -102,7 +105,9 @@ export class PollLoop {
     let failures = 0;
     options.onHealth?.({ state: 'ok' });
 
+    const clock = this.#options.now ?? Date.now;
     while (!signal.aborted) {
+      const startedAt = clock();
       let response: GetUpdatesResponse;
       try {
         response = await options.api.getUpdates({ cursor, timeoutMs, signal });
@@ -151,9 +156,15 @@ export class PollLoop {
         await this.#saveCursor(cursor);
       }
 
-      for (const message of response.msgs ?? []) {
+      const messages = response.msgs ?? [];
+      for (const message of messages) {
         if (signal.aborted) return;
         await this.#accept(message);
+      }
+      // 服务端若没按长轮询挂住（立刻返回空响应），这里补一点间隔，避免空转打满。
+      const gap = this.#timings.minPollGapMs;
+      if (messages.length === 0 && gap > 0 && clock() - startedAt < gap) {
+        await this.#sleep(gap - (clock() - startedAt), signal);
       }
     }
   }

@@ -83,7 +83,7 @@ async function harness(steps: Step[], options: { timings?: Record<string, number
     sleep: async (ms) => {
       delays.push(ms);
     },
-    ...(options.timings ? { timings: options.timings } : {}),
+    ...(options.timings ? { timings: options.timings } : { timings: { minPollGapMs: 0 } }),
   });
 
   return { dir, loop, messages, health, delays, timeouts, cursors, guard, contextTokens, cursor, controller };

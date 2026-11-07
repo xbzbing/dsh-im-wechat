@@ -1,0 +1,65 @@
+/**
+ * 面板文案。
+ *
+ * 中文原文即 key：中文是 identity 语言，`en` 提供「中文 → 英文」映射；漏翻译时
+ * 回落中文而不是显示 key。`zh` 由 `en` 的键集合派生，保证两种语言键集一致。
+ */
+
+export const NS = 'dsh-im-wechat';
+
+export const en = {
+  '微信桥': 'WeChat bridge',
+  '把微信接入本机 Harness：扫码登录后，核心的交付会送到你的微信，你在微信里说的话也会回到核心。':
+    'Connect WeChat to this Harness: after scanning the QR code, deliveries from the core reach your WeChat and your replies come back to it.',
+  '插件版本': 'Plugin version',
+  '状态': 'Status',
+  '未登录': 'Not signed in',
+  '已登录': 'Signed in',
+  '已停用': 'Disabled',
+  '连接正常': 'Healthy',
+  '连接异常': 'Degraded',
+  '连接中断': 'Disconnected',
+  '已接入超级助理': 'Bridged to My Superagent',
+  '未接入超级助理': 'Not bridged',
+  '未接入超级助理（未安装核心插件）': 'Not bridged (core plugin not installed)',
+  '账号': 'Account',
+  '登录时间': 'Signed in at',
+  '扫码登录': 'Sign in with QR code',
+  '重新扫码': 'Sign in again',
+  '登出': 'Sign out',
+  '取消': 'Cancel',
+  '用手机微信扫描二维码': 'Scan the QR code with WeChat on your phone',
+  '二维码加载中…': 'Preparing QR code…',
+  '无法显示二维码时，可复制下面的链接在手机微信中打开：':
+    'If the QR code is unavailable, copy the link below and open it in WeChat:',
+  '复制链接': 'Copy link',
+  '已复制': 'Copied',
+  '打开链接': 'Open link',
+  '等待扫码': 'Waiting for scan',
+  '已扫描，请在手机上确认': 'Scanned — confirm on your phone',
+  '需要在手机上输入验证码': 'Enter the code shown on your phone',
+  '验证码': 'Verification code',
+  '提交验证码': 'Submit code',
+  '二维码已过期或流程结束': 'The QR code expired or the flow ended',
+  '已连接过，无需重复登录': 'Already connected — no need to sign in again',
+  '登录成功': 'Signed in',
+  '重新开始': 'Start over',
+  '接入微信（收消息）': 'Receive messages from WeChat',
+  '停用后不再收取微信消息，核心的交付也不会发到这个渠道。':
+    'When disabled, WeChat messages are no longer received and deliveries are not sent here.',
+  '最近错误': 'Last error',
+  '暂无': 'None',
+  '加载中…': 'Loading…',
+  '操作失败': 'Operation failed',
+  '请重启 dsh web：面板比 Host 新': 'Restart dsh web: the panel is newer than the host',
+  '刷新': 'Refresh',
+  '登出后需要重新扫码才能继续接收微信消息。': 'After signing out you must scan again to receive WeChat messages.',
+  '二维码': 'QR code',
+} as const;
+
+/** 中文模式：键即译文。 */
+export const zh: { [K in keyof typeof en]: K } = Object.fromEntries(
+  Object.keys(en).map((key) => [key, key]),
+) as { [K in keyof typeof en]: K };
+
+export type Translate = (text: string) => string;

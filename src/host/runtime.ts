@@ -20,6 +20,7 @@ import { messageText } from './ilink/identity.ts';
 import type { WeixinMessage } from './ilink/types.ts';
 import { messageOf } from './host-context.ts';
 import { OwnerChannel } from './owner-channel.ts';
+import { TypingIndicator } from './typing.ts';
 import { QuestionBroker } from './questions.ts';
 import type { QuestionNext, QuestionRequest } from './questions.ts';
 import { DEFAULT_LONG_TASK_MINUTES, LongTaskNotifier, normalizeLongTaskMinutes } from './long-tasks.ts';
@@ -101,6 +102,7 @@ export class WeixinRuntime {
   readonly #guard: SessionGuard;
   readonly #loginController: LoginController;
   readonly #owner: OwnerChannel;
+  readonly #typing: TypingIndicator;
 
   #binder: BridgeBinder | null = null;
   #bridge: WeixinBridge | null = null;
@@ -144,6 +146,16 @@ export class WeixinRuntime {
       ownerId: () => this.#loginState?.userId,
       token: (account, to) => this.#tokenStore.get(account, to),
       noteError: (message) => this.#noteError(message),
+    });
+    this.#typing = new TypingIndicator({
+      api: () => this.#api,
+      contextToken: (userId) => {
+        const account = this.#loginState?.account;
+        return account ? this.#tokenStore.get(account, userId) : undefined;
+      },
+      enabled: () => this.#config.typingIndicator ?? true,
+      logger: this.#logger,
+      now: this.#now,
     });
     this.#questions = new QuestionBroker({
       send: (text) => this.#owner.send(text),
@@ -237,6 +249,7 @@ export class WeixinRuntime {
     // 扫码确认就会重写 login.json 并在插件已 dispose 之后重新建桥。
     await this.#loginController.cancel();
     const api = this.#api;
+    this.#typing.stopAll();
     this.#questions.close();
     this.#longTasks.configure(false);
     await this.#stopPolling();
@@ -321,6 +334,7 @@ export class WeixinRuntime {
     const account = this.#loginState?.account;
     await this.#loginController.cancel();
     await this.#stopPolling();
+    this.#typing.stopAll();
     this.#api = null;
     this.#bridge = null;
     this.#binder?.bind(null);
@@ -335,6 +349,8 @@ export class WeixinRuntime {
   /** 保存「接入我的超级助理」开关：立即切换，不重连微信。 */
   async setSuperagent(enabled: boolean): Promise<RuntimeStatus> {
     this.#superagent = enabled;
+    // 切出核心接入后不会再有交付进来收尾，先把在途的输入状态取消。
+    if (!enabled) this.#typing.stopAll();
     await this.#localConfig.save({ superagent: enabled });
     this.#binder?.bind(enabled ? this.#bridge : null);
     this.#syncOwnFeatures();
@@ -354,7 +370,10 @@ export class WeixinRuntime {
     this.#enabled = enabled;
     await this.#localConfig.save({ enabled });
     if (enabled) this.#startPolling();
-    else await this.#stopPolling();
+    else {
+      await this.#stopPolling();
+      this.#typing.stopAll();
+    }
     this.#syncOwnFeatures();
     return this.status();
   }
@@ -383,6 +402,7 @@ export class WeixinRuntime {
       ...(this.#config.maxText !== undefined ? { maxText: this.#config.maxText } : {}),
       health: () => this.#health,
       isEnabled: () => this.#enabled,
+      onDelivered: (recipient) => this.#typing.stop(recipient),
     });
     this.#binder?.bind(this.#superagent ? this.#bridge : null);
     this.#startPolling();
@@ -460,7 +480,11 @@ export class WeixinRuntime {
     if (result && result.accepted === false) {
       // 拒收原因是核心的判断（不是主人、格式不合法……），桥只记账不回话。
       this.#noteError(`核心拒收入站消息：${result.reason}`);
+      return;
     }
+    // 核心受理了：大模型开始思考，微信那头显示「正在输入」（ADR-0007）。
+    // 拒收（非主人、格式不合法）不开启——陌生人触发不了机器人状态。
+    if (result) this.#typing.start(sender);
   }
 
   #handlePollHealth(health: PollHealth): void {

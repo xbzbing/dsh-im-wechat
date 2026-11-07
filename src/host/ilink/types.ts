@@ -168,6 +168,12 @@ export interface GetConfigResponse {
   typing_ticket?: string;
 }
 
+/** `sendtyping` 的状态：1=正在输入，2=取消（官方 TypingStatus）。 */
+export const TypingStatus = {
+  TYPING: 1,
+  CANCEL: 2,
+} as const;
+
 /** 协议里的通用应答（`ret` / `errcode` 非 0 即失败）。 */
 export interface GenericResponse {
   ret?: number;

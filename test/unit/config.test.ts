@@ -66,3 +66,10 @@ test('文件是 0600、内容是合法 JSON', async () => {
     assert.equal((await stat(store.path)).mode & 0o777, 0o600);
   });
 });
+
+test('typingIndicator 只收布尔值，缺省视为开启', () => {
+  assert.equal(normalizePluginConfig({ typingIndicator: false }).typingIndicator, false);
+  assert.equal(normalizePluginConfig({ typingIndicator: true }).typingIndicator, true);
+  assert.equal('typingIndicator' in normalizePluginConfig({ typingIndicator: 'no' }), false);
+  assert.equal('typingIndicator' in normalizePluginConfig({}), false);
+});

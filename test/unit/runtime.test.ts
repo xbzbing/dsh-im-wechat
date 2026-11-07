@@ -7,7 +7,11 @@ import { test } from 'node:test';
 import type { ILinkApi } from '../../src/host/ilink/api.ts';
 import { WeixinRuntime } from '../../src/host/runtime.ts';
 import { BridgeBinder } from '../../src/host/superagent/link.ts';
-import type { BridgeProvider, OwnerMessageDraft } from '../../src/host/superagent/protocol.ts';
+import type {
+  BridgeProvider,
+  OwnerMessageDraft,
+  RejectReason,
+} from '../../src/host/superagent/protocol.ts';
 import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
 import { LoginStateStore } from '../../src/host/state/login-state.ts';
 import type { WeixinMessage } from '../../src/host/ilink/types.ts';
@@ -23,7 +27,11 @@ const LOGIN = {
 };
 
 /** 假客户端：按脚本回放入站消息，其余调用只记账。 */
-function fakeApi(options: { batches?: WeixinMessage[][]; qrStatus?: Record<string, unknown>[] } = {}) {
+function fakeApi(options: {
+  batches?: WeixinMessage[][];
+  qrStatus?: Record<string, unknown>[];
+  typingTicket?: string;
+} = {}) {
   const batches = [...(options.batches ?? [])];
   const qrStatus = [...(options.qrStatus ?? [{ status: 'confirmed', ...LOGIN, bot_token: LOGIN.botToken, ilink_bot_id: ACCOUNT }])];
   const record = {
@@ -34,6 +42,7 @@ function fakeApi(options: { batches?: WeixinMessage[][]; qrStatus?: Record<strin
     notifyStop: 0,
     qrCodeCalls: 0,
     qrStatusCalls: 0,
+    typing: [] as { userId: string; typingTicket: string; status: number }[],
   };
   let index = 0;
   const impl = (options2: { token?: string }): ILinkApi => {
@@ -70,14 +79,17 @@ function fakeApi(options: { batches?: WeixinMessage[][]; qrStatus?: Record<strin
         return qrStatus.shift() ?? { status: 'wait' };
       },
       async getConfig() {
-        return {};
+        return options.typingTicket === undefined ? {} : { ret: 0, typing_ticket: options.typingTicket };
+      },
+      async sendTyping(params: { userId: string; typingTicket: string; status: number }) {
+        record.typing.push(params);
       },
     } as unknown as ILinkApi;
   };
   return { createApi: impl, record };
 }
 
-function fakeSuperagent(options: { features?: string[] } = {}) {
+function fakeSuperagent(options: { features?: string[]; rejectReason?: RejectReason } = {}) {
   const providers: BridgeProvider[] = [];
   const received: OwnerMessageDraft[] = [];
   const cleanups: (() => void)[] = [];
@@ -91,7 +103,9 @@ function fakeSuperagent(options: { features?: string[] } = {}) {
           protocol: 'my-superagent/v1',
           async receive(draft: OwnerMessageDraft) {
             received.push(draft);
-            return { accepted: true as const };
+            return options.rejectReason
+              ? ({ accepted: false as const, reason: options.rejectReason } as const)
+              : ({ accepted: true as const } as const);
           },
           async answer() {
             return { accepted: true as const };
@@ -452,3 +466,68 @@ test('面板改阈值后判定立即用新值：调低会提醒，调高不再�
     await runtime.stop();
   });
 });
+
+test('核心受理入站后显示正在输入，交付进入投递就取消', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const api = fakeApi({
+      typingTicket: 'tt-7',
+      batches: [[{
+        message_id: '7001',
+        from_user_id: OWNER,
+        create_time_ms: 1_760_000_000_000,
+        item_list: [{ type: 1, text_item: { text: '帮我看看' } }],
+      }]],
+    });
+    const superagent = fakeSuperagent();
+    const binder = new BridgeBinder();
+    binder.attach(superagent.scope);
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    runtime.attachBinder(binder);
+    await runtime.start();
+
+    await waitFor(() => api.record.typing.some((call) => call.status === 1), '输入状态开启');
+    const started = api.record.typing.find((call) => call.status === 1);
+    assert.equal(started?.userId, OWNER);
+    assert.equal(started?.typingTicket, 'tt-7');
+
+    // 交付一进投递流程就取消输入状态。
+    await superagent.providers[0].deliver({
+      protocol: 'my-superagent/v1',
+      id: 'd-1',
+      recipient: OWNER,
+      intent: 'result',
+      title: '完成',
+      body: '好了',
+    });
+    await waitFor(() => api.record.typing.some((call) => call.status === 2), '输入状态取消');
+    await runtime.stop();
+    assert.equal(api.record.typing.filter((call) => call.status === 2).length >= 1, true);
+  });
+});
+
+test('核心拒收入站时不开启输入状态', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const api = fakeApi({
+      typingTicket: 'tt-8',
+      batches: [[{
+        message_id: '7002',
+        from_user_id: OWNER,
+        item_list: [{ type: 1, text_item: { text: 'hi' } }],
+      }]],
+    });
+    const superagent = fakeSuperagent({ rejectReason: 'not-owner' });
+    const binder = new BridgeBinder();
+    binder.attach(superagent.scope);
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    runtime.attachBinder(binder);
+    await runtime.start();
+
+    await waitFor(() => superagent.received.length > 0, '入站交给核心');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(api.record.typing.length, 0, '拒收后不该出现输入状态');
+    await runtime.stop();
+  });
+});
+

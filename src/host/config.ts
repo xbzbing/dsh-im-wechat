@@ -37,6 +37,8 @@ export interface PluginConfig {
   botAgent?: string;
   /** 长任务提醒阈值（分钟）：回合超过它才提醒，默认 30；面板可覆盖。 */
   longTaskThresholdMinutes?: number;
+  /** 是否发「正在输入」状态，默认开；真机行为不符预期时可关（ADR-0007）。 */
+  typingIndicator?: boolean;
 }
 
 const MIN_MAX_TEXT = 200;
@@ -77,6 +79,8 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (botAgent !== undefined) config.botAgent = botAgent;
   const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
+  const typingIndicator = asBoolean(record.typingIndicator);
+  if (typingIndicator !== undefined) config.typingIndicator = typingIndicator;
   return config;
 }
 

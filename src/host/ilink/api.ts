@@ -334,6 +334,31 @@ export class ILinkApi {
     );
   }
 
+  /**
+   * 发「正在输入」状态（`TypingStatus.TYPING` / `CANCEL`）。
+   *
+   * 与官方实现一致：只看 HTTP 状态，不解析业务 `ret`——这是尽力而为的
+   * 呈现层信号，失败由调用方记日志，不该影响收发（ADR-0007）。
+   */
+  async sendTyping(params: {
+    userId: string;
+    typingTicket: string;
+    status: number;
+    timeoutMs?: number;
+  }): Promise<void> {
+    await this.#request({
+      method: 'POST',
+      endpoint: 'ilink/bot/sendtyping',
+      body: {
+        ilink_user_id: params.userId,
+        typing_ticket: params.typingTicket,
+        status: params.status,
+        base_info: this.baseInfo(),
+      },
+      timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
+    });
+  }
+
   /** 通知服务端「本客户端已上线」。失败不影响收消息，由调用方吞掉。 */
   async notifyStart(): Promise<void> {
     await this.#post<GenericResponse>(

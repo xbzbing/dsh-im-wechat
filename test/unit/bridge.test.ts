@@ -40,7 +40,13 @@ interface Harness {
 }
 
 async function harness(
-  options: { failAt?: number[]; error?: Error; withToken?: boolean; noApi?: boolean } = {},
+  options: {
+    failAt?: number[];
+    error?: Error;
+    withToken?: boolean;
+    noApi?: boolean;
+    onDelivered?: (recipient: string) => void;
+  } = {},
 ): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-bridge-'));
   const sent: Sent[] = [];
@@ -64,6 +70,7 @@ async function harness(
     contextTokens: tokens,
     guard,
     maxText: 20,
+    ...(options.onDelivered ? { onDelivered: options.onDelivered } : {}),
   });
   return { dir, bridge, sent, guard, tokens };
 }
@@ -223,4 +230,19 @@ test('核心能力声明决定图片下载与身份查询', () => {
 
   bridge.detachHandle();
   assert.equal(bridge.imagesEnabled, false);
+});
+
+test('交付进入投递流程就回调 onDelivered（收起正在输入）', async () => {
+  const delivered: string[] = [];
+  await withHarness({ onDelivered: (recipient) => delivered.push(recipient) }, async (h) => {
+    await h.bridge.deliver(delivery());
+    assert.deepEqual(delivered, [OWNER]);
+    // 发送失败也算「模型出结果了」：照样回调，让输入状态收尾。
+    delivered.length = 0;
+  });
+  await withHarness({ failAt: [1], error: new Error('boom') }, async (h) => {
+    // 该 harness 没挂回调，确认不挂也能跑。
+    const receipt = await h.bridge.deliver(delivery({ id: 'failing' }));
+    assert.equal(receipt.status, 'failed');
+  });
 });

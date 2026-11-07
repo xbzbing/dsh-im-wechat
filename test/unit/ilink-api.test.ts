@@ -254,3 +254,30 @@ test('网络失败归成 network 类错误并带分类', async () => {
     return true;
   });
 });
+
+test('sendTyping 打到 sendtyping 端点并带 ticket 与状态', async () => {
+  const { calls, impl } = recordingFetch(jsonResponse({}));
+  const api = makeApi({ fetch: impl });
+  await api.sendTyping({ userId: 'user-1', typingTicket: 'tt-9', status: 1 });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /ilink\/bot\/sendtyping$/);
+  assert.equal(calls[0].method, 'POST');
+  const body = calls[0].body as Record<string, unknown>;
+  assert.equal(body.ilink_user_id, 'user-1');
+  assert.equal(body.typing_ticket, 'tt-9');
+  assert.equal(body.status, 1);
+  assert.ok(body.base_info, '所有 POST 都带 base_info');
+});
+
+test('sendTyping 的 HTTP 失败照常抛出，让上层记日志', async () => {
+  const failing = (async () => new Response('oops', { status: 500 })) as typeof globalThis.fetch;
+  const api = makeApi({ fetch: failing });
+  await assert.rejects(
+    api.sendTyping({ userId: 'user-1', typingTicket: 'tt-9', status: 2 }),
+    (error: unknown) => {
+      assert.ok(error instanceof ILinkError);
+      assert.equal(error.kind, 'http');
+      return true;
+    },
+  );
+});

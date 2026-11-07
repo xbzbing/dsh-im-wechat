@@ -48,6 +48,8 @@ export interface WeixinBridgeOptions {
   health?: () => BridgeHealth;
   /** 运行开关：停用时不收不发，并让核心把流量路由到别的桥。 */
   isEnabled?: () => boolean;
+  /** 交付进入投递流程时回调（收件人）：用于收起「正在输入」（ADR-0007）。 */
+  onDelivered?: (recipient: string) => void;
 }
 
 export class WeixinBridge implements BridgeProvider {
@@ -63,6 +65,7 @@ export class WeixinBridge implements BridgeProvider {
   readonly #maxText: number;
   readonly #health: (() => BridgeHealth) | undefined;
   readonly #isEnabled: (() => boolean) | undefined;
+  readonly #onDelivered: ((recipient: string) => void) | undefined;
   /** 已发到第几条：`delivery.id` → 条数，用于断点续发。 */
   readonly #progress = new Map<string, number>();
   /** 在途投递：同一 `delivery.id` 的并发调用复用同一次，避免两路都从第 1 段发。 */
@@ -79,6 +82,7 @@ export class WeixinBridge implements BridgeProvider {
     this.#maxText = options.maxText ?? MAX_TEXT_CHARS;
     this.#health = options.health;
     this.#isEnabled = options.isEnabled;
+    this.#onDelivered = options.onDelivered;
     this.capabilities = {
       markdown: 'none',
       maxText: { max: this.#maxText, unit: 'char' },
@@ -129,6 +133,8 @@ export class WeixinBridge implements BridgeProvider {
   }
 
   async deliver(delivery: Delivery): Promise<Receipt> {
+    // 交付一进投递流程，模型的产出就要到微信了，输入状态失去意义（ADR-0007）。
+    this.#onDelivered?.(delivery.recipient);
     const existing = this.#inflight.get(delivery.id);
     if (existing) return existing;
     const task = this.#deliverOnce(delivery).finally(() => {

@@ -72,7 +72,7 @@ export function parseLoginState(value: unknown): LoginState | null {
 export function accountTail(account: string): string {
   const cleaned = account.trim();
   const at = cleaned.lastIndexOf('@');
-  if (at > 0) return `${cleaned.slice(0, 4)}…${cleaned.slice(at)}`;
+  if (at > 0) return `${cleaned.slice(0, Math.min(4, at))}…${cleaned.slice(at)}`;
   if (cleaned.length <= 4) return cleaned;
   return `…${cleaned.slice(-4)}`;
 }

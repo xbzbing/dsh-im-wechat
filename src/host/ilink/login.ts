@@ -72,7 +72,7 @@ export interface LoginControllerOptions {
   now?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** 登录成功后回调（运行期据此换用带 token 的客户端）。 */
-  onConfirmed?: (state: LoginState) => void;
+  onConfirmed?: (state: LoginState) => void | Promise<void>;
   timings?: Partial<LoginTimings>;
 }
 
@@ -327,7 +327,7 @@ export class LoginController {
     this.#phase = 'confirmed';
     this.#qrContent = undefined;
     this.#options.logger?.info?.('微信扫码登录成功');
-    this.#options.onConfirmed?.(state);
+    await this.#options.onConfirmed?.(state);
     return true;
   }
 }

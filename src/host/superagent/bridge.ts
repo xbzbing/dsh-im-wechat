@@ -46,6 +46,8 @@ export interface WeixinBridgeOptions {
   maxText?: number;
   /** 连接健康状态来源（轮询循环维护）。 */
   health?: () => BridgeHealth;
+  /** 运行开关：停用时不收不发，并让核心把流量路由到别的桥。 */
+  isEnabled?: () => boolean;
 }
 
 export class WeixinBridge implements BridgeProvider {
@@ -60,6 +62,7 @@ export class WeixinBridge implements BridgeProvider {
   readonly #logger: BridgeLogger | undefined;
   readonly #maxText: number;
   readonly #health: (() => BridgeHealth) | undefined;
+  readonly #isEnabled: (() => boolean) | undefined;
   /** 已发到第几条：`delivery.id` → 条数，用于断点续发。 */
   readonly #progress = new Map<string, number>();
   #handle: BridgeHandle | null = null;
@@ -73,6 +76,7 @@ export class WeixinBridge implements BridgeProvider {
     this.#logger = options.logger;
     this.#maxText = options.maxText ?? MAX_TEXT_CHARS;
     this.#health = options.health;
+    this.#isEnabled = options.isEnabled;
     this.capabilities = {
       markdown: 'none',
       maxText: { max: this.#maxText, unit: 'char' },
@@ -110,6 +114,9 @@ export class WeixinBridge implements BridgeProvider {
   }
 
   health(): BridgeHealth {
+    if (this.#isEnabled && !this.#isEnabled()) {
+      return { state: 'down', code: 'other', reason: '插件已停用' };
+    }
     if (this.#guard.isPaused(this.account)) {
       return { state: 'down', code: 'auth-expired', reason: 'token 已失效，需要重新扫码登录' };
     }
@@ -121,6 +128,9 @@ export class WeixinBridge implements BridgeProvider {
 
   async deliver(delivery: Delivery): Promise<Receipt> {
     const base = { deliveryId: delivery.id };
+    if (this.#isEnabled && !this.#isEnabled()) {
+      return { ...base, status: 'failed', errorCode: 'other', error: '插件已停用' };
+    }
     if (this.#guard.isPaused(this.account)) {
       return {
         ...base,

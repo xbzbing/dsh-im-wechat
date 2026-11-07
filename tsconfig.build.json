@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false,
+    "allowJs": false,
+    // host 半只在 Node 里跑，不能继承根 tsconfig 的 DOM：否则 src/host 里写
+    // window / localStorage 也能过构建期检查，运行期却是 undefined。
+    // fetch / Request / Response / AbortSignal 由 @types/node 提供。
+    "lib": ["ES2023"],
+    "outDir": "lib",
+    "rootDir": "."
+  },
+  "include": ["index.ts", "src/host", "src/shared"],
+  "exclude": ["src/client", "test"]
+}

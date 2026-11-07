@@ -1,0 +1,56 @@
+{
+  "name": "dsh-im-wechat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把微信（WeChat iLink）接入 DeepSeek Harness 的 IM 桥插件",
+  "icon": "./assets/icon.svg",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./assets/icon.svg"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "assets/icon.svg",
+    "docs/adr",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/build.mjs && node --test test/unit/*.test.ts",
+    "verify": "node scripts/verify-package.mjs",
+    "check": "npm run typecheck && npm test && npm run verify"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "18.3.31",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

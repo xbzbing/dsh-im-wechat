@@ -30,16 +30,17 @@ export const name = 'dsh-im-wechat';
 /** 没有硬依赖：核心、面板连接服务都按需接入。 */
 export const inject: string[] = [];
 
-export interface AppliedPlugin {
-  runtime: WeixinRuntime;
-  /** 停机（测试与优雅退出用；正常由 ctx 生命周期驱动）。 */
-  stop(): Promise<void>;
-}
-
+/**
+ * 插件入口。
+ *
+ * **必须返回 void。** Cordis 会把 `apply` 的返回值当作 effect 注册：返回一个普通
+ * 对象会抛 `Invalid effect`，整个 fiber 直接 failed（插件加载不上、面板 RPC 404）。
+ * 运行期的启停一律交给 `ctx.effect` 注册的清理函数。
+ */
 export async function apply(
   ctx: PluginContext,
   config: PluginConfig | unknown = {},
-): Promise<AppliedPlugin> {
+): Promise<void> {
   const logger = ctx.logger ?? {};
   const binder = new BridgeBinder({ logger });
   const runtime = new WeixinRuntime({ config: normalizePluginConfig(config), logger });
@@ -54,5 +55,4 @@ export async function apply(
   await runtime.start().catch((error: unknown) => {
     logger.error?.('微信插件启动失败', errorDetail(error));
   });
-  return { runtime, stop: () => runtime.stop() };
 }

@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ENDPOINTS, RPC_PATH, registerPanelRpc } from '../../src/host/panel-rpc.ts';
+import { HOST_CONTRACT } from '../../src/host/runtime.ts';
 import type { PanelRoute, PluginContext } from '../../src/host/host-context.ts';
+import { REQUIRED_CONTRACT } from '../../src/client/constants.ts';
 
 interface Harness {
   route: PanelRoute;
@@ -133,6 +135,11 @@ test('入参校验：验证码不能为空、enabled 必须是布尔', async () 
   const badMinutes = await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: '45' }));
   assert.equal(badMinutes.result.error.code, 'invalid-config');
   assert.deepEqual(h.calls, []);
+});
+
+test('两半契约版本一致：加端点或改返回结构时两边要一起递增', () => {
+  // 对不上时：新面板 + 旧 Host 会打到不存在的端点，旧面板 + 新 Host 只是少几个字段。
+  assert.equal(HOST_CONTRACT, REQUIRED_CONTRACT);
 });
 
 test('路由挂在 /api/<包名> 上，且只接受 POST', () => {

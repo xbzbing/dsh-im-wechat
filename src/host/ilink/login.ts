@@ -1,0 +1,333 @@
+/**
+ * 扫码登录状态机。
+ *
+ * 由 host 半驱动：`start()` 取到二维码就返回，后台继续长轮询扫码状态；面板只读
+ * 快照、必要时提交验证码（ADR-0002）。因此面板刷新、切走、关掉都不会中断扫码。
+ *
+ * 状态与状态码取自协议：`wait` / `scaned` / `need_verifycode` / `expired` /
+ * `verify_code_blocked` / `binded_redirect` / `scaned_but_redirect` / `confirmed`。
+ * 语义按官方实现对齐：`binded_redirect` 是「本来就绑定过」，不是失败。
+ */
+
+import type { ILinkApi } from './api.ts';
+import { DEFAULT_BASE_URL } from './api.ts';
+import type { QrStatusResponse } from './types.ts';
+import type { LoginState } from '../state/login-state.ts';
+import type { LoginStateStore } from '../state/login-state.ts';
+
+export type LoginPhase =
+  | 'idle'
+  | 'waiting'
+  | 'scanned'
+  | 'need-verify-code'
+  | 'confirmed'
+  | 'binded'
+  | 'failed'
+  | 'cancelled';
+
+/** 面板读到的登录快照。`qrContent` 是二维码内容，同时是可打开的链接。 */
+export interface LoginSnapshot {
+  phase: LoginPhase;
+  qrContent?: string;
+  startedAt?: number;
+  refreshed: number;
+  error?: string;
+}
+
+export interface LoginTimings {
+  /** 二维码有效期，过期前主动换一张。 */
+  qrTtlMs: number;
+  /** 过期 / 验证码被锁后最多刷新几次。 */
+  maxRefreshes: number;
+  /** 扫码状态长轮询的单次超时。 */
+  pollTimeoutMs: number;
+  /** 整次登录的总时限。 */
+  overallTimeoutMs: number;
+  /** 两次轮询之间的间隔（服务端立刻返回时避免打转）。 */
+  pollGapMs: number;
+  /** 等待主人输入验证码的最长时间。 */
+  verifyWaitMs: number;
+}
+
+export const DEFAULT_LOGIN_TIMINGS: LoginTimings = {
+  qrTtlMs: 5 * 60_000,
+  maxRefreshes: 3,
+  pollTimeoutMs: 35_000,
+  overallTimeoutMs: 8 * 60_000,
+  pollGapMs: 1_000,
+  verifyWaitMs: 120_000,
+};
+
+export interface LoginLogger {
+  info?(...args: unknown[]): unknown;
+  warn?(...args: unknown[]): unknown;
+}
+
+export interface LoginControllerOptions {
+  apiFactory: (baseUrl: string) => ILinkApi;
+  store: LoginStateStore;
+  /** 本机已有的机器人 token，服务端据此判断是否已绑定过。 */
+  localTokenList?: () => readonly string[];
+  logger?: LoginLogger;
+  now?: () => number;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** 登录成功后回调（运行期据此换用带 token 的客户端）。 */
+  onConfirmed?: (state: LoginState) => void;
+  timings?: Partial<LoginTimings>;
+}
+
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }
+    function onAbort(): void {
+      finish();
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export class LoginController {
+  readonly #options: LoginControllerOptions;
+  readonly #timings: LoginTimings;
+  readonly #now: () => number;
+  readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+
+  #phase: LoginPhase = 'idle';
+  #qrContent: string | undefined;
+  #qrcode: string | undefined;
+  #startedAt: number | undefined;
+  #qrExpiresAt = 0;
+  #refreshed = 0;
+  #error: string | undefined;
+  #verifyCode: string | undefined;
+  #apiBaseUrl = DEFAULT_BASE_URL;
+  #abort: AbortController | null = null;
+  #running: Promise<void> | null = null;
+
+  constructor(options: LoginControllerOptions) {
+    this.#options = options;
+    this.#timings = { ...DEFAULT_LOGIN_TIMINGS, ...options.timings };
+    this.#now = options.now ?? Date.now;
+    this.#sleep = options.sleep ?? defaultSleep;
+  }
+
+  snapshot(): LoginSnapshot {
+    return {
+      phase: this.#phase,
+      ...(this.#qrContent ? { qrContent: this.#qrContent } : {}),
+      ...(this.#startedAt !== undefined ? { startedAt: this.#startedAt } : {}),
+      refreshed: this.#refreshed,
+      ...(this.#error ? { error: this.#error } : {}),
+    };
+  }
+
+  /** 是否已经结束（成功、放弃或取消）。面板据此停止轮询。 */
+  get done(): boolean {
+    return this.#phase === 'confirmed' || this.#phase === 'binded'
+      || this.#phase === 'failed' || this.#phase === 'cancelled';
+  }
+
+  /**
+   * 开始一次登录：取二维码，起后台轮询。
+   *
+   * 已经在进行中时直接返回当前快照——面板重复点「登录」不该起两条轮询。
+   */
+  async start(): Promise<LoginSnapshot> {
+    if (this.#running) return this.snapshot();
+    this.#reset();
+    const api = this.#options.apiFactory(DEFAULT_BASE_URL);
+    const ready = await this.#requestQrCode(api);
+    if (!ready) return this.snapshot();
+    const abort = new AbortController();
+    this.#abort = abort;
+    this.#running = this.#run(api, abort.signal).finally(() => {
+      this.#running = null;
+      this.#abort = null;
+    });
+    return this.snapshot();
+  }
+
+  /** 面板提交验证码；状态机在 `need-verify-code` 时取用它。 */
+  submitVerifyCode(code: string): void {
+    const cleaned = code.trim();
+    if (cleaned === '') return;
+    this.#verifyCode = cleaned;
+  }
+
+  /** 等后台轮询结束（停机与测试用；正常流程里面板只读快照）。 */
+  async waitForSettled(): Promise<void> {
+    await this.#running;
+  }
+
+  /** 取消进行中的登录（面板关掉或主动放弃）。 */
+  async cancel(): Promise<void> {
+    this.#abort?.abort();
+    await this.#running;
+    if (!this.done) this.#phase = 'cancelled';
+  }
+
+  #reset(): void {
+    this.#phase = 'idle';
+    this.#qrContent = undefined;
+    this.#qrcode = undefined;
+    this.#startedAt = undefined;
+    this.#qrExpiresAt = 0;
+    this.#refreshed = 0;
+    this.#error = undefined;
+    this.#verifyCode = undefined;
+    this.#apiBaseUrl = DEFAULT_BASE_URL;
+  }
+
+  async #requestQrCode(api: ILinkApi): Promise<boolean> {
+    try {
+      const response = await api.getBotQrCode({ localTokenList: this.#options.localTokenList?.() ?? [] });
+      const qrcode = typeof response.qrcode === 'string' ? response.qrcode : '';
+      const content = typeof response.qrcode_img_content === 'string' ? response.qrcode_img_content : '';
+      if (qrcode === '' || content === '') {
+        this.#fail('二维码响应缺少 qrcode 或内容');
+        return false;
+      }
+      this.#qrcode = qrcode;
+      this.#qrContent = content;
+      this.#startedAt = this.#now();
+      this.#qrExpiresAt = this.#startedAt + this.#timings.qrTtlMs;
+      this.#phase = 'waiting';
+      this.#error = undefined;
+      return true;
+    } catch (error) {
+      this.#fail(`取二维码失败：${(error as Error)?.message ?? '未知错误'}`);
+      return false;
+    }
+  }
+
+  #fail(message: string): void {
+    this.#phase = 'failed';
+    this.#error = message;
+    this.#options.logger?.warn?.('微信扫码登录失败', message);
+  }
+
+  async #run(api: ILinkApi, signal: AbortSignal): Promise<void> {
+    const deadline = this.#now() + this.#timings.overallTimeoutMs;
+    try {
+      while (!signal.aborted) {
+        if (this.#now() > deadline) {
+          this.#fail('登录超时，请重试');
+          return;
+        }
+        if (this.#qrcode === undefined) return;
+        if (this.#now() > this.#qrExpiresAt && !(await this.#refresh(api))) return;
+
+        const verifying = this.#verifyCode;
+        if (verifying !== undefined) this.#verifyCode = undefined;
+        const response = await api.getQrStatus({
+          qrcode: this.#qrcode,
+          ...(verifying !== undefined ? { verifyCode: verifying } : {}),
+          timeoutMs: this.#timings.pollTimeoutMs,
+          signal,
+          baseUrl: this.#apiBaseUrl,
+        });
+        if (signal.aborted) return;
+        if (await this.#handleStatus(api, response)) return;
+        await this.#sleep(this.#timings.pollGapMs, signal);
+      }
+    } catch (error) {
+      if (signal.aborted) return;
+      this.#fail(`登录轮询失败：${(error as Error)?.message ?? '未知错误'}`);
+    }
+  }
+
+  /** 处理一次状态响应；返回 true 表示流程结束。 */
+  async #handleStatus(api: ILinkApi, response: QrStatusResponse): Promise<boolean> {
+    switch (response.status) {
+      case 'wait':
+        return false;
+      case 'scaned':
+        this.#phase = 'scanned';
+        // 服务端确认验证码正确后才允许清掉暂存值，与官方一致。
+        this.#verifyCode = undefined;
+        return false;
+      case 'need_verifycode':
+        this.#phase = 'need-verify-code';
+        return this.#awaitVerifyCode();
+      case 'expired':
+      case 'verify_code_blocked': {
+        const refreshed = await this.#refresh(api);
+        return !refreshed;
+      }
+      case 'scaned_but_redirect': {
+        const host = typeof response.redirect_host === 'string' ? response.redirect_host : '';
+        if (host !== '') this.#apiBaseUrl = `https://${host}`;
+        return false;
+      }
+      case 'binded_redirect':
+        this.#phase = 'binded';
+        return true;
+      case 'confirmed':
+        return this.#confirm(response);
+      default:
+        // 未知状态按「继续等」处理：协议新增状态时不该把登录打断。
+        return false;
+    }
+  }
+
+  /** 等主人输入验证码；超时则判定本次登录失败。 */
+  async #awaitVerifyCode(): Promise<boolean> {
+    const deadline = this.#now() + this.#timings.verifyWaitMs;
+    while (this.#now() < deadline) {
+      if (this.#abort?.signal.aborted) return true;
+      if (this.#verifyCode !== undefined) {
+        this.#phase = 'waiting';
+        return false;
+      }
+      await this.#sleep(500, this.#abort?.signal);
+    }
+    this.#fail('等待验证码超时，请重试');
+    return true;
+  }
+
+  /** 换一张二维码；超过次数上限则失败。返回 false 表示流程应结束。 */
+  async #refresh(api: ILinkApi): Promise<boolean> {
+    this.#refreshed += 1;
+    if (this.#refreshed > this.#timings.maxRefreshes) {
+      this.#fail('二维码多次失效，登录流程已停止');
+      return false;
+    }
+    this.#qrcode = undefined;
+    this.#phase = 'waiting';
+    return this.#requestQrCode(api);
+  }
+
+  async #confirm(response: QrStatusResponse): Promise<boolean> {
+    const botToken = typeof response.bot_token === 'string' ? response.bot_token.trim() : '';
+    const account = typeof response.ilink_bot_id === 'string' ? response.ilink_bot_id.trim() : '';
+    if (botToken === '' || account === '') {
+      this.#fail('登录确认缺少 bot_token 或 ilink_bot_id');
+      return true;
+    }
+    const baseUrl = typeof response.baseurl === 'string' && response.baseurl.trim() !== ''
+      ? response.baseurl.trim()
+      : DEFAULT_BASE_URL;
+    const userId = typeof response.ilink_user_id === 'string' ? response.ilink_user_id.trim() : '';
+    const state = await this.#options.store.save({
+      botToken,
+      account,
+      ...(userId !== '' ? { userId } : {}),
+      baseUrl,
+      loggedInAt: this.#now(),
+    });
+    this.#phase = 'confirmed';
+    this.#qrContent = undefined;
+    this.#options.logger?.info?.('微信扫码登录成功');
+    this.#options.onConfirmed?.(state);
+    return true;
+  }
+}

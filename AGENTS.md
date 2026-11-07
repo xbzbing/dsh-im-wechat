@@ -14,6 +14,7 @@
 | `src/host/index.ts` | Cordis 入口：只装配与接线 |
 | `src/host/ilink/` | iLink 协议客户端：`types`/`api`（端点、请求头、错误分类）、`json`（64 位消息 id 保真）、`identity`（入站身份）、`login`、`poll`、`send`、`media`、`session-guard`；只用 Node 内置模块 |
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`link`（延后注册的 `BridgeBinder`） |
+| `src/host/questions.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、作答匹配、长任务提醒、根会话识别 |
 | `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`；目录 `0700`、文件 `0600`、原子写 |
 | `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`panel-rpc.ts` 面板 RPC、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |
@@ -34,6 +35,7 @@
 - 任何密钥、令牌、登录态不进日志、审计与面板快照；需要展示时只给「已设置」与状态。
 - 子进程一律 argv 数组、不经 shell。
 - 文件不超过约 500 行；超出先拆分再加功能。
+- **自有功能与核心互斥**：`ownFeatures = 启用 && 未接入核心 && 已登录`。接入核心时不发自己的提醒，否则同一条提醒会来两遍（ADR-0006）；新增任何「主动提醒主人」的能力都要先过这个判据。
 - 面板 RPC 契约版本（`HOST_CONTRACT` / `REQUIRED_CONTRACT`）两半必须一致：加端点或改返回结构时一起递增，否则「新面板 + 旧 host」会打到不存在的端点。
 - 凭据与 `context_token` 不进日志、不进面板快照；面板只显示账号尾号（`accountTail`）。
 - 注释只写实现逻辑与不明显的约束，不写演进过程。

@@ -266,11 +266,16 @@ export class WeixinRuntime {
     return this.#enabled && !this.#superagent && this.#loginState !== null && !this.#stopped;
   }
 
-  /** 自有功能的开合跟着启停/登录/接入开关走；关掉时把在等的提问交回 Web。 */
+  /**
+   * 自有功能的开合跟着启停/登录/接入开关走。
+   *
+   * 关掉时把在等的问题交回：`open` 时说明是「切换到接入超级助理」，让工具调用拿到
+   * 可读的原因而不是挂在那里（Web 那边本来也在等同一份请求）。
+   */
   #syncOwnFeatures(): void {
     const active = this.#ownFeaturesActive();
     this.#longTasks.configure(active);
-    if (!active) this.#questions.cancelAll();
+    if (!active) this.#questions.cancelAll('已切换为接入我的超级助理，提问交回 Web 端');
   }
 
   /** 自有功能的收件人：扫码的微信用户优先，其次最近一个发消息的人。 */

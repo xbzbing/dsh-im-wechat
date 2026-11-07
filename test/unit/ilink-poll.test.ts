@@ -38,6 +38,12 @@ interface Harness {
  *
  * 注入的 `sleep` 立刻返回并记录时长：退避逻辑可断言，测试也不用真等 30 秒。
  */
+/** 收尾：先等写盘队排空，否则删目录会与落盘撞上（ENOTEMPTY）。 */
+async function cleanup(h: Harness): Promise<void> {
+  await h.contextTokens.flush();
+  await rm(h.dir, { recursive: true, force: true });
+}
+
 async function harness(steps: Step[], options: { timings?: Record<string, number> } = {}): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-poll-'));
   const cursor = new SyncCursorStore({ dir });
@@ -111,7 +117,7 @@ test('收到消息：交出去、记下 context_token、落盘游标', async () 
     assert.equal(await h.cursor.load('bot@im.bot'), 'CURSOR-1');
     assert.deepEqual(h.cursors, ['', 'CURSOR-1']);
   } finally {
-    await rm(h.dir, { recursive: true, force: true });
+    await cleanup(h);
   }
 });
 
@@ -150,7 +156,7 @@ test('投递失败时不推进游标，重投成功后才落盘', async () => {
     // 前两次失败，游标没落盘；第三次成功后才写入。
     assert.equal(await h.cursor.load('bot@im.bot'), 'C1');
   } finally {
-    await rm(h.dir, { recursive: true, force: true });
+    await cleanup(h);
   }
 });
 
@@ -162,7 +168,7 @@ test('同一帧重复推送只交出一遍', async () => {
     await h.loop.run(h.controller.signal);
     assert.equal(h.messages.length, 1);
   } finally {
-    await rm(h.dir, { recursive: true, force: true });
+    await cleanup(h);
   }
 });
 
@@ -174,7 +180,7 @@ test('服务端建议的长轮询超时用于下一次请求', async () => {
     await h.loop.run(h.controller.signal);
     assert.deepEqual(h.timeouts.slice(0, 2), [35_000, 12_000]);
   } finally {
-    await rm(h.dir, { recursive: true, force: true });
+    await cleanup(h);
   }
 });
 
@@ -186,7 +192,7 @@ test('单次失败退避 2 秒，连续三次后退避 30 秒', async () => {
     assert.deepEqual(h.delays, [2_000, 2_000, 30_000]);
     assert.equal(h.health.some((item) => item.state === 'degraded'), true);
   } finally {
-    await rm(h.dir, { recursive: true, force: true });
+    await cleanup(h);
   }
 });
 
@@ -200,7 +206,7 @@ test('-14 进闸门并报 auth-expired', async () => {
       ['auth-expired'],
     );
   } finally {
-    await rm(h.dir, { recursive: true, force: true });
+    await cleanup(h);
   }
 });
 

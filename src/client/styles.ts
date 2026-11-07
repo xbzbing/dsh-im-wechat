@@ -17,7 +17,7 @@ export const STYLES = `
 .wx-section-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary); }
 .wx-hint { margin: 0; font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .wx-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.wx-row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wx-row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .wx-item { display: flex; flex-direction: column; gap: 2px; }
 .wx-item-label { font-size: 13px; color: var(--dsw-alias-label-primary); }
 .wx-item-desc { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
@@ -32,6 +32,7 @@ export const STYLES = `
 .wx-error { margin: 0; font-size: 12px; color: var(--dsw-alias-label-error, #d9534f); word-break: break-word; }
 .wx-divider { height: 1px; background: var(--dsw-alias-border-subtle, rgba(127,127,127,0.16)); }
 .wx-code-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.wx-minutes { width: 76px; }
 `;
 
 /** 注入一次样式；重复调用是幂等的。 */

@@ -8,6 +8,7 @@ import type { ILinkApi } from '../../src/host/ilink/api.ts';
 import { WeixinRuntime } from '../../src/host/runtime.ts';
 import { BridgeBinder } from '../../src/host/superagent/link.ts';
 import type { BridgeProvider, OwnerMessageDraft } from '../../src/host/superagent/protocol.ts';
+import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
 import { LoginStateStore } from '../../src/host/state/login-state.ts';
 import type { WeixinMessage } from '../../src/host/ilink/types.ts';
 
@@ -331,6 +332,88 @@ test('登出清掉登录态与桥注册', async () => {
     assert.equal(status.loggedIn, false);
     assert.equal(status.bridge.registered, false);
     assert.equal(await new LoginStateStore({ dir }).load(), null);
+    await runtime.stop();
+  });
+});
+
+test('长任务阈值默认 30 分钟，面板改的值落盘并在重启后沿用', async () => {
+  await withDir(async (dir) => {
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    await runtime.start();
+    assert.equal(runtime.status().longTaskThresholdMinutes, 30);
+
+    const status = await runtime.setLongTaskThreshold(45);
+    assert.equal(status.longTaskThresholdMinutes, 45);
+    const persisted = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')) as {
+      longTaskThresholdMinutes?: number;
+    };
+    assert.equal(persisted.longTaskThresholdMinutes, 45);
+
+    const restarted = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    await restarted.start();
+    assert.equal(restarted.status().longTaskThresholdMinutes, 45);
+    await restarted.stop();
+    await runtime.stop();
+  });
+});
+
+test('profile 配置可以改阈值，面板值优先，越界按边界收窄', async () => {
+  await withDir(async (dir) => {
+    const runtime = new WeixinRuntime({
+      config: { dataDir: dir, longTaskThresholdMinutes: 5 },
+      createApi: fakeApi().createApi,
+    });
+    await runtime.start();
+    assert.equal(runtime.status().longTaskThresholdMinutes, 5);
+
+    // 面板值盖住 profile 的静态默认，重启后仍是面板值。
+    await runtime.setLongTaskThreshold(45);
+    const restarted = new WeixinRuntime({
+      config: { dataDir: dir, longTaskThresholdMinutes: 5 },
+      createApi: fakeApi().createApi,
+    });
+    await restarted.start();
+    assert.equal(restarted.status().longTaskThresholdMinutes, 45);
+    await restarted.stop();
+
+    // 越界值收窄到 1–1440，而不是把提醒阈值设成 0（等于每条回合都提醒）。
+    assert.equal((await runtime.setLongTaskThreshold(0)).longTaskThresholdMinutes, 1);
+    assert.equal((await runtime.setLongTaskThreshold(1e9)).longTaskThresholdMinutes, 1_440);
+    await runtime.stop();
+  });
+});
+
+test('未接入核心时长任务提醒按配置阈值发到主人微信', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    // 主人的 context_token 由入站消息带来，这里直接落盘，省掉一轮轮询。
+    const tokens = new ContextTokenStore({ dir });
+    tokens.set(ACCOUNT, OWNER, 'ctx-owner');
+    await tokens.flush();
+
+    const api = fakeApi();
+    const runtime = new WeixinRuntime({
+      config: { dataDir: dir, longTaskThresholdMinutes: 5 },
+      createApi: api.createApi,
+    });
+    await runtime.start();
+    await runtime.setSuperagent(false);
+
+    const turn = (endAt: number) => {
+      runtime.handleSessionEvent('sess-1', { type: 'turn/start', seq: 1, time: 0, data: { turn: 1 } });
+      runtime.handleSessionEvent('sess-1', {
+        type: 'turn/end', seq: 2, time: endAt, data: { turn: 1, reason: { kind: 'completed' } },
+      });
+    };
+
+    turn(4 * 60_000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(api.record.sent, []);
+
+    turn(6 * 60_000);
+    await waitFor(() => api.record.sent.length > 0, '长任务提醒发出');
+    assert.match(api.record.sent[0], /长任务提醒/);
+    assert.match(api.record.sent[0], /耗时：6分0秒/);
     await runtime.stop();
   });
 });

@@ -22,7 +22,7 @@ import { messageOf } from './host-context.ts';
 import { OwnerChannel } from './owner-channel.ts';
 import { QuestionBroker } from './questions.ts';
 import type { QuestionNext, QuestionRequest } from './questions.ts';
-import { LongTaskNotifier } from './long-tasks.ts';
+import { DEFAULT_LONG_TASK_MINUTES, LongTaskNotifier, normalizeLongTaskMinutes } from './long-tasks.ts';
 import { RootAgents } from './host-agents.ts';
 import type { HostAgents } from './host-agents.ts';
 import { WeixinBridge } from './superagent/bridge.ts';
@@ -42,9 +42,10 @@ import type { PluginConfig } from './config.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 1;
+export const HOST_CONTRACT = 2;
 
 const MAX_ERRORS = 5;
+const MINUTE_MS = 60_000;
 
 export interface RuntimeLogger {
   info?(...args: unknown[]): unknown;
@@ -66,6 +67,8 @@ export interface RuntimeStatus {
   pendingQuestions: number;
   /** 正在跟踪的回合数（长任务提醒用）。 */
   trackingTasks: number;
+  /** 长任务提醒阈值（分钟）：回合超过它才提醒。 */
+  longTaskThresholdMinutes: number;
   loggedIn: boolean;
   accountTail?: string;
   /** 上次扫码成功的时间；面板的「登录时间」用它。 */
@@ -110,6 +113,7 @@ export class WeixinRuntime {
   #errors: { at: number; message: string }[] = [];
   #enabled = true;
   #superagent = true;
+  #longTaskMinutes: number;
   #started = false;
   readonly #roots = new RootAgents();
   readonly #questions: QuestionBroker;
@@ -118,6 +122,7 @@ export class WeixinRuntime {
 
   constructor(deps: RuntimeDeps = {}) {
     this.#config = normalizePluginConfig(deps.config);
+    this.#longTaskMinutes = this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES;
     this.#dir = resolveConfigDir(this.#config);
     this.#logger = deps.logger ?? {};
     this.#now = deps.now ?? Date.now;
@@ -156,6 +161,7 @@ export class WeixinRuntime {
       isRoot: (sessionId) => this.#roots.isRoot(sessionId),
       now: this.#now,
       logger: this.#logger,
+      thresholdMs: this.#longTaskMinutes * MINUTE_MS,
     });
     this.#loginController = new LoginController({
       apiFactory: (baseUrl) => this.#createApi({ baseUrl }),
@@ -213,6 +219,9 @@ export class WeixinRuntime {
     const stored = await this.#localConfig.load();
     this.#enabled = stored.enabled ?? this.#config.enabled ?? true;
     this.#superagent = stored.superagent ?? this.#config.superagent ?? true;
+    this.#applyLongTaskMinutes(
+      stored.longTaskThresholdMinutes ?? this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
+    );
     this.#loginState = await this.#loginStore.load();
     if (!this.#loginState) {
       this.#health = { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
@@ -254,6 +263,7 @@ export class WeixinRuntime {
       ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
       pendingQuestions: this.#questions.snapshot().pending,
       trackingTasks: this.#longTasks.tracking,
+      longTaskThresholdMinutes: this.#longTaskMinutes,
       loggedIn: login !== null,
       ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
       login: this.#loginController.snapshot(),
@@ -331,6 +341,14 @@ export class WeixinRuntime {
     await this.#localConfig.save({ superagent: enabled });
     this.#binder?.bind(enabled ? this.#bridge : null);
     this.#syncOwnFeatures();
+    return this.status();
+  }
+
+  /** 保存长任务阈值（分钟）：就地生效，不重连微信。 */
+  async setLongTaskThreshold(minutes: number): Promise<RuntimeStatus> {
+    const next = normalizeLongTaskMinutes(minutes) ?? DEFAULT_LONG_TASK_MINUTES;
+    this.#applyLongTaskMinutes(next);
+    await this.#localConfig.save({ longTaskThresholdMinutes: next });
     return this.status();
   }
 
@@ -457,6 +475,12 @@ export class WeixinRuntime {
         ...(health.reason ? { reason: health.reason } : {}),
       };
     if (health.state !== 'ok' && health.reason) this.#noteError(health.reason);
+  }
+
+  /** 阈值只有一个入口：运行期的展示值与提醒器里的判定值一起改，免得两者不一致。 */
+  #applyLongTaskMinutes(minutes: number): void {
+    this.#longTaskMinutes = minutes;
+    this.#longTasks.setThresholdMs(minutes * MINUTE_MS);
   }
 
   #noteError(message: string): void {

@@ -33,6 +33,10 @@ function harness(): Harness {
       calls.push(`superagent:${enabled}`);
       return { contract: 1, superagent: enabled };
     },
+    setLongTaskThreshold: async (minutes: number) => {
+      calls.push(`longtask:${minutes}`);
+      return { contract: 2, longTaskThresholdMinutes: minutes };
+    },
   };
   let route: PanelRoute | null = null;
   const ctx: PluginContext = {
@@ -116,7 +120,8 @@ test('登录动作转发给运行期', async () => {
   await call(h, envelope(ENDPOINTS.LOGIN_CODE, { code: ' 123456 ' }));
   await call(h, envelope(ENDPOINTS.ENABLED_SET, { enabled: false }));
   await call(h, envelope(ENDPOINTS.SUPERAGENT_SET, { enabled: false }));
-  assert.deepEqual(h.calls, ['startLogin', 'code: 123456 ', 'enabled:false', 'superagent:false']);
+  await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: 45 }));
+  assert.deepEqual(h.calls, ['startLogin', 'code: 123456 ', 'enabled:false', 'superagent:false', 'longtask:45']);
 });
 
 test('入参校验：验证码不能为空、enabled 必须是布尔', async () => {
@@ -125,6 +130,9 @@ test('入参校验：验证码不能为空、enabled 必须是布尔', async () 
   assert.equal(emptyCode.result.error.code, 'invalid-code');
   const badEnabled = await call(h, envelope(ENDPOINTS.ENABLED_SET, { enabled: 'yes' }));
   assert.equal(badEnabled.result.error.code, 'invalid-config');
+  const badMinutes = await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: '45' }));
+  assert.equal(badMinutes.result.error.code, 'invalid-config');
+  assert.deepEqual(h.calls, []);
 });
 
 test('路由挂在 /api/<包名> 上，且只接受 POST', () => {

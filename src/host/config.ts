@@ -1,10 +1,12 @@
 /**
- * 插件配置：Cordis 传入的配置 + 面板自己能改的那一项。
+ * 插件配置：Cordis 传入的配置 + 面板自己能改的那几项。
  *
  * 配置分两层：
- * - **静态配置**来自 profile 的 patch（`enabled`、`dataDir`、`maxText` 等），改了要重启；
- * - **运行开关**是面板上的「接入微信」，落在 `$DSH_HOME/dsh-im-wechat/config.json`，
- *   与登录态同一个目录，卸载重装后沿用（与如流桥的开关语义一致）。
+ * - **静态配置**来自 profile 的 patch（`enabled`、`dataDir`、`maxText`、长任务阈值等），
+ *   改了要重启；
+ * - **运行设置**是面板上的「接入微信」「接入我的超级助理」与长任务阈值，落在
+ *   `$DSH_HOME/dsh-im-wechat/config.json`，与登录态同一个目录，卸载重装后沿用
+ *   （与如流桥的开关语义一致）。面板值优先于静态配置。
  *
  * 外部输入（宿主给的配置对象、磁盘上的 JSON）在这里收窄成确定形状，领域内部
  * 不再做防御式判空（AGENTS.md）。
@@ -15,6 +17,7 @@ import { join } from 'node:path';
 import { readJsonIfPresent, writePrivateFile } from './state/files.ts';
 import type { StateLogger } from './state/files.ts';
 import { resolveDataDir } from './state/paths.ts';
+import { normalizeLongTaskMinutes } from './long-tasks.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 
 export interface PluginConfig {
@@ -32,6 +35,8 @@ export interface PluginConfig {
   maxText?: number;
   /** `base_info.bot_agent`。 */
   botAgent?: string;
+  /** 长任务提醒阈值（分钟）：回合超过它才提醒，默认 30；面板可覆盖。 */
+  longTaskThresholdMinutes?: number;
 }
 
 const MIN_MAX_TEXT = 200;
@@ -70,6 +75,8 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (maxText !== undefined) config.maxText = maxText;
   const botAgent = asString(record.botAgent);
   if (botAgent !== undefined) config.botAgent = botAgent;
+  const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
+  if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
   return config;
 }
 
@@ -88,11 +95,13 @@ export interface StoredConfig {
   enabled?: boolean;
   /** 是否接入「我的超级助理」；缺省视为接入。 */
   superagent?: boolean;
+  /** 面板上改的长任务阈值（分钟）；缺省用静态配置或默认值。 */
+  longTaskThresholdMinutes?: number;
 }
 
 export const STORED_CONFIG_VERSION = 1;
 
-/** 面板开关的持久化：只存面板能改的两项，其余配置归 profile 管。 */
+/** 面板设置的持久化：只存面板能改的三项，其余配置归 profile 管。 */
 export class LocalConfigStore {
   readonly #path: string;
   readonly #logger: StateLogger | undefined;
@@ -117,16 +126,22 @@ export class LocalConfigStore {
     const record = raw as Record<string, unknown>;
     const enabled = asBoolean(record.enabled);
     const superagent = asBoolean(record.superagent);
+    const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
     this.#document = {
       version: STORED_CONFIG_VERSION,
       ...(enabled !== undefined ? { enabled } : {}),
       ...(superagent !== undefined ? { superagent } : {}),
+      ...(longTaskMinutes !== undefined ? { longTaskThresholdMinutes: longTaskMinutes } : {}),
     };
     return this.#document;
   }
 
   /** 合并保存：没给的字段沿用上一次落盘的值。 */
-  async save(patch: { enabled?: boolean; superagent?: boolean }): Promise<StoredConfig> {
+  async save(patch: {
+    enabled?: boolean;
+    superagent?: boolean;
+    longTaskThresholdMinutes?: number;
+  }): Promise<StoredConfig> {
     this.#document = { ...this.#document, ...patch, version: STORED_CONFIG_VERSION };
     await writePrivateFile(this.#path, `${JSON.stringify(this.#document, null, 2)}\n`);
     return { ...this.#document };

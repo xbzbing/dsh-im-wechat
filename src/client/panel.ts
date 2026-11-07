@@ -62,6 +62,9 @@ export function WeixinSettingsPanel(props: any) {
   const [busy, setBusy] = useState('');
   const [code, setCode] = useState('');
   const [copied, setCopied] = useState(false);
+  /** 阈值输入框的草稿；`dirty` 时不被状态刷新覆盖，免得正在输入的值被轮询冲掉。 */
+  const [minutes, setMinutes] = useState('');
+  const [minutesDirty, setMinutesDirty] = useState(false);
   /** 状态请求的单调序号：Host 慢时旧响应可能后到，绝不能覆盖新快照。 */
   const requestSeq = useRef(0);
 
@@ -89,6 +92,12 @@ export function WeixinSettingsPanel(props: any) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const threshold = status?.longTaskThresholdMinutes;
+  useEffect(() => {
+    if (minutesDirty || typeof threshold !== 'number') return;
+    setMinutes(String(threshold));
+  }, [threshold, minutesDirty]);
 
   const phase = typeof status?.login?.phase === 'string' ? status.login.phase : 'idle';
   useEffect(() => {
@@ -133,6 +142,19 @@ export function WeixinSettingsPanel(props: any) {
     }
   }, [login.qrContent, t]);
 
+  /** 保存阈值：非数字就地报错，不回 Host 白跑一趟。 */
+  const saveMinutes = useCallback(async () => {
+    const value = Number(minutes.trim());
+    if (!Number.isFinite(value) || value <= 0) {
+      setActionError(t('阈值必须是大于 0 的分钟数'));
+      return;
+    }
+    await run('longtask', async () => {
+      await rpcCall(ENDPOINTS.setLongTask, { minutes: value });
+      setMinutesDirty(false);
+    });
+  }, [minutes, rpcCall, run, t]);
+
   if (loading && !status) {
     return h('div', { className: 'wx-root', 'data-plugin': 'dsh-im-wechat' },
       h('p', { className: 'wx-hint' }, t('加载中…')));
@@ -142,6 +164,11 @@ export function WeixinSettingsPanel(props: any) {
   const enabled = status?.enabled !== false;
   const superagent = status?.superagent !== false;
   const health = status?.health ?? {};
+  const minutesValue = Number(minutes.trim());
+  const canSaveMinutes = minutes.trim() !== ''
+    && Number.isFinite(minutesValue)
+    && minutesValue > 0
+    && minutesValue !== (typeof threshold === 'number' ? threshold : -1);
   const active = isLoginActive(login.phase);
   const showLoginPanel = active || login.phase === 'failed' || login.phase === 'binded';
 
@@ -282,6 +309,37 @@ export function WeixinSettingsPanel(props: any) {
         disabled: busy !== '',
         onChange: (next: boolean) => void run('superagent', () => rpcCall(ENDPOINTS.setSuperagent, { enabled: next })),
       })),
+
+    // ---------------------------------------------------------------- 长任务提醒
+    h('section', { className: 'wx-section' },
+      h('h4', { className: 'wx-section-title' }, t('长任务提醒')),
+      h('div', { className: 'wx-row-between' },
+        h('div', { className: 'wx-item' },
+          h('span', { className: 'wx-item-label' }, t('提醒阈值（分钟）')),
+          h('span', { className: 'wx-item-desc' },
+            t('根会话的一个回合超过这个时长才发提醒；只在本插件发送提醒时生效。'))),
+        h('div', { className: 'wx-row' },
+          h(Input, {
+            className: 'wx-minutes',
+            value: minutes,
+            placeholder: '30',
+            'aria-label': t('提醒阈值（分钟）'),
+            onChange: (event: any) => {
+              setMinutesDirty(true);
+              setMinutes(String(event.target.value));
+            },
+          }),
+          h('span', { className: 'wx-item-desc' }, t('分钟')),
+          h(Button, {
+            variant: 'ghost',
+            size: 'sm',
+            disabled: busy !== '' || !canSaveMinutes,
+            onClick: () => void saveMinutes(),
+          }, t('保存')))),
+      minutesDirty
+        ? h('p', { className: 'wx-hint' },
+          `${t('当前阈值')}：${typeof threshold === 'number' ? threshold : '—'} ${t('分钟')}`)
+        : null),
 
     // ---------------------------------------------------------------- 运行状态
     h('section', { className: 'wx-section' },

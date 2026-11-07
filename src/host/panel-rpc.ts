@@ -22,6 +22,7 @@ export const ENDPOINTS = Object.freeze({
   LOGOUT: 'logout',
   ENABLED_SET: 'enabled.set',
   SUPERAGENT_SET: 'superagent.set',
+  LONG_TASK_SET: 'longtask.set',
 } as const);
 
 export type Endpoint = (typeof ENDPOINTS)[keyof typeof ENDPOINTS];
@@ -92,6 +93,13 @@ async function handleEndpoint(
       const enabled = payloadOf(payload).enabled;
       if (typeof enabled !== 'boolean') throw codedError('enabled 必须是布尔值', 'invalid-config');
       return runtime.setSuperagent(enabled);
+    }
+    case ENDPOINTS.LONG_TASK_SET: {
+      const minutes = payloadOf(payload).minutes;
+      if (typeof minutes !== 'number' || !Number.isFinite(minutes)) {
+        throw codedError('minutes 必须是数字', 'invalid-config');
+      }
+      return runtime.setLongTaskThreshold(minutes);
     }
     default:
       throw codedError(`未知的面板端点：${endpoint}`, 'unknown-endpoint');

@@ -9,7 +9,8 @@
  * 这里必须停掉，否则同一条提醒会来两遍（ADR-0006）。所以只在自有功能生效时工作。
  *
  * 与如流实现的差别：只用文本、不发卡片；不做「安静期」（用完即发），避免主人
- * 关掉面板后仍然收不到；阈值可配。
+ * 关掉面板后仍然收不到；阈值默认 30 分钟，可由配置或面板改（`setThresholdMs`），
+ * 改完对已经在跟踪的回合也生效。
  */
 
 export interface LongTaskLogger {
@@ -56,10 +57,21 @@ interface SessionRecord {
   promptSeen: boolean;
 }
 
+/** 长任务阈值（分钟）：默认半小时；低于 1 分钟没有意义，上限一天。 */
+export const DEFAULT_LONG_TASK_MINUTES = 30;
+export const MIN_LONG_TASK_MINUTES = 1;
+export const MAX_LONG_TASK_MINUTES = 24 * 60;
+
 const UNTITLED_SESSION = '未命名会话';
-const DEFAULT_THRESHOLD_MS = 10 * 60_000;
+const DEFAULT_THRESHOLD_MS = DEFAULT_LONG_TASK_MINUTES * 60_000;
 const DEFAULT_MAX_CHARS = 1_800;
 const TRACKED_MAX = 100;
+
+/** 把外部给的分钟数收窄到可用区间；不是数字就返回 undefined（交给默认值）。 */
+export function normalizeLongTaskMinutes(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.min(MAX_LONG_TASK_MINUTES, Math.max(MIN_LONG_TASK_MINUTES, Math.round(value)));
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -106,7 +118,7 @@ export function longTaskText(params: {
 export class LongTaskNotifier {
   readonly #options: LongTaskNotifierOptions;
   readonly #now: () => number;
-  readonly #thresholdMs: number;
+  #thresholdMs: number;
   readonly #maxChars: number;
   readonly #records = new Map<string, SessionRecord>();
   /** 目标先于回合到达时暂存，`turn/start` 时带上。 */
@@ -129,6 +141,11 @@ export class LongTaskNotifier {
 
   get tracking(): number {
     return this.#records.size;
+  }
+
+  /** 改阈值：面板保存后立即生效，不重建跟踪器（已跟踪的回合按新阈值判定）。 */
+  setThresholdMs(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.#thresholdMs = ms;
   }
 
   /** `session/event` 监听器实现。 */

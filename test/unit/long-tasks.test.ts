@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { LongTaskNotifier, longTaskText, textFromAssistantMessage } from '../../src/host/long-tasks.ts';
+import {
+  DEFAULT_LONG_TASK_MINUTES,
+  LongTaskNotifier,
+  longTaskText,
+  normalizeLongTaskMinutes,
+  textFromAssistantMessage,
+} from '../../src/host/long-tasks.ts';
 import { RootAgents } from '../../src/host/host-agents.ts';
 
 const THRESHOLD = 10 * 60_000;
@@ -36,6 +42,59 @@ function harness(options: { sendOk?: boolean; root?: boolean } = {}) {
   notifier.configure(true);
   return { notifier, sent, advance: (ms: number) => { clock += ms; } };
 }
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test('阈值默认 30 分钟：29 分钟不发，31 分钟发', async () => {
+  const sent: string[] = [];
+  const notifier = new LongTaskNotifier({
+    send: async (text) => {
+      sent.push(text);
+      return true;
+    },
+    recipient: () => 'owner-1',
+    isRoot: () => true,
+  });
+  assert.equal(DEFAULT_LONG_TASK_MINUTES, 30);
+  notifier.configure(true);
+
+  notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 29 * 60_000));
+  await flush();
+  assert.equal(sent.length, 0);
+
+  notifier.handleEvent('s1', event('turn/start', { turn: 2 }, 0));
+  notifier.handleEvent('s1', event('turn/end', { turn: 2 }, 31 * 60_000));
+  await flush();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /耗时：31分0秒/);
+});
+
+test('改阈值后对下一个回合立即生效，不用重建跟踪器', async () => {
+  const h = harness();
+  // harness 的阈值是 10 分钟；面板改成 1 小时后，11 分钟的回合不再提醒。
+  h.notifier.setThresholdMs(60 * 60_000);
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 11 * 60_000));
+  await flush();
+  assert.equal(h.sent.length, 0);
+
+  h.notifier.setThresholdMs(5 * 60_000);
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 2 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 2 }, 11 * 60_000));
+  await flush();
+  assert.equal(h.sent.length, 1);
+});
+
+test('分钟数收窄到 1–1440，非数字交给默认值', () => {
+  assert.equal(normalizeLongTaskMinutes(45), 45);
+  assert.equal(normalizeLongTaskMinutes(12.6), 13);
+  assert.equal(normalizeLongTaskMinutes(0), 1);
+  assert.equal(normalizeLongTaskMinutes(99_999), 1_440);
+  assert.equal(normalizeLongTaskMinutes('30'), undefined);
+  assert.equal(normalizeLongTaskMinutes(Number.NaN), undefined);
+  assert.equal(normalizeLongTaskMinutes(Number.POSITIVE_INFINITY), undefined);
+});
 
 test('超过阈值的回合结束时发提醒，正文含标题/耗时/结论', async () => {
   const h = harness();

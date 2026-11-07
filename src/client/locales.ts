@@ -61,6 +61,14 @@ export const en = {
   '接入我的超级助理': 'Connect to My Superagent',
   '关掉后本插件不向超级助理注册，改由插件自己把问题与长任务提醒发到微信。':
     'When off, this plugin does not register with My Superagent and sends questions and long-task reminders to WeChat itself.',
+  '长任务提醒': 'Long-task reminders',
+  '提醒阈值（分钟）': 'Reminder threshold (minutes)',
+  '根会话的一个回合超过这个时长才发提醒；只在本插件发送提醒时生效。':
+    'A root-session turn triggers a reminder only when it runs longer than this; applies when this plugin sends the reminders.',
+  '分钟': 'min',
+  '保存': 'Save',
+  '当前阈值': 'Current threshold',
+  '阈值必须是大于 0 的分钟数': 'The threshold must be a number of minutes greater than 0',
   '等待作答的问题': 'Questions awaiting an answer',
   '跟踪中的长任务': 'Long tasks being tracked',
   '提醒来源': 'Reminder source',

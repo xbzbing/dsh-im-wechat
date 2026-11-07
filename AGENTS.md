@@ -16,7 +16,7 @@
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`link`（延后注册的 `BridgeBinder`） |
 | `src/host/questions.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、作答匹配、长任务提醒、根会话识别 |
 | `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`；目录 `0700`、文件 `0600`、原子写 |
-| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`panel-rpc.ts` 面板 RPC、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`owner-channel.ts` 主人收发通道（收件人解析、主人判定、发送失败记账）、`panel-rpc.ts` 面板 RPC、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |
 | `src/shared/` | 跨上下文的纯函数：版本常量、二维码编码器 |
 | `test/unit/`、`test/fixtures/` | 单元测试与夹具 |

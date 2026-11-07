@@ -37,6 +37,11 @@ export function errorDetail(error: unknown): unknown {
   return error instanceof Error ? error.message : error;
 }
 
+/** 给人看的错误文本：Error 取 message，其它退回「未知错误」。 */
+export function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : '未知错误';
+}
+
 /**
  * 按需接入一个可选宿主服务。
  *

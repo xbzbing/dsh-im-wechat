@@ -18,7 +18,8 @@ import { SessionGuard } from './ilink/session-guard.ts';
 import { toOwnerMessageDraft } from './inbound.ts';
 import { messageText } from './ilink/identity.ts';
 import type { WeixinMessage } from './ilink/types.ts';
-import { sendText } from './ilink/send.ts';
+import { messageOf } from './host-context.ts';
+import { OwnerChannel } from './owner-channel.ts';
 import { QuestionBroker } from './questions.ts';
 import type { QuestionNext, QuestionRequest } from './questions.ts';
 import { LongTaskNotifier } from './long-tasks.ts';
@@ -97,6 +98,7 @@ export class WeixinRuntime {
   readonly #localConfig: LocalConfigStore;
   readonly #guard: SessionGuard;
   readonly #loginController: LoginController;
+  readonly #owner: OwnerChannel;
 
   #binder: BridgeBinder | null = null;
   #bridge: WeixinBridge | null = null;
@@ -133,16 +135,24 @@ export class WeixinRuntime {
     this.#tokenStore = new ContextTokenStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
     this.#localConfig = new LocalConfigStore({ dir: this.#dir, logger: this.#logger });
     this.#guard = new SessionGuard({ now: this.#now });
+    this.#owner = new OwnerChannel({
+      active: () => this.#ownFeaturesActive(),
+      api: () => this.#api,
+      account: () => this.#loginState?.account,
+      ownerId: () => this.#loginState?.userId,
+      token: (account, to) => this.#tokenStore.get(account, to),
+      noteError: (message) => this.#noteError(message),
+    });
     this.#questions = new QuestionBroker({
-      send: (text) => this.#sendToOwner(text),
-      recipient: () => this.#ownerRecipient(),
+      send: (text) => this.#owner.send(text),
+      recipient: () => this.#owner.recipient(),
       isRoot: (agentId) => this.#roots.isRoot(agentId),
       logger: this.#logger,
       now: this.#now,
     });
     this.#longTasks = new LongTaskNotifier({
-      send: (text) => this.#sendToOwner(text),
-      recipient: () => this.#ownerRecipient(),
+      send: (text) => this.#owner.send(text),
+      recipient: () => this.#owner.recipient(),
       isRoot: (sessionId) => this.#roots.isRoot(sessionId),
       now: this.#now,
       logger: this.#logger,
@@ -279,44 +289,6 @@ export class WeixinRuntime {
     if (!active) this.#questions.cancelAll('已切换为接入我的超级助理，提问交回 Web 端');
   }
 
-  /**
-   * 自有功能的收件人：**只认扫码登录的那个微信用户**。
-   *
-   * 不能退回到「最近一个发消息的人」：陌生人只要给机器人发一句话，就能把待答问题
-   * 答掉、还能成为后续提醒的收件人（ADR-0004 的同一类风险）。
-   */
-  #ownerRecipient(): string | null {
-    if (!this.#ownFeaturesActive()) return null;
-    const userId = this.#loginState?.userId;
-    if (typeof userId === 'string' && userId !== '') return userId;
-    return null;
-  }
-
-  /** 发送者是不是已确认的主人（扫码登录的用户）。 */
-  #isConfirmedOwner(sender: string): boolean {
-    const userId = this.#loginState?.userId;
-    return typeof userId === 'string' && userId !== '' && sender.toLowerCase() === userId.toLowerCase();
-  }
-
-  /** 把一段文本发到主人的微信；没有可用令牌时返回 false。 */
-  async #sendToOwner(text: string): Promise<boolean> {
-    const api = this.#api;
-    const account = this.#loginState?.account;
-    const recipient = this.#ownerRecipient();
-    if (!api || !account || recipient === null) return false;
-    try {
-      await sendText(api, {
-        to: recipient,
-        text,
-        contextToken: this.#tokenStore.get(account, recipient),
-      });
-      return true;
-    } catch (error) {
-      this.#noteError(`提醒发送失败：${messageOf(error)}`);
-      return false;
-    }
-  }
-
   /** 开始扫码登录；返回初始快照（含二维码内容）。 */
   async startLogin(): Promise<LoginSnapshot> {
     return this.#loginController.start();
@@ -450,7 +422,7 @@ export class WeixinRuntime {
 
     // 自有功能先认领：这条文本可能是主人在回答微信里的问题。
     // 只认已确认主人的消息——陌生人的文本绝不能把主人的问题答掉。
-    if (this.#ownFeaturesActive() && this.#isConfirmedOwner(sender)) {
+    if (this.#ownFeaturesActive() && this.#owner.isOwner(sender)) {
       const text = messageText(message.item_list);
       if (text.trim() !== '' && this.#questions.reply(text)) return;
     }
@@ -491,8 +463,4 @@ export class WeixinRuntime {
     this.#errors.push({ at: this.#now(), message });
     if (this.#errors.length > MAX_ERRORS) this.#errors.shift();
   }
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : '未知错误';
 }

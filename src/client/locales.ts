@@ -55,6 +55,17 @@ export const en = {
   '刷新': 'Refresh',
   '登出后需要重新扫码才能继续接收微信消息。': 'After signing out you must scan again to receive WeChat messages.',
   '二维码': 'QR code',
+  '连接': 'Connection',
+  '接入方式': 'Connection mode',
+  '运行状态': 'Runtime',
+  '接入我的超级助理': 'Connect to My Superagent',
+  '关掉后本插件不向超级助理注册，改由插件自己把问题与长任务提醒发到微信。':
+    'When off, this plugin does not register with My Superagent and sends questions and long-task reminders to WeChat itself.',
+  '等待作答的问题': 'Questions awaiting an answer',
+  '跟踪中的长任务': 'Long tasks being tracked',
+  '提醒来源': 'Reminder source',
+  '由本插件发送': 'Sent by this plugin',
+  '由超级助理发送': 'Sent by My Superagent',
 } as const;
 
 /** 中文模式：键即译文。 */

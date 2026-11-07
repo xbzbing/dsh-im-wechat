@@ -1,9 +1,12 @@
 /**
- * 微信桥的设置面板：状态、扫码登录、开关与最近错误。
+ * 微信桥的设置面板。
  *
- * 一切状态都来自 host（面板不推断）：登录由 host 半驱动、面板只轮询快照；
- * 开关与登出是显式动作，做完再拉一次状态。二维码在浏览器里现画（`shared/qr.ts`），
- * 画不出来就退回显示链接——登录流程不依赖画码是否成功（ADR-0002）。
+ * 一切状态都来自 host（面板不推断）：登录由 host 半驱动、面板只轮询快照；开关是显式
+ * 动作，做完再拉一次状态。二维码在浏览器里现画（`shared/qr.ts`），画不出来就退回
+ * 显示链接——登录流程不依赖画码是否成功（ADR-0002）。
+ *
+ * 控件优先用官方 UI 原语（`ui.ts`），布局用设计令牌（`styles.ts`），因此深浅色主题
+ * 自动跟随。
  */
 
 import { ENDPOINTS, LOGIN_POLL_INTERVAL_MS, REFRESH_INTERVAL_MS, REQUIRED_CONTRACT } from './constants.ts';
@@ -18,78 +21,36 @@ import {
   qrImageUrl,
 } from './logic.ts';
 import { h, useCallback, useEffect, useMemo, useState } from './platform.ts';
+import { ensureStyles } from './styles.ts';
+import { Button, IconCopy, IconLink, IconRefresh, Input, Pill, StateDot, Switch, copyText } from './ui.ts';
 
-const S: Record<string, any> = {
-  root: { display: 'flex', flexDirection: 'column', gap: 16, padding: '4px 0' },
-  header: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  title: { fontSize: 15, fontWeight: 600, margin: 0 },
-  version: { fontSize: 12, opacity: 0.55 },
-  muted: { fontSize: 12, opacity: 0.7, lineHeight: 1.6, margin: 0 },
-  card: {
-    border: '1px solid rgba(127,127,127,0.22)',
-    borderRadius: 10,
-    padding: 14,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-  },
-  cardTitle: { fontSize: 13, fontWeight: 600, margin: 0 },
-  row: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  label: { fontSize: 12, opacity: 0.65, minWidth: 64 },
-  value: { fontSize: 13, wordBreak: 'break-all' as const },
-  badge: { fontSize: 11, padding: '2px 8px', borderRadius: 999, border: '1px solid currentColor' },
-  button: {
-    fontSize: 12,
-    padding: '6px 12px',
-    borderRadius: 8,
-    border: '1px solid rgba(127,127,127,0.35)',
-    background: 'transparent',
-    color: 'inherit',
-    cursor: 'pointer',
-  },
-  primary: {
-    fontSize: 12,
-    padding: '6px 12px',
-    borderRadius: 8,
-    border: '1px solid rgba(127,127,127,0.35)',
-    background: 'rgba(127,127,127,0.12)',
-    color: 'inherit',
-    cursor: 'pointer',
-  },
-  input: {
-    fontSize: 12,
-    padding: '6px 10px',
-    borderRadius: 8,
-    border: '1px solid rgba(127,127,127,0.35)',
-    background: 'transparent',
-    color: 'inherit',
-    width: 160,
-  },
-  qr: { display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' },
-  qrImage: {
-    width: 168,
-    height: 168,
-    borderRadius: 8,
-    background: '#fff',
-    padding: 6,
-    imageRendering: 'pixelated' as const,
-  },
-  qrSide: { display: 'flex', flexDirection: 'column', gap: 8, flex: 1, minWidth: 220 },
-  link: { fontSize: 11, opacity: 0.7, wordBreak: 'break-all' as const, fontFamily: 'ui-monospace, monospace' },
-  error: { fontSize: 12, color: '#d9534f', margin: 0 },
-  notice: { fontSize: 12, opacity: 0.75, margin: 0 },
-};
-
-function Badge({ label, tone }: any) {
-  const color = tone === 'ok' ? '#2e9d5b' : tone === 'warn' ? '#c9821a' : 'rgba(127,127,127,0.8)';
-  return h('span', { style: { ...S.badge, color } }, label);
+/** 健康状态 → StateDot 的取值。 */
+function healthDot(state: string): 'done' | 'warning' | 'error' | 'idle' {
+  if (state === 'ok') return 'done';
+  if (state === 'degraded') return 'warning';
+  if (state === 'down') return 'error';
+  return 'idle';
 }
 
-function Field({ label, value }: any) {
+function Row({ label, value }: any) {
   if (!value) return null;
-  return h('div', { style: S.row },
-    h('span', { style: S.label }, label),
-    h('span', { style: S.value }, value));
+  return h('div', { className: 'wx-item' },
+    h('span', { className: 'wx-item-label' }, label),
+    h('span', { className: 'wx-item-desc' }, value));
+}
+
+/** 带说明的开关行：标题 + 说明在左，开关在右。 */
+function SwitchRow({ title, description, checked, disabled, onChange }: any) {
+  return h('div', { className: 'wx-row-between' },
+    h('div', { className: 'wx-item' },
+      h('span', { className: 'wx-item-label' }, title),
+      description ? h('span', { className: 'wx-item-desc' }, description) : null),
+    h(Switch, {
+      checked,
+      disabled,
+      label: title,
+      onChange: (next: boolean) => onChange(next),
+    }));
 }
 
 export function WeixinSettingsPanel(props: any) {
@@ -101,6 +62,10 @@ export function WeixinSettingsPanel(props: any) {
   const [busy, setBusy] = useState('');
   const [code, setCode] = useState('');
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    ensureStyles();
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -130,8 +95,7 @@ export function WeixinSettingsPanel(props: any) {
     setBusy(name);
     setActionError('');
     try {
-      const next = await action();
-      if (next && typeof next === 'object' && 'loggedIn' in next) setStatus(next);
+      await action();
       await refresh();
     } catch (error) {
       setActionError(describeError(error).message);
@@ -141,166 +105,192 @@ export function WeixinSettingsPanel(props: any) {
   }, [refresh]);
 
   const login = status?.login ?? { phase: 'idle', refreshed: 0 };
-  const qrData = useMemo(() => qrImageUrl(typeof login.qrContent === 'string' ? login.qrContent : ''), [login.qrContent]);
+  const qrData = useMemo(
+    () => qrImageUrl(typeof login.qrContent === 'string' ? login.qrContent : ''),
+    [login.qrContent],
+  );
   // 服务端给的二维码内容只在 https 时才渲染成可点链接（防 javascript: 注入）。
   const qrLink = isHttpsUrl(login.qrContent) ? String(login.qrContent) : null;
 
   const copyLink = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(String(login.qrContent ?? ''));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1_500);
+      if (await copyText(String(login.qrContent ?? ''))) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1_500);
+        return;
+      }
+      setActionError(t('操作失败'));
     } catch {
       setActionError(t('操作失败'));
     }
   }, [login.qrContent, t]);
 
   if (loading && !status) {
-    return h('div', { style: S.root, 'data-plugin': 'dsh-im-wechat' },
-      h('p', { style: S.muted }, t('加载中…')));
+    return h('div', { className: 'wx-root', 'data-plugin': 'dsh-im-wechat' },
+      h('p', { className: 'wx-hint' }, t('加载中…')));
   }
 
   const loggedIn = status?.loggedIn === true;
   const enabled = status?.enabled !== false;
-  const health = status?.health;
+  const superagent = status?.superagent !== false;
+  const health = status?.health ?? {};
   const active = isLoginActive(login.phase);
-  const showLogin = active || login.phase === 'failed' || login.phase === 'binded';
+  const showLoginPanel = active || login.phase === 'failed' || login.phase === 'binded';
 
-  return h('div', { style: S.root, 'data-plugin': 'dsh-im-wechat' },
-    h('div', { style: S.header },
-      h('h4', { style: S.title }, t('微信桥')),
-      h('span', { style: S.version }, `${t('插件版本')} ${status?.version ?? ''}`),
-      h(Badge, {
-        label: !enabled ? t('已停用') : loggedIn ? t('已登录') : t('未登录'),
-        tone: enabled && loggedIn ? 'ok' : 'warn',
-      }),
-      isHostOlder(status, REQUIRED_CONTRACT)
-        ? h(Badge, { label: t('请重启 dsh web：面板比 Host 新'), tone: 'warn' })
-        : null),
+  return h('div', { className: 'wx-root', 'data-plugin': 'dsh-im-wechat' },
 
-    h('p', { style: S.muted },
+    // ---------------------------------------------------------------- 顶栏
+    h('div', { className: 'wx-head' },
+      h('h3', { className: 'wx-title' }, t('微信桥')),
+      h('span', { className: 'wx-version' }, `${t('插件版本')} ${status?.version ?? ''}`),
+      h('span', { className: 'wx-status' },
+        h(StateDot, { state: !enabled ? 'idle' : loggedIn ? healthDot(String(health.state ?? 'ok')) : 'warning' }),
+        !enabled ? t('已停用') : loggedIn ? t('已登录') : t('未登录')),
+      h('div', { className: 'wx-spacer' }),
+      isHostOlder(status, REQUIRED_CONTRACT) ? h(Pill, null, t('请重启 dsh web：面板比 Host 新')) : null,
+      h(Button, {
+        variant: 'ghost',
+        size: 'sm',
+        icon: h(IconRefresh, null),
+        disabled: busy !== '',
+        onClick: () => void refresh(),
+      }, t('刷新'))),
+
+    h('p', { className: 'wx-hint' },
       t('把微信接入本机 Harness：扫码登录后，核心的交付会送到你的微信，你在微信里说的话也会回到核心。')),
 
-    h('div', { style: S.card },
-      h('h5', { style: S.cardTitle }, t('状态')),
-      h(Field, { label: t('账号'), value: status?.accountTail }),
-      h(Field, { label: t('登录时间'), value: formatTime(status?.loggedInAt) }),
-      h(Field, { label: t('状态'), value: describeHealth(health) }),
-      h(Field, {
-        label: t('已接入超级助理'),
-        value: status?.bridge?.registered
-          ? t('已接入超级助理')
-          : t('未接入超级助理（未安装核心插件）'),
-      }),
-      h('div', { style: S.row },
-        h('button', {
-          type: 'button',
-          style: S.button,
-          disabled: busy !== '',
-          onClick: () => void refresh(),
-        }, t('刷新')))),
+    // ---------------------------------------------------------------- 连接
+    h('section', { className: 'wx-section' },
+      h('h4', { className: 'wx-section-title' }, t('连接')),
+      h('dl', { className: 'wx-kv' },
+        status?.accountTail ? h('dt', null, t('账号')) : null,
+        status?.accountTail ? h('dd', null, status.accountTail) : null,
+        status?.loggedInAt ? h('dt', null, t('登录时间')) : null,
+        status?.loggedInAt ? h('dd', null, formatTime(status.loggedInAt)) : null,
+        h('dt', null, t('状态')),
+        h('dd', null, loggedIn ? describeHealth(health) : t('未登录')),
+        h('dt', null, t('已接入超级助理')),
+        h('dd', null, status?.bridge?.registered ? t('已接入超级助理') : t('未接入超级助理'))),
 
-    h('div', { style: S.card },
-      h('h5', { style: S.cardTitle }, t('扫码登录')),
-      !showLogin && !loggedIn
-        ? h('div', { style: S.row },
-          h('button', {
-            type: 'button',
-            style: S.primary,
-            disabled: busy !== '',
-            onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
-          }, busy === 'login' ? t('加载中…') : t('扫码登录')))
-        : null,
-
-      showLogin
-        ? h('div', { style: S.qr },
+      // 扫码进行中
+      showLoginPanel
+        ? h('div', { className: 'wx-qr' },
           qrData
-            ? h('img', { style: S.qrImage, src: qrData, alt: t('二维码') })
-            : h('p', { style: S.notice }, t('无法显示二维码时，可复制下面的链接在手机微信中打开：')),
-          h('div', { style: S.qrSide },
-            h('p', { style: S.muted }, describeLoginPhase(login.phase) || t('等待扫码')),
+            ? h('img', { className: 'wx-qr-img', src: qrData, alt: t('二维码') })
+            : null,
+          h('div', { className: 'wx-qr-side' },
+            h('span', { className: 'wx-item-label' }, describeLoginPhase(login.phase) || t('等待扫码')),
+            qrData ? null : h('p', { className: 'wx-hint' }, t('无法显示二维码时，可复制下面的链接在手机微信中打开：')),
             login.phase === 'failed' && login.error
-              ? h('p', { style: S.error }, String(login.error))
+              ? h('p', { className: 'wx-error' }, String(login.error))
               : null,
-            login.qrContent
-              ? h('div', { style: S.row },
-                h('button', { type: 'button', style: S.button, onClick: () => void copyLink() },
-                  copied ? t('已复制') : t('复制链接')),
-                qrLink
-                  ? h('a', {
-                    style: { ...S.button, textDecoration: 'none' },
-                    href: qrLink,
-                    target: '_blank',
-                    rel: 'noreferrer',
-                  }, t('打开链接'))
-                  : null)
-              : null,
-            login.qrContent ? h('code', { style: S.link }, String(login.qrContent)) : null,
+            login.qrContent ? h('code', { className: 'wx-link' }, String(login.qrContent)) : null,
             login.phase === 'need-verify-code'
-              ? h('div', { style: S.row },
-                h('input', {
-                  style: S.input,
+              ? h('div', { className: 'wx-code-row' },
+                h(Input, {
                   value: code,
                   placeholder: t('验证码'),
+                  'aria-label': t('验证码'),
                   onChange: (event: any) => setCode(event.target.value),
                 }),
-                h('button', {
-                  type: 'button',
-                  style: S.primary,
+                h(Button, {
+                  variant: 'primary',
+                  size: 'sm',
                   disabled: busy !== '' || code.trim() === '',
                   onClick: () => void run('code', () => rpcCall(ENDPOINTS.loginCode, { code: code.trim() })),
                 }, t('提交验证码')))
               : null,
-            h('div', { style: S.row },
+            h('div', { className: 'wx-row' },
+              login.qrContent
+                ? h(Button, { variant: 'ghost', size: 'sm', icon: h(IconCopy, null), onClick: () => void copyLink() },
+                  copied ? t('已复制') : t('复制链接'))
+                : null,
+              qrLink
+                ? h(Button, {
+                  variant: 'ghost',
+                  size: 'sm',
+                  icon: h(IconLink, null),
+                  onClick: () => window.open(qrLink, '_blank', 'noreferrer'),
+                }, t('打开链接'))
+                : null,
               active
-                ? h('button', {
-                  type: 'button',
-                  style: S.button,
+                ? h(Button, {
+                  variant: 'ghost',
+                  size: 'sm',
                   disabled: busy !== '',
                   onClick: () => void run('cancel', () => rpcCall(ENDPOINTS.loginCancel)),
                 }, t('取消'))
-                : h('button', {
-                  type: 'button',
-                  style: S.button,
+                : h(Button, {
+                  variant: 'ghost',
+                  size: 'sm',
                   disabled: busy !== '',
                   onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
                 }, t('重新开始')))))
         : null,
 
-      loggedIn
-        ? h('div', { style: S.row },
-          h('button', {
-            type: 'button',
-            style: S.primary,
-            disabled: busy !== '',
-            onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
-          }, t('重新扫码')),
-          h('button', {
-            type: 'button',
-            style: S.button,
-            disabled: busy !== '',
-            onClick: () => void run('logout', () => rpcCall(ENDPOINTS.logout)),
-          }, t('登出')),
-          h('span', { style: S.muted }, t('登出后需要重新扫码才能继续接收微信消息。')))
+      // 未登录 / 已登录的操作
+      !showLoginPanel
+        ? h('div', { className: 'wx-row' },
+          !loggedIn
+            ? h(Button, {
+              variant: 'primary',
+              size: 'md',
+              disabled: busy !== '',
+              onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
+            }, busy === 'login' ? t('加载中…') : t('扫码登录'))
+            : h(Button, {
+              variant: 'outline',
+              size: 'md',
+              disabled: busy !== '',
+              onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
+            }, t('重新扫码')),
+          loggedIn
+            ? h(Button, {
+              variant: 'ghost',
+              size: 'md',
+              disabled: busy !== '',
+              onClick: () => void run('logout', () => rpcCall(ENDPOINTS.logout)),
+            }, t('登出'))
+            : null,
+          loggedIn ? h('span', { className: 'wx-hint' }, t('登出后需要重新扫码才能继续接收微信消息。')) : null)
         : null),
 
-    h('div', { style: S.card },
-      h('h5', { style: S.cardTitle }, t('接入微信（收消息）')),
-      h('div', { style: S.row },
-        h('input', {
-          type: 'checkbox',
-          checked: enabled,
-          disabled: busy !== '',
-          onChange: (event: any) => void run('enabled', () =>
-            rpcCall(ENDPOINTS.setEnabled, { enabled: event.target.checked })),
-        }),
-        h('span', { style: S.muted }, t('停用后不再收取微信消息，核心的交付也不会发到这个渠道。')))),
+    h('div', { className: 'wx-divider' }),
 
-    h('div', { style: S.card },
-      h('h5', { style: S.cardTitle }, t('最近错误')),
+    // ---------------------------------------------------------------- 开关
+    h('section', { className: 'wx-section' },
+      h('h4', { className: 'wx-section-title' }, t('接入方式')),
+      h(SwitchRow, {
+        title: t('接入微信（收消息）'),
+        description: t('停用后不再收取微信消息，核心的交付也不会发到这个渠道。'),
+        checked: enabled,
+        disabled: busy !== '',
+        onChange: (next: boolean) => void run('enabled', () => rpcCall(ENDPOINTS.setEnabled, { enabled: next })),
+      }),
+      h(SwitchRow, {
+        title: t('接入我的超级助理'),
+        description: t('关掉后本插件不向超级助理注册，改由插件自己把问题与长任务提醒发到微信。'),
+        checked: superagent,
+        disabled: busy !== '',
+        onChange: (next: boolean) => void run('superagent', () => rpcCall(ENDPOINTS.setSuperagent, { enabled: next })),
+      })),
+
+    // ---------------------------------------------------------------- 运行状态
+    h('section', { className: 'wx-section' },
+      h('h4', { className: 'wx-section-title' }, t('运行状态')),
+      h(Row, { label: t('等待作答的问题'), value: String(status?.pendingQuestions ?? 0) }),
+      h(Row, { label: t('跟踪中的长任务'), value: String(status?.trackingTasks ?? 0) }),
+      h(Row, {
+        label: t('提醒来源'),
+        value: status?.ownFeatures ? t('由本插件发送') : t('由超级助理发送'),
+      })),
+
+    // ---------------------------------------------------------------- 错误
+    h('section', { className: 'wx-section' },
+      h('h4', { className: 'wx-section-title' }, t('最近错误')),
       status?.lastError?.message
-        ? h('p', { style: S.error }, `${formatTime(status.lastError.at)} ${String(status.lastError.message)}`)
-        : h('p', { style: S.muted }, t('暂无')),
-      actionError ? h('p', { style: S.error }, actionError) : null),
+        ? h('p', { className: 'wx-error' }, `${formatTime(status.lastError.at)} ${String(status.lastError.message)}`)
+        : h('p', { className: 'wx-hint' }, t('暂无')),
+      actionError ? h('p', { className: 'wx-error' }, actionError) : null),
   );
 }

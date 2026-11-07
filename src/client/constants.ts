@@ -39,4 +39,5 @@ export const ENDPOINTS = Object.freeze({
   loginCancel: 'login.cancel',
   logout: 'logout',
   setEnabled: 'enabled.set',
+  setSuperagent: 'superagent.set',
 } as const);

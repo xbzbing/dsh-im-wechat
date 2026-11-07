@@ -18,6 +18,7 @@
     "cordis.patch.yml",
     "locale/*.json",
     "assets/icon.svg",
+    "assets/icon-whale.svg",
     "docs/adr",
     "README.md",
     "LICENSE"

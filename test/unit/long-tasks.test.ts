@@ -10,8 +10,8 @@ import {
 } from '../../src/host/long-tasks.ts';
 import { RootAgents } from '../../src/host/host-agents.ts';
 
-/** harness 显式配一个 10 分钟的阈值：默认值另有测试，这里只验证机制。 */
-const TEN_MINUTES_MS = 10 * 60_000;
+/** harness 显式配 10 分钟阈值：默认值另有测试，这里只验证机制。 */
+const TEN_MINUTES = 10;
 
 function event(type: string, data: Record<string, unknown> = {}, time = 0): Record<string, unknown> {
   return { type, seq: 1, time, data };
@@ -38,7 +38,7 @@ function harness(options: { sendOk?: boolean; root?: boolean } = {}) {
     isRoot: () => options.root !== false,
     titleOf: (id) => (id === 's1' ? '重构设置页' : null),
     now: () => clock,
-    thresholdMs: TEN_MINUTES_MS,
+    thresholdMinutes: TEN_MINUTES,
   });
   notifier.configure(true);
   return { notifier, sent, advance: (ms: number) => { clock += ms; } };
@@ -71,18 +71,24 @@ test('阈值默认 30 分钟：29 分钟不发，31 分钟发', async () => {
   assert.match(sent[0], /耗时：31分0秒/);
 });
 
-test('改阈值后对下一个回合立即生效，不用重建跟踪器', async () => {
+test('改阈值后立即生效，正在跑的回合也按新阈值判定', async () => {
   const h = harness();
-  // harness 的阈值是 10 分钟；面板改成 1 小时后，11 分钟的回合不再提醒。
-  h.notifier.setThresholdMs(60 * 60_000);
-  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
-  h.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 11 * 60_000));
-  await flush();
-  assert.equal(h.sent.length, 0);
+  assert.equal(h.notifier.thresholdMinutes, TEN_MINUTES);
+  h.notifier.setThresholdMinutes(60);
+  assert.equal(h.notifier.thresholdMinutes, 60);
 
-  h.notifier.setThresholdMs(5 * 60_000);
+  // 回合开始后才改阈值：结束判定读的是当前值。
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.setThresholdMinutes(45);
+  h.notifier.handleEvent('s1', event('assistant/message', assistant('快了'), 1_000));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 50 * 60_000));
+  await flush();
+  // 45 分钟阈值下 50 分钟的回合该提醒。
+  assert.equal(h.sent.length, 1);
+
+  h.notifier.setThresholdMinutes(60);
   h.notifier.handleEvent('s1', event('turn/start', { turn: 2 }, 0));
-  h.notifier.handleEvent('s1', event('turn/end', { turn: 2 }, 11 * 60_000));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 2 }, 50 * 60_000));
   await flush();
   assert.equal(h.sent.length, 1);
 });

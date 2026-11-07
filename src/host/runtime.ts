@@ -45,7 +45,6 @@ import { PLUGIN_VERSION } from '../shared/version.ts';
 export const HOST_CONTRACT = 2;
 
 const MAX_ERRORS = 5;
-const MINUTE_MS = 60_000;
 
 export interface RuntimeLogger {
   info?(...args: unknown[]): unknown;
@@ -113,7 +112,6 @@ export class WeixinRuntime {
   #errors: { at: number; message: string }[] = [];
   #enabled = true;
   #superagent = true;
-  #longTaskMinutes: number;
   #started = false;
   readonly #roots = new RootAgents();
   readonly #questions: QuestionBroker;
@@ -122,7 +120,6 @@ export class WeixinRuntime {
 
   constructor(deps: RuntimeDeps = {}) {
     this.#config = normalizePluginConfig(deps.config);
-    this.#longTaskMinutes = this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES;
     this.#dir = resolveConfigDir(this.#config);
     this.#logger = deps.logger ?? {};
     this.#now = deps.now ?? Date.now;
@@ -161,7 +158,7 @@ export class WeixinRuntime {
       isRoot: (sessionId) => this.#roots.isRoot(sessionId),
       now: this.#now,
       logger: this.#logger,
-      thresholdMs: this.#longTaskMinutes * MINUTE_MS,
+      thresholdMinutes: this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
     });
     this.#loginController = new LoginController({
       apiFactory: (baseUrl) => this.#createApi({ baseUrl }),
@@ -219,7 +216,7 @@ export class WeixinRuntime {
     const stored = await this.#localConfig.load();
     this.#enabled = stored.enabled ?? this.#config.enabled ?? true;
     this.#superagent = stored.superagent ?? this.#config.superagent ?? true;
-    this.#applyLongTaskMinutes(
+    this.#longTasks.setThresholdMinutes(
       stored.longTaskThresholdMinutes ?? this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
     );
     this.#loginState = await this.#loginStore.load();
@@ -263,7 +260,7 @@ export class WeixinRuntime {
       ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
       pendingQuestions: this.#questions.snapshot().pending,
       trackingTasks: this.#longTasks.tracking,
-      longTaskThresholdMinutes: this.#longTaskMinutes,
+      longTaskThresholdMinutes: this.#longTasks.thresholdMinutes,
       loggedIn: login !== null,
       ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
       login: this.#loginController.snapshot(),
@@ -347,7 +344,7 @@ export class WeixinRuntime {
   /** 保存长任务阈值（分钟）：就地生效，不重连微信。 */
   async setLongTaskThreshold(minutes: number): Promise<RuntimeStatus> {
     const next = normalizeLongTaskMinutes(minutes) ?? DEFAULT_LONG_TASK_MINUTES;
-    this.#applyLongTaskMinutes(next);
+    this.#longTasks.setThresholdMinutes(next);
     await this.#localConfig.save({ longTaskThresholdMinutes: next });
     return this.status();
   }
@@ -475,12 +472,6 @@ export class WeixinRuntime {
         ...(health.reason ? { reason: health.reason } : {}),
       };
     if (health.state !== 'ok' && health.reason) this.#noteError(health.reason);
-  }
-
-  /** 阈值只有一个入口：运行期的展示值与提醒器里的判定值一起改，免得两者不一致。 */
-  #applyLongTaskMinutes(minutes: number): void {
-    this.#longTaskMinutes = minutes;
-    this.#longTasks.setThresholdMs(minutes * MINUTE_MS);
   }
 
   #noteError(message: string): void {

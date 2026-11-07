@@ -9,8 +9,8 @@
  * 这里必须停掉，否则同一条提醒会来两遍（ADR-0006）。所以只在自有功能生效时工作。
  *
  * 与如流实现的差别：只用文本、不发卡片；不做「安静期」（用完即发），避免主人
- * 关掉面板后仍然收不到；阈值默认 30 分钟，可由配置或面板改（`setThresholdMs`），
- * 改完对已经在跟踪的回合也生效。
+ * 关掉面板后仍然收不到；阈值默认 30 分钟，单位全程是**分钟**（配置、面板、状态
+ * 都同一个数），由 `setThresholdMinutes` 改，改完对已经在跟踪的回合也生效。
  */
 
 export interface LongTaskLogger {
@@ -36,8 +36,8 @@ export interface LongTaskNotifierOptions {
   titleOf?: (sessionId: string) => string | null;
   now?: () => number;
   logger?: LongTaskLogger;
-  /** 超过这个时长才算「长任务」。 */
-  thresholdMs?: number;
+  /** 超过这么多分钟才算「长任务」；默认 30。 */
+  thresholdMinutes?: number;
   /** 单条提醒的字符上限，超长截断（不丢结论的头）。 */
   maxChars?: number;
   /** 同时跟踪的会话上限。 */
@@ -63,7 +63,7 @@ export const MIN_LONG_TASK_MINUTES = 1;
 export const MAX_LONG_TASK_MINUTES = 24 * 60;
 
 const UNTITLED_SESSION = '未命名会话';
-const DEFAULT_THRESHOLD_MS = DEFAULT_LONG_TASK_MINUTES * 60_000;
+const MINUTE_MS = 60_000;
 const DEFAULT_MAX_CHARS = 1_800;
 const TRACKED_MAX = 100;
 
@@ -118,7 +118,7 @@ export function longTaskText(params: {
 export class LongTaskNotifier {
   readonly #options: LongTaskNotifierOptions;
   readonly #now: () => number;
-  #thresholdMs: number;
+  #thresholdMinutes: number;
   readonly #maxChars: number;
   readonly #records = new Map<string, SessionRecord>();
   /** 目标先于回合到达时暂存，`turn/start` 时带上。 */
@@ -128,7 +128,7 @@ export class LongTaskNotifier {
   constructor(options: LongTaskNotifierOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
-    this.#thresholdMs = options.thresholdMs ?? DEFAULT_THRESHOLD_MS;
+    this.#thresholdMinutes = options.thresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES;
     this.#maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
   }
 
@@ -143,9 +143,14 @@ export class LongTaskNotifier {
     return this.#records.size;
   }
 
+  /** 当前阈值（分钟）：状态快照直接读它，避免运行期再存一份可能分叉的数。 */
+  get thresholdMinutes(): number {
+    return this.#thresholdMinutes;
+  }
+
   /** 改阈值：面板保存后立即生效，不重建跟踪器（已跟踪的回合按新阈值判定）。 */
-  setThresholdMs(ms: number): void {
-    if (Number.isFinite(ms) && ms > 0) this.#thresholdMs = ms;
+  setThresholdMinutes(minutes: number): void {
+    this.#thresholdMinutes = minutes;
   }
 
   /** `session/event` 监听器实现。 */
@@ -257,7 +262,7 @@ export class LongTaskNotifier {
     const reason = asRecord(data.reason);
     const kind = typeof reason?.kind === 'string' ? reason.kind : '';
     const failed = kind !== '' && kind !== 'completed' && kind !== 'max-tokens';
-    if (record.interacted || duration <= this.#thresholdMs) {
+    if (record.interacted || duration <= this.#thresholdMinutes * MINUTE_MS) {
       this.#records.delete(sessionId);
       return;
     }

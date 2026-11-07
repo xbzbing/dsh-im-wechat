@@ -1,9 +1,182 @@
 /**
- * 超级助理桥适配（骨架占位）。
+ * 超级助理桥：把 `deliver` 落到微信，把健康状态如实报给核心。
  *
- * 按 `my-superagent/v1` 协议向核心注册 `bridges`：`deliver` 把交付渲染成
- * 微信消息，`receive` 把主人消息原样交回核心。桥不解析命令、不判断身份，
- * 命令解析与主人判定都在核心（协议约定，ADR-0001）。类型只做结构描述，
- * 不 import dsh-my-superagent 的包。
+ * 桥的职责边界（AGENTS.md「安全红线」）：呈现与转发，不解析命令、不判断身份。
+ * 交付的降级规则在 `render.ts`；发送与回执映射在 `ilink/send.ts`。
+ *
+ * 分条发送的幂等：核心对 `failed` 的回执会重试同一个 `delivery.id`。若第一条已
+ * 发出、第二条失败，重试必须从断点续发，否则主人会收到重复内容。进度只留在内存
+ * 里——进程重启后重发一遍，比「以为发过其实没发」安全。
  */
-export {};
+
+import { classifySendFailure, sendText } from '../ilink/send.ts';
+import type { ILinkApi } from '../ilink/api.ts';
+import type { SessionGuard } from '../ilink/session-guard.ts';
+import type { ContextTokenStore } from '../state/context-tokens.ts';
+import {
+  FEATURE_OWNER_IMAGES,
+  FEATURE_OWNER_LOOKUP,
+  PROTOCOL_V1,
+} from './protocol.ts';
+import type {
+  BridgeCapabilities,
+  BridgeHandle,
+  BridgeHealth,
+  BridgeProvider,
+  Delivery,
+  Receipt,
+} from './protocol.ts';
+import { MAX_TEXT_CHARS, composeDeliveryText, splitText } from './render.ts';
+
+export const WEIXIN_PLATFORM = 'weixin';
+
+export interface BridgeLogger {
+  info?(...args: unknown[]): unknown;
+  warn?(...args: unknown[]): unknown;
+}
+
+export interface WeixinBridgeOptions {
+  /** 机器人账号（`ilink_bot_id`），与 `platform` 一起构成桥 id。 */
+  account: string;
+  /** 取当前可用的客户端；未登录时返回 null。 */
+  api: () => ILinkApi | null;
+  contextTokens: ContextTokenStore;
+  guard: SessionGuard;
+  logger?: BridgeLogger;
+  maxText?: number;
+  /** 连接健康状态来源（轮询循环维护）。 */
+  health?: () => BridgeHealth;
+}
+
+export class WeixinBridge implements BridgeProvider {
+  readonly platform = WEIXIN_PLATFORM;
+  readonly account: string;
+  readonly protocol: readonly string[] = [PROTOCOL_V1];
+  readonly capabilities: BridgeCapabilities;
+
+  readonly #api: () => ILinkApi | null;
+  readonly #contextTokens: ContextTokenStore;
+  readonly #guard: SessionGuard;
+  readonly #logger: BridgeLogger | undefined;
+  readonly #maxText: number;
+  readonly #health: (() => BridgeHealth) | undefined;
+  /** 已发到第几条：`delivery.id` → 条数，用于断点续发。 */
+  readonly #progress = new Map<string, number>();
+  #handle: BridgeHandle | null = null;
+  #features: ReadonlySet<string> = new Set();
+
+  constructor(options: WeixinBridgeOptions) {
+    this.account = options.account;
+    this.#api = options.api;
+    this.#contextTokens = options.contextTokens;
+    this.#guard = options.guard;
+    this.#logger = options.logger;
+    this.#maxText = options.maxText ?? MAX_TEXT_CHARS;
+    this.#health = options.health;
+    this.capabilities = {
+      markdown: 'none',
+      maxText: { max: this.#maxText, unit: 'char' },
+      detail: false,
+      nativeCommands: false,
+      // 平台连发限制待真机实测（M5），先按保守值声明，核心据此节流。
+      quotas: [{ scope: 'bot', max: 10, windowMs: 60_000 }],
+      outbound: { requiresPriorInbound: true },
+    };
+  }
+
+  /** 注册成功后由装配层挂上句柄与核心能力声明。 */
+  attachHandle(handle: BridgeHandle, features: readonly string[]): void {
+    this.#handle = handle;
+    this.#features = new Set(features);
+  }
+
+  detachHandle(): void {
+    this.#handle = null;
+    this.#features = new Set();
+  }
+
+  /** 核心声明 `owner-images` 时才下载入站图片（ADR-0004）。 */
+  get imagesEnabled(): boolean {
+    return this.#features.has(FEATURE_OWNER_IMAGES);
+  }
+
+  /** 核心声明 `owner-lookup` 时才可用；否则不判断身份，交由核心拒收。 */
+  get ownerLookup(): ((sender: string) => boolean) | undefined {
+    const handle = this.#handle;
+    if (!handle || !this.#features.has(FEATURE_OWNER_LOOKUP)) return undefined;
+    const isOwner = handle.isOwner;
+    if (typeof isOwner !== 'function') return undefined;
+    return (sender: string) => isOwner.call(handle, sender);
+  }
+
+  health(): BridgeHealth {
+    if (this.#guard.isPaused(this.account)) {
+      return { state: 'down', code: 'auth-expired', reason: 'token 已失效，需要重新扫码登录' };
+    }
+    if (!this.#api()) {
+      return { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
+    }
+    return this.#health?.() ?? { state: 'ok' };
+  }
+
+  async deliver(delivery: Delivery): Promise<Receipt> {
+    const base = { deliveryId: delivery.id };
+    if (this.#guard.isPaused(this.account)) {
+      return {
+        ...base,
+        status: 'failed',
+        errorCode: 'auth-expired',
+        error: 'token 已失效，已暂停发送',
+      };
+    }
+    const api = this.#api();
+    if (!api) {
+      return { ...base, status: 'failed', errorCode: 'auth-expired', error: '尚未登录微信' };
+    }
+
+    const text = composeDeliveryText(delivery);
+    const parts = splitText(text, this.#maxText);
+    if (parts.length === 0) return { ...base, status: 'sent' };
+
+    const recipient = delivery.recipient;
+    const contextToken = this.#contextTokens.get(this.account, recipient);
+    let sent = this.#progress.get(delivery.id) ?? 0;
+    let lastClientId: string | undefined;
+
+    for (; sent < parts.length; sent += 1) {
+      try {
+        const result = await sendText(api, { to: recipient, text: parts[sent], contextToken });
+        lastClientId = result.clientId;
+        this.#remember(delivery.id, sent + 1);
+      } catch (error) {
+        const failure = classifySendFailure(error);
+        if (failure.certainty === 'uncertain') {
+          // 结果未知：核心不重发，进度已无意义。
+          this.#progress.delete(delivery.id);
+          this.#logger?.warn?.(`微信发送结果未知（${delivery.id}）`, failure.message);
+          return { ...base, status: 'uncertain', error: failure.message };
+        }
+        // 确定失败：保留进度，核心重试时从断点续发。
+        this.#logger?.warn?.(`微信发送失败（${delivery.id}）`, failure.message);
+        return { ...base, status: 'failed', errorCode: failure.code, error: failure.message };
+      }
+    }
+
+    this.#progress.delete(delivery.id);
+    return {
+      ...base,
+      status: 'sent',
+      ...(lastClientId ? { bridgeMessageId: lastClientId } : {}),
+    };
+  }
+
+  /** 进度表只放最近 100 条，避免长时间运行后无界增长。 */
+  #remember(deliveryId: string, sentParts: number): void {
+    this.#progress.set(deliveryId, sentParts);
+    while (this.#progress.size > 100) {
+      const oldest = this.#progress.keys().next();
+      if (oldest.done) break;
+      this.#progress.delete(oldest.value);
+    }
+  }
+}

@@ -291,7 +291,10 @@ export function WeixinSettingsPanel(props: any) {
       h(Row, {
         label: t('提醒来源'),
         value: status?.ownFeatures ? t('由本插件发送') : t('由超级助理发送'),
-      })),
+      }),
+      status?.ownFeatures && status?.ownerKnown === false
+        ? h('p', { className: 'wx-error' }, t('登录态里没有记录扫码的微信用户，提醒无法发出：请重新扫码登录。'))
+        : null),
 
     // ---------------------------------------------------------------- 错误
     h('section', { className: 'wx-section' },

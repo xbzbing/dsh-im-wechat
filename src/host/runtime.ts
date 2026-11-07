@@ -59,6 +59,8 @@ export interface RuntimeStatus {
   superagent: boolean;
   /** 自有功能（问题提醒、长任务提醒）是否生效。 */
   ownFeatures: boolean;
+  /** 登录态里是否记录了扫码的微信用户（没记录就无法确认主人，自有提醒会静默失效）。 */
+  ownerKnown: boolean;
   /** 等待主人作答的问题数。 */
   pendingQuestions: number;
   /** 正在跟踪的回合数（长任务提醒用）。 */
@@ -239,6 +241,7 @@ export class WeixinRuntime {
       enabled: this.#enabled,
       superagent: this.#superagent,
       ownFeatures: this.#ownFeaturesActive(),
+      ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
       pendingQuestions: this.#questions.snapshot().pending,
       trackingTasks: this.#longTasks.tracking,
       loggedIn: login !== null,

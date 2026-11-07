@@ -66,6 +66,8 @@ export const en = {
   '提醒来源': 'Reminder source',
   '由本插件发送': 'Sent by this plugin',
   '由超级助理发送': 'Sent by My Superagent',
+  '登录态里没有记录扫码的微信用户，提醒无法发出：请重新扫码登录。':
+    'The signed-in state has no WeChat user recorded, so reminders cannot be sent. Please sign in again.',
 } as const;
 
 /** 中文模式：键即译文。 */

@@ -45,7 +45,7 @@ export function apply(ctx: any): void {
   const rpcCall = createRpcCall(ctx.connection);
   // 组件不感知 ctx：依赖在注册时快照，与宿主设置页的注入方式一致。
   const dependencies = () => ({ t, rpcCall });
-  const label = () => t('微信桥');
+  const label = () => t('微信');
 
   if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
 

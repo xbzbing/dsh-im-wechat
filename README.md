@@ -18,7 +18,7 @@ dsh plugin --profile web add file:/Users/ankh/workspace/private/dsh-plugins/dsh-
 # host 半改动后重装生效：先 remove，等十几秒再 add
 ```
 
-装好后在设置页找到「微信桥」：点「扫码登录」，用手机微信扫面板上的二维码（扫不了就复制链接在手机微信里打开），确认后状态变成「已登录」。登录态落在 `$DSH_HOME/dsh-im-wechat/login.json`（`0600`），不随包发布。
+装好后在设置页找到「微信」：点「扫码登录」，用手机微信扫面板上的二维码（扫不了就复制链接在手机微信里打开），确认后状态变成「已登录」。登录态落在 `$DSH_HOME/dsh-im-wechat/login.json`（`0600`），不随包发布。
 
 ## 使用
 

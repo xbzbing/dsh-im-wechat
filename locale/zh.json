@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "微信桥",
+    "title": "微信",
     "description": "把微信（iLink）接入 DeepSeek Harness 的 IM 桥插件"
   },
   "strings": {}

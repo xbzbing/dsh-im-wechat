@@ -1,5 +1,5 @@
 /**
- * 微信桥的设置面板。
+ * 微信的设置面板。
  *
  * 一切状态都来自 host（面板不推断）：登录由 host 半驱动、面板只轮询快照；开关是显式
  * 动作，做完再拉一次状态。二维码在浏览器里现画（`shared/qr.ts`），画不出来就退回
@@ -149,7 +149,7 @@ export function WeixinSettingsPanel(props: any) {
 
     // ---------------------------------------------------------------- 顶栏
     h('div', { className: 'wx-head' },
-      h('h3', { className: 'wx-title' }, t('微信桥')),
+      h('h3', { className: 'wx-title' }, t('微信')),
       h('span', { className: 'wx-version' }, `${t('插件版本')} ${status?.version ?? ''}`),
       h('span', { className: 'wx-status' },
         h(StateDot, { state: !enabled ? 'idle' : loggedIn ? healthDot(String(health.state ?? 'ok')) : 'warning' }),

@@ -107,7 +107,7 @@ test('客户端产物可按宿主的加载协议载入并注册', () => {
     const dependencies = registration.spec.inject();
     assert.equal(typeof dependencies.t, 'function');
     assert.equal(typeof dependencies.rpcCall, 'function');
-    assert.equal(dependencies.t('微信桥'), '微信桥');
+    assert.equal(dependencies.t('微信'), '微信');
   }
   assert.equal(loaded.registrations[1].spec.key, 'dsh-im-wechat');
 });

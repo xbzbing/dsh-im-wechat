@@ -8,7 +8,7 @@
 export const NS = 'dsh-im-wechat';
 
 export const en = {
-  '微信桥': 'WeChat bridge',
+  '微信': 'WeChat',
   '把微信接入本机 Harness：扫码登录后，核心的交付会送到你的微信，你在微信里说的话也会回到核心。':
     'Connect WeChat to this Harness: after scanning the QR code, deliveries from the core reach your WeChat and your replies come back to it.',
   '插件版本': 'Plugin version',

@@ -22,7 +22,7 @@ import {
 } from './logic.ts';
 import { h, useCallback, useEffect, useMemo, useRef, useState } from './platform.ts';
 import { ensureStyles } from './styles.ts';
-import { Button, IconCopy, IconLink, IconRefresh, Input, Pill, StateDot, Switch, copyText } from './ui.ts';
+import { Button, IconCopy, IconLink, IconRefresh, Input, StateDot, Switch, copyText } from './ui.ts';
 
 /** 健康状态 → StateDot 的取值。 */
 function healthDot(state: string): 'done' | 'warning' | 'error' | 'idle' {
@@ -32,25 +32,31 @@ function healthDot(state: string): 'done' | 'warning' | 'error' | 'idle' {
   return 'idle';
 }
 
-function Row({ label, value }: any) {
-  if (!value) return null;
-  return h('div', { className: 'wx-item' },
-    h('span', { className: 'wx-item-label' }, label),
-    h('span', { className: 'wx-item-desc' }, value));
-}
-
 /** 带说明的开关行：标题 + 说明在左，开关在右。 */
 function SwitchRow({ title, description, checked, disabled, onChange }: any) {
-  return h('div', { className: 'wx-row-between' },
-    h('div', { className: 'wx-item' },
-      h('span', { className: 'wx-item-label' }, title),
-      description ? h('span', { className: 'wx-item-desc' }, description) : null),
+  return h('div', { className: 'wx-setting-row' },
+    h('div', { className: 'wx-setting-copy' },
+      h('span', { className: 'wx-setting-title' }, title),
+      description ? h('span', { className: 'wx-setting-description' }, description) : null),
     h(Switch, {
       checked,
       disabled,
       label: title,
       onChange: (next: boolean) => onChange(next),
     }));
+}
+
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return h('div', { className: 'wx-fact' },
+    h('span', null, label),
+    h('strong', null, value));
+}
+
+function Metric({ value, label, wide }: { value: string; label: string; wide?: boolean }) {
+  return h('div', { className: `wx-metric${wide ? ' wx-metric-wide' : ''}` },
+    h('strong', null, value),
+    h('span', null, label));
 }
 
 export function WeixinSettingsPanel(props: any) {
@@ -168,7 +174,8 @@ export function WeixinSettingsPanel(props: any) {
   }, [minutes, rpcCall, t]);
 
   if (loading && !status) {
-    return h('div', { className: 'wx-root', 'data-plugin': 'dsh-im-wechat' },
+    return h('div', { className: 'wx-root wx-loading', 'data-plugin': 'dsh-im-wechat' },
+      h('div', { className: 'wx-loading-bar', 'aria-busy': 'true' }),
       h('p', { className: 'wx-hint' }, t('加载中…')));
   }
 
@@ -183,197 +190,217 @@ export function WeixinSettingsPanel(props: any) {
     && minutesValue !== (typeof threshold === 'number' ? threshold : -1);
   const active = isLoginActive(login.phase);
   const showLoginPanel = active || login.phase === 'failed' || login.phase === 'binded';
+  const stateLabel = !enabled ? t('已停用') : loggedIn ? t('已登录') : t('未登录');
+  const state = !enabled ? 'idle' : loggedIn ? healthDot(String(health.state ?? 'ok')) : 'warning';
+  const bridgeLabel = status?.bridge?.registered ? t('已接入超级助理') : t('未接入超级助理');
 
   return h('div', { className: 'wx-root', 'data-plugin': 'dsh-im-wechat' },
 
-    // ---------------------------------------------------------------- 顶栏
-    h('div', { className: 'wx-head' },
-      h('h3', { className: 'wx-title' }, t('微信')),
-      h('span', { className: 'wx-version' }, `${t('插件版本')} ${status?.version ?? ''}`),
-      h('span', { className: 'wx-status' },
-        h(StateDot, { state: !enabled ? 'idle' : loggedIn ? healthDot(String(health.state ?? 'ok')) : 'warning' }),
-        !enabled ? t('已停用') : loggedIn ? t('已登录') : t('未登录')),
-      h('div', { className: 'wx-spacer' }),
-      hostOlder ? h(Pill, null, t('请重启 dsh web：面板比 Host 新')) : null,
-      h(Button, {
-        variant: 'ghost',
-        size: 'sm',
-        icon: h(IconRefresh, null),
-        disabled: busy !== '',
-        onClick: () => void refresh(),
-      }, t('刷新'))),
+    h('header', { className: 'wx-hero' },
+      h('div', { className: 'wx-brand' },
+        h('div', { className: 'wx-mark', 'aria-hidden': 'true' },
+          h('span', { className: 'wx-mark-bubble wx-mark-bubble-main' }),
+          h('span', { className: 'wx-mark-bubble wx-mark-bubble-small' })),
+        h('div', { className: 'wx-brand-copy' },
+          h('h3', { className: 'wx-title' }, t('微信')),
+          h('p', { className: 'wx-subtitle' }, t('把微信接入本机 Harness：扫码登录后，消息与交付会在微信和核心之间同步。')))),
+      h('div', { className: 'wx-hero-actions' },
+        h('div', { className: 'wx-state-chip', 'data-state': state },
+          h(StateDot, { state }),
+          h('span', null, stateLabel)),
+        h(Button, {
+          variant: 'ghost',
+          size: 'sm',
+          icon: h(IconRefresh, null),
+          disabled: busy !== '',
+          onClick: () => void refresh(),
+        }, t('刷新')))),
 
-    h('p', { className: 'wx-hint' },
-      t('把微信接入本机 Harness：扫码登录后，核心的交付会送到你的微信，你在微信里说的话也会回到核心。')),
+    hostOlder
+      ? h('div', { className: 'wx-banner wx-banner-warning', role: 'status' },
+        h(StateDot, { state: 'warning' }),
+        h('span', null, t('请重启 dsh web：面板比 Host 新')))
+      : null,
 
-    // ---------------------------------------------------------------- 连接
-    h('section', { className: 'wx-section' },
-      h('h4', { className: 'wx-section-title' }, t('连接')),
-      h('dl', { className: 'wx-kv' },
-        status?.accountTail ? h('dt', null, t('账号')) : null,
-        status?.accountTail ? h('dd', null, status.accountTail) : null,
-        status?.loggedInAt ? h('dt', null, t('登录时间')) : null,
-        status?.loggedInAt ? h('dd', null, formatTime(status.loggedInAt)) : null,
-        h('dt', null, t('状态')),
-        h('dd', null, loggedIn ? describeHealth(health) : t('未登录')),
-        h('dt', null, t('已接入超级助理')),
-        h('dd', null, status?.bridge?.registered ? t('已接入超级助理') : t('未接入超级助理'))),
-
-      // 扫码进行中
-      showLoginPanel
-        ? h('div', { className: 'wx-qr' },
-          qrData
-            ? h('img', { className: 'wx-qr-img', src: qrData, alt: t('二维码') })
-            : null,
-          h('div', { className: 'wx-qr-side' },
-            h('span', { className: 'wx-item-label' }, describeLoginPhase(login.phase) || t('等待扫码')),
-            qrData ? null : h('p', { className: 'wx-hint' }, t('无法显示二维码时，可复制下面的链接在手机微信中打开：')),
-            login.phase === 'failed' && login.error
-              ? h('p', { className: 'wx-error' }, String(login.error))
-              : null,
-            login.qrContent ? h('code', { className: 'wx-link' }, String(login.qrContent)) : null,
-            login.phase === 'need-verify-code'
-              ? h('div', { className: 'wx-code-row' },
-                h(Input, {
-                  value: code,
-                  placeholder: t('验证码'),
-                  'aria-label': t('验证码'),
-                  onChange: (event: any) => setCode(event.target.value),
-                }),
-                h(Button, {
+    h('section', { className: 'wx-panel wx-connection-panel' },
+      h('div', { className: 'wx-section-head' },
+        h('div', null,
+          h('p', { className: 'wx-eyebrow' }, t('连接')),
+          h('h4', { className: 'wx-section-title' }, loggedIn ? t('微信已连接') : t('连接微信'))),
+        h('span', { className: 'wx-version' }, `${t('插件版本')} ${status?.version ?? ''}`)),
+      h('div', { className: 'wx-connection-grid' },
+        h('div', { className: 'wx-connection-main' },
+          h('div', { className: 'wx-connection-status' },
+            h(StateDot, { state }),
+            h('div', null,
+              h('strong', null, loggedIn ? describeHealth(health) : t('尚未登录微信')),
+              h('span', null, loggedIn ? bridgeLabel : t('扫码登录后开始接收和发送消息。')))),
+          h('div', { className: 'wx-facts' },
+            h(Fact, { label: t('账号'), value: status?.accountTail ?? t('未登录') }),
+            h(Fact, { label: t('登录时间'), value: status?.loggedInAt ? formatTime(status.loggedInAt) : '—' }),
+            h(Fact, { label: t('提醒来源'), value: status?.ownFeatures ? t('由本插件发送') : t('由超级助理发送') })),
+          !showLoginPanel
+            ? h('div', { className: 'wx-actions' },
+              !loggedIn
+                ? h(Button, {
                   variant: 'primary',
-                  size: 'sm',
-                  disabled: busy !== '' || code.trim() === '',
-                  onClick: () => void run('code', () => rpcCall(ENDPOINTS.loginCode, { code: code.trim() })),
-                }, t('提交验证码')))
-              : null,
-            h('div', { className: 'wx-row' },
-              login.qrContent
-                ? h(Button, { variant: 'ghost', size: 'sm', icon: h(IconCopy, null), onClick: () => void copyLink() },
-                  copied ? t('已复制') : t('复制链接'))
-                : null,
-              qrLink
-                ? h(Button, {
-                  variant: 'ghost',
-                  size: 'sm',
-                  icon: h(IconLink, null),
-                  onClick: () => window.open(qrLink, '_blank', 'noreferrer'),
-                }, t('打开链接'))
-                : null,
-              active
-                ? h(Button, {
-                  variant: 'ghost',
-                  size: 'sm',
-                  disabled: busy !== '',
-                  onClick: () => void run('cancel', () => rpcCall(ENDPOINTS.loginCancel)),
-                }, t('取消'))
-                : h(Button, {
-                  variant: 'ghost',
-                  size: 'sm',
+                  size: 'md',
                   disabled: busy !== '',
                   onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
-                }, t('重新开始')))))
-        : null,
+                }, busy === 'login' ? t('加载中…') : t('扫码登录'))
+                : h(Button, {
+                  variant: 'outline',
+                  size: 'md',
+                  disabled: busy !== '',
+                  onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
+                }, t('重新扫码')),
+              loggedIn
+                ? h(Button, {
+                  variant: 'ghost',
+                  size: 'md',
+                  disabled: busy !== '',
+                  onClick: () => void run('logout', () => rpcCall(ENDPOINTS.logout)),
+                }, t('登出'))
+                : null,
+              loggedIn ? h('span', { className: 'wx-action-hint' }, t('登出后需要重新扫码才能继续接收微信消息。')) : null)
+            : null),
 
-      // 未登录 / 已登录的操作
-      !showLoginPanel
-        ? h('div', { className: 'wx-row' },
-          !loggedIn
-            ? h(Button, {
-              variant: 'primary',
-              size: 'md',
-              disabled: busy !== '',
-              onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
-            }, busy === 'login' ? t('加载中…') : t('扫码登录'))
-            : h(Button, {
+        showLoginPanel
+          ? h('div', { className: 'wx-qr-card' },
+            h('div', { className: 'wx-qr-heading' },
+              h('span', { className: 'wx-qr-step' }, '01'),
+              h('div', null,
+                h('strong', null, describeLoginPhase(login.phase) || t('等待扫码')),
+                h('span', null, t('用手机微信扫描二维码')))),
+            h('div', { className: 'wx-qr-content' },
+              qrData
+                ? h('img', { className: 'wx-qr-img', src: qrData, alt: t('二维码') })
+                : h('div', { className: 'wx-qr-placeholder' }, t('二维码加载中…')),
+              h('div', { className: 'wx-qr-side' },
+                login.phase === 'failed' && login.error
+                  ? h('p', { className: 'wx-error' }, String(login.error))
+                  : null,
+                login.qrContent
+                  ? h('code', { className: 'wx-link' }, String(login.qrContent))
+                  : h('p', { className: 'wx-hint' }, t('无法显示二维码时，可复制下面的链接在手机微信中打开：')),
+                login.phase === 'need-verify-code'
+                  ? h('div', { className: 'wx-code-row' },
+                    h(Input, {
+                      value: code,
+                      placeholder: t('验证码'),
+                      'aria-label': t('验证码'),
+                      onChange: (event: any) => setCode(event.target.value),
+                    }),
+                    h(Button, {
+                      variant: 'primary',
+                      size: 'sm',
+                      disabled: busy !== '' || code.trim() === '',
+                      onClick: () => void run('code', () => rpcCall(ENDPOINTS.loginCode, { code: code.trim() })),
+                    }, t('提交验证码')))
+                  : null,
+                h('div', { className: 'wx-actions' },
+                  login.qrContent
+                    ? h(Button, { variant: 'ghost', size: 'sm', icon: h(IconCopy, null), onClick: () => void copyLink() },
+                      copied ? t('已复制') : t('复制链接'))
+                    : null,
+                  qrLink
+                    ? h(Button, {
+                      variant: 'ghost',
+                      size: 'sm',
+                      icon: h(IconLink, null),
+                      onClick: () => window.open(qrLink, '_blank', 'noreferrer'),
+                    }, t('打开链接'))
+                    : null,
+                  active
+                    ? h(Button, {
+                      variant: 'ghost',
+                      size: 'sm',
+                      disabled: busy !== '',
+                      onClick: () => void run('cancel', () => rpcCall(ENDPOINTS.loginCancel)),
+                    }, t('取消'))
+                    : h(Button, {
+                      variant: 'ghost',
+                      size: 'sm',
+                      disabled: busy !== '',
+                      onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
+                    }, t('重新开始'))))))
+          : null)),
+
+    h('section', { className: 'wx-panel' },
+      h('div', { className: 'wx-section-head' },
+        h('div', null,
+          h('p', { className: 'wx-eyebrow' }, t('接入方式')),
+          h('h4', { className: 'wx-section-title' }, t('消息与提醒'))),
+        h('span', { className: 'wx-section-note' }, t('控制消息从哪里进出'))),
+      h('div', { className: 'wx-settings-list' },
+        h(SwitchRow, {
+          title: t('接入微信（收消息）'),
+          description: t('停用后不再收取微信消息，核心的交付也不会发到这个渠道。'),
+          checked: enabled,
+          disabled: busy !== '',
+          onChange: (next: boolean) => void run('enabled', () => rpcCall(ENDPOINTS.setEnabled, { enabled: next })),
+        }),
+        h(SwitchRow, {
+          title: t('接入我的超级助理'),
+          description: t('关闭后由微信插件自己发送问题与长任务提醒。'),
+          checked: superagent,
+          disabled: busy !== '',
+          onChange: (next: boolean) => void run('superagent', () => rpcCall(ENDPOINTS.setSuperagent, { enabled: next })),
+        }),
+        h('div', { className: 'wx-setting-row wx-threshold-row' },
+          h('div', { className: 'wx-setting-copy' },
+            h('span', { className: 'wx-setting-title' }, t('提醒阈值（分钟）')),
+            h('span', { className: 'wx-setting-description' },
+              t('根会话的一个回合超过这个时长才发提醒；只在本插件发送提醒时生效。'))),
+          h('div', { className: 'wx-threshold-control' },
+            h(Input, {
+              className: 'wx-minutes',
+              value: minutes,
+              placeholder: '30',
+              'aria-label': t('提醒阈值（分钟）'),
+              disabled: busy !== '' || hostOlder,
+              onChange: (event: any) => {
+                setMinutesDirty(true);
+                setMinutes(String(event.target.value));
+              },
+            }),
+            h('span', { className: 'wx-unit' }, t('分钟')),
+            h(Button, {
               variant: 'outline',
-              size: 'md',
-              disabled: busy !== '',
-              onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
-            }, t('重新扫码')),
-          loggedIn
-            ? h(Button, {
-              variant: 'ghost',
-              size: 'md',
-              disabled: busy !== '',
-              onClick: () => void run('logout', () => rpcCall(ENDPOINTS.logout)),
-            }, t('登出'))
-            : null,
-          loggedIn ? h('span', { className: 'wx-hint' }, t('登出后需要重新扫码才能继续接收微信消息。')) : null)
-        : null),
+              size: 'sm',
+              disabled: busy !== '' || !canSaveMinutes || hostOlder,
+              onClick: () => void saveMinutes(),
+            }, t('保存')))),
+        minutesDirty
+          ? h('p', { className: 'wx-draft-hint' },
+            `${t('当前阈值')}：${typeof threshold === 'number' ? threshold : '—'} ${t('分钟')}`)
+          : null)),
 
-    h('div', { className: 'wx-divider' }),
-
-    // ---------------------------------------------------------------- 开关
-    h('section', { className: 'wx-section' },
-      h('h4', { className: 'wx-section-title' }, t('接入方式')),
-      h(SwitchRow, {
-        title: t('接入微信（收消息）'),
-        description: t('停用后不再收取微信消息，核心的交付也不会发到这个渠道。'),
-        checked: enabled,
-        disabled: busy !== '',
-        onChange: (next: boolean) => void run('enabled', () => rpcCall(ENDPOINTS.setEnabled, { enabled: next })),
-      }),
-      h(SwitchRow, {
-        title: t('接入我的超级助理'),
-        description: t('关掉后本插件不向超级助理注册，改由插件自己把问题与长任务提醒发到微信。'),
-        checked: superagent,
-        disabled: busy !== '',
-        onChange: (next: boolean) => void run('superagent', () => rpcCall(ENDPOINTS.setSuperagent, { enabled: next })),
-      })),
-
-    // ---------------------------------------------------------------- 长任务提醒
-    h('section', { className: 'wx-section' },
-      h('h4', { className: 'wx-section-title' }, t('长任务提醒')),
-      h('div', { className: 'wx-row-between' },
-        h('div', { className: 'wx-item' },
-          h('span', { className: 'wx-item-label' }, t('提醒阈值（分钟）')),
-          h('span', { className: 'wx-item-desc' },
-            t('根会话的一个回合超过这个时长才发提醒；只在本插件发送提醒时生效。'))),
-        h('div', { className: 'wx-row' },
-          h(Input, {
-            className: 'wx-minutes',
-            value: minutes,
-            placeholder: '30',
-            'aria-label': t('提醒阈值（分钟）'),
-            // 保存中禁用：回包会按 Host 的值回显，这期间敲的字会被冲掉。
-            disabled: busy !== '' || hostOlder,
-            onChange: (event: any) => {
-              setMinutesDirty(true);
-              setMinutes(String(event.target.value));
-            },
-          }),
-          h('span', { className: 'wx-item-desc' }, t('分钟')),
-          h(Button, {
-            variant: 'ghost',
-            size: 'sm',
-            disabled: busy !== '' || !canSaveMinutes || hostOlder,
-            onClick: () => void saveMinutes(),
-          }, t('保存')))),
-      minutesDirty
-        ? h('p', { className: 'wx-hint' },
-          `${t('当前阈值')}：${typeof threshold === 'number' ? threshold : '—'} ${t('分钟')}`)
-        : null),
-
-    // ---------------------------------------------------------------- 运行状态
-    h('section', { className: 'wx-section' },
-      h('h4', { className: 'wx-section-title' }, t('运行状态')),
-      h(Row, { label: t('等待作答的问题'), value: String(status?.pendingQuestions ?? 0) }),
-      h(Row, { label: t('跟踪中的长任务'), value: String(status?.trackingTasks ?? 0) }),
-      h(Row, {
-        label: t('提醒来源'),
-        value: status?.ownFeatures ? t('由本插件发送') : t('由超级助理发送'),
-      }),
+    h('section', { className: 'wx-panel wx-runtime-panel' },
+      h('div', { className: 'wx-section-head' },
+        h('div', null,
+          h('p', { className: 'wx-eyebrow' }, t('运行状态')),
+          h('h4', { className: 'wx-section-title' }, t('运行概览')))),
+      h('div', { className: 'wx-metrics' },
+        h(Metric, { value: String(status?.pendingQuestions ?? 0), label: t('等待作答的问题') }),
+        h(Metric, { value: String(status?.trackingTasks ?? 0), label: t('跟踪中的长任务') }),
+        h(Metric, { value: status?.ownFeatures ? t('由本插件发送') : t('由超级助理发送'), label: t('提醒来源'), wide: true })),
       status?.ownFeatures && status?.ownerKnown === false
-        ? h('p', { className: 'wx-error' }, t('登录态里没有记录扫码的微信用户，提醒无法发出：请重新扫码登录。'))
+        ? h('div', { className: 'wx-banner wx-banner-warning', role: 'status' },
+          h(StateDot, { state: 'warning' }),
+          h('span', null, t('登录态里没有记录扫码的微信用户，提醒无法发出：请重新扫码登录。')))
         : null),
 
-    // ---------------------------------------------------------------- 错误
-    h('section', { className: 'wx-section' },
-      h('h4', { className: 'wx-section-title' }, t('最近错误')),
-      status?.lastError?.message
-        ? h('p', { className: 'wx-error' }, `${formatTime(status.lastError.at)} ${String(status.lastError.message)}`)
-        : h('p', { className: 'wx-hint' }, t('暂无')),
-      actionError ? h('p', { className: 'wx-error' }, actionError) : null),
+    actionError || status?.lastError?.message
+      ? h('section', { className: 'wx-panel wx-error-panel' },
+        h('div', { className: 'wx-section-head' },
+          h('div', null,
+            h('p', { className: 'wx-eyebrow' }, t('最近错误')),
+            h('h4', { className: 'wx-section-title' }, t('需要注意')))),
+        status?.lastError?.message
+          ? h('p', { className: 'wx-error' }, `${formatTime(status.lastError.at)} ${String(status.lastError.message)}`)
+          : null,
+        actionError ? h('p', { className: 'wx-error' }, actionError) : null)
+      : null,
   );
 }

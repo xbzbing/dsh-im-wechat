@@ -11,9 +11,13 @@ export const en = {
   '微信': 'WeChat',
   '把微信接入本机 Harness：扫码登录后，核心的交付会送到你的微信，你在微信里说的话也会回到核心。':
     'Connect WeChat to this Harness: after scanning the QR code, deliveries from the core reach your WeChat and your replies come back to it.',
+  '把微信接入本机 Harness：扫码登录后，消息与交付会在微信和核心之间同步。':
+    'Connect WeChat to this Harness: after scanning the QR code, messages and deliveries sync between WeChat and the core.',
   '插件版本': 'Plugin version',
   '状态': 'Status',
   '未登录': 'Not signed in',
+  '尚未登录微信': 'WeChat is not connected',
+  '扫码登录后开始接收和发送消息。': 'Sign in with a QR code to start receiving and sending messages.',
   '已登录': 'Signed in',
   '已停用': 'Disabled',
   '连接正常': 'Healthy',
@@ -57,7 +61,14 @@ export const en = {
   '二维码': 'QR code',
   '连接': 'Connection',
   '接入方式': 'Connection mode',
+  '控制消息从哪里进出': 'Control where messages enter and leave',
+  '消息与提醒': 'Messages and reminders',
+  '关闭后由微信插件自己发送问题与长任务提醒。': 'When off, the WeChat plugin sends questions and long-task reminders itself.',
+  '微信已连接': 'WeChat connected',
+  '连接微信': 'Connect WeChat',
   '运行状态': 'Runtime',
+  '运行概览': 'Runtime overview',
+  '需要注意': 'Needs attention',
   '接入我的超级助理': 'Connect to My Superagent',
   '关掉后本插件不向超级助理注册，改由插件自己把问题与长任务提醒发到微信。':
     'When off, this plugin does not register with My Superagent and sends questions and long-task reminders to WeChat itself.',

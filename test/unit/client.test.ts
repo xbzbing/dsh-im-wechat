@@ -10,6 +10,7 @@ import {
   describeLoginPhase,
   formatTime,
   isHostOlder,
+  isHttpsUrl,
   isLoginActive,
   qrImageUrl,
   unwrapResult,
@@ -74,6 +75,14 @@ test('二维码渲染：正常内容出 data URL，超长内容退回 null', () 
   assert.match(url ?? '', /^data:image\/svg\+xml;charset=utf-8,/);
   assert.equal(qrImageUrl('x'.repeat(2_000)), null);
   assert.equal(qrImageUrl(''), null);
+});
+
+test('二维码链接只接受 https（防 javascript: 注入）', () => {
+  assert.equal(isHttpsUrl('https://weixin.qq.com/x/abc'), true);
+  assert.equal(isHttpsUrl('javascript:alert(1)'), false);
+  assert.equal(isHttpsUrl('http://weixin.qq.com/x'), false);
+  assert.equal(isHttpsUrl(''), false);
+  assert.equal(isHttpsUrl(null), false);
 });
 
 test('时间格式化与错误描述', () => {

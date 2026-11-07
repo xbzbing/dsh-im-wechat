@@ -115,6 +115,45 @@ test('收到消息：交出去、记下 context_token、落盘游标', async () 
   }
 });
 
+test('投递失败时不推进游标，重投成功后才落盘', async () => {
+  const h = await harness([]);
+  const controller = new AbortController();
+  let attempts = 0;
+  const api = {
+    async getUpdates() {
+      attempts += 1;
+      if (attempts > 3) {
+        controller.abort();
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      // 同一批每次都回来：投递失败时游标不推进，所以拿到的还是同一批。
+      return { ret: 0, msgs: [message()], get_updates_buf: 'C1' };
+    },
+  } as unknown as ILinkApi;
+  const loop = new PollLoop({
+    api,
+    account: 'bot@im.bot',
+    cursor: h.cursor,
+    contextTokens: h.contextTokens,
+    guard: h.guard,
+    onMessage: () => {
+      if (attempts < 3) throw new Error('core down');
+    },
+    sleep: async () => {},
+    timings: { minPollGapMs: 0, maxDeliveryAttempts: 3 },
+  });
+  try {
+    await loop.run(controller.signal);
+    assert.equal(attempts >= 3, true);
+    // 前两次失败，游标没落盘；第三次成功后才写入。
+    assert.equal(await h.cursor.load('bot@im.bot'), 'C1');
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
 test('同一帧重复推送只交出一遍', async () => {
   const h = await harness([
     { response: { ret: 0, msgs: [message(), message()] } },

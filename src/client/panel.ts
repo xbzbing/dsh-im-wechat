@@ -14,6 +14,7 @@ import {
   formatTime,
   isHostOlder,
   isLoginActive,
+  isHttpsUrl,
   qrImageUrl,
 } from './logic.ts';
 import { h, useCallback, useEffect, useMemo, useState } from './platform.ts';
@@ -141,6 +142,8 @@ export function WeixinSettingsPanel(props: any) {
 
   const login = status?.login ?? { phase: 'idle', refreshed: 0 };
   const qrData = useMemo(() => qrImageUrl(typeof login.qrContent === 'string' ? login.qrContent : ''), [login.qrContent]);
+  // 服务端给的二维码内容只在 https 时才渲染成可点链接（防 javascript: 注入）。
+  const qrLink = isHttpsUrl(login.qrContent) ? String(login.qrContent) : null;
 
   const copyLink = useCallback(async () => {
     try {
@@ -223,12 +226,14 @@ export function WeixinSettingsPanel(props: any) {
               ? h('div', { style: S.row },
                 h('button', { type: 'button', style: S.button, onClick: () => void copyLink() },
                   copied ? t('已复制') : t('复制链接')),
-                h('a', {
-                  style: { ...S.button, textDecoration: 'none' },
-                  href: String(login.qrContent),
-                  target: '_blank',
-                  rel: 'noreferrer',
-                }, t('打开链接')))
+                qrLink
+                  ? h('a', {
+                    style: { ...S.button, textDecoration: 'none' },
+                    href: qrLink,
+                    target: '_blank',
+                    rel: 'noreferrer',
+                  }, t('打开链接'))
+                  : null)
               : null,
             login.qrContent ? h('code', { style: S.link }, String(login.qrContent)) : null,
             login.phase === 'need-verify-code'

@@ -8,7 +8,7 @@
  * 这里不解析任何命令、不判断身份：入站消息转换成草稿后原样交给核心（AGENTS.md）。
  */
 
-import { DEFAULT_CDN_BASE_URL, createApi } from './ilink/api.ts';
+import { DEFAULT_BASE_URL, DEFAULT_CDN_BASE_URL, createApi, isAllowedApiUrl } from './ilink/api.ts';
 import type { ILinkApi } from './ilink/api.ts';
 import { LoginController } from './ilink/login.ts';
 import type { LoginSnapshot } from './ilink/login.ts';
@@ -150,10 +150,13 @@ export class WeixinRuntime {
     this.#connect(this.#loginState);
   }
 
-  /** 停机：停轮询、通知服务端、解绑桥。 */
+  /** 停机：收敛登录状态机、停轮询、通知服务端、解绑桥。 */
   async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#stopped = true;
+    // 登录状态机独立于轮询在跑（最长 8 分钟）；不停掉它，卸载重装后一旦
+    // 扫码确认就会重写 login.json 并在插件已 dispose 之后重新建桥。
+    await this.#loginController.cancel();
     const api = this.#api;
     await this.#stopPolling();
     this.#api = null;
@@ -207,6 +210,7 @@ export class WeixinRuntime {
   /** 登出：清登录态与该账号的 context_token，桥随之解绑。 */
   async logout(): Promise<RuntimeStatus> {
     const account = this.#loginState?.account;
+    await this.#loginController.cancel();
     await this.#stopPolling();
     this.#api = null;
     this.#bridge = null;
@@ -228,6 +232,7 @@ export class WeixinRuntime {
   }
 
   async #handleConfirmed(state: LoginState): Promise<void> {
+    if (this.#stopped) return;
     this.#errors = [];
     this.#loginState = state;
     await this.#tokenStore.hydrate(state.account);
@@ -236,7 +241,10 @@ export class WeixinRuntime {
   }
 
   #connect(state: LoginState): void {
-    this.#api = this.#createApi({ baseUrl: state.baseUrl, token: state.botToken });
+    if (this.#stopped) return;
+    // 基址是带 token 请求的目标：落盘的文件也可能被改过，用前再过一次白名单。
+    const baseUrl = isAllowedApiUrl(state.baseUrl) ? state.baseUrl : DEFAULT_BASE_URL;
+    this.#api = this.#createApi({ baseUrl, token: state.botToken });
     this.#guard.resume(state.account);
     this.#bridge = new WeixinBridge({
       account: state.account,
@@ -253,6 +261,7 @@ export class WeixinRuntime {
   }
 
   #startPolling(): void {
+    if (this.#stopped) return;
     const api = this.#api;
     const state = this.#loginState;
     if (!this.#enabled || !api || !state || this.#pollTask) return;
@@ -264,7 +273,7 @@ export class WeixinRuntime {
       cursor: this.#cursorStore,
       contextTokens: this.#tokenStore,
       guard: this.#guard,
-      onMessage: (message) => this.#handleInbound(message),
+      onMessage: (message) => this.#handleInbound(message, abort.signal),
       onHealth: (health) => this.#handlePollHealth(health),
       logger: this.#logger,
     });
@@ -291,7 +300,7 @@ export class WeixinRuntime {
   }
 
   /** 入站：转换成草稿后交给核心；核心不在就不回话，也不丢弃登录态。 */
-  async #handleInbound(message: WeixinMessage): Promise<void> {
+  async #handleInbound(message: WeixinMessage, signal: AbortSignal): Promise<void> {
     const bridge = this.#bridge;
     const binder = this.#binder;
     if (!bridge || !binder) return;
@@ -302,6 +311,7 @@ export class WeixinRuntime {
       imagesEnabled: bridge.imagesEnabled,
       ...(ownerLookup ? { senderIsOwner: ownerLookup } : {}),
       ...(this.#fetch ? { fetch: this.#fetch } : {}),
+      signal,
       logger: this.#logger,
       now: this.#now,
     });

@@ -18,15 +18,15 @@ interface StatusCall {
 function scriptedApi(statuses: Array<Record<string, unknown>>): {
   api: ILinkApi;
   calls: StatusCall[];
-  qrCodeCalls: number;
+  counter: { count: number };
 } {
   const calls: StatusCall[] = [];
-  let qrCodeCalls = 0;
+  const counter = { count: 0 };
   let index = 0;
   const api = {
     async getBotQrCode() {
-      qrCodeCalls += 1;
-      return { qrcode: `q-${qrCodeCalls}`, qrcode_img_content: `https://weixin.qq.com/x/q-${qrCodeCalls}` };
+      counter.count += 1;
+      return { qrcode: `q-${counter.count}`, qrcode_img_content: `https://weixin.qq.com/x/q-${counter.count}` };
     },
     async getQrStatus(params: StatusCall) {
       calls.push(params);
@@ -35,11 +35,7 @@ function scriptedApi(statuses: Array<Record<string, unknown>>): {
       return next;
     },
   } as unknown as ILinkApi;
-  return { api, calls, get qrCodeCalls() { return qrCodeCalls; } } as unknown as {
-    api: ILinkApi;
-    calls: StatusCall[];
-    qrCodeCalls: number;
-  };
+  return { api, calls, counter };
 }
 
 interface Harness {
@@ -48,11 +44,19 @@ interface Harness {
   calls: StatusCall[];
   confirmed: string[];
   dir: string;
+  /** 取二维码的次数：并发 start 只应请求一次。 */
+  qrCodeCalls: () => number;
 }
 
 async function harness(
   statuses: Array<Record<string, unknown>>,
-  options: { qrThrows?: boolean; timings?: Record<string, number> } = {},
+  options: {
+    qrThrows?: boolean;
+    statusThrows?: boolean;
+    /** 让 onConfirmed 抛错，验证登录结果不被连接失败改写。 */
+    onConfirmedThrows?: boolean;
+    timings?: Record<string, number>;
+  } = {},
 ): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-login-'));
   const store = new LoginStateStore({ dir });
@@ -60,6 +64,11 @@ async function harness(
   if (options.qrThrows) {
     (scripted.api as unknown as { getBotQrCode: () => Promise<unknown> }).getBotQrCode = async () => {
       throw new Error('boom');
+    };
+  }
+  if (options.statusThrows) {
+    (scripted.api as unknown as { getQrStatus: () => Promise<unknown> }).getQrStatus = async () => {
+      throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { cause: { code: 'ENOTFOUND' } });
     };
   }
   let clock = 0;
@@ -72,18 +81,26 @@ async function harness(
     // 让出宏任务：状态机的等待循环才能与测试的断言交替执行。
     sleep: async () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
     onConfirmed: (state) => {
+      if (options.onConfirmedThrows) throw new Error('connect boom');
       confirmed.push(state.account);
     },
     ...(options.timings ? { timings: options.timings } : {}),
   });
-  return { controller, store, calls: scripted.calls, confirmed, dir };
+  return {
+    controller,
+    store,
+    calls: scripted.calls,
+    confirmed,
+    dir,
+    qrCodeCalls: () => scripted.counter.count,
+  };
 }
 
 test('确认登录后落盘登录态并回调', async () => {
   const h = await harness([
     { status: 'wait' },
     { status: 'scaned' },
-    { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot', ilink_user_id: 'u1', baseurl: 'https://cn.example' },
+    { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot', ilink_user_id: 'u1', baseurl: 'https://idc2.ilink.weixin.qq.com' },
   ]);
   try {
     const started = await h.controller.start();
@@ -99,7 +116,7 @@ test('确认登录后落盘登录态并回调', async () => {
         botToken: 'tok',
         account: 'bot@im.bot',
         userId: 'u1',
-        baseUrl: 'https://cn.example',
+        baseUrl: 'https://idc2.ilink.weixin.qq.com',
         loggedInAt: 0,
       },
     );
@@ -195,6 +212,80 @@ test('取消后状态是 cancelled，且不再落盘', async () => {
     await h.controller.cancel();
     assert.equal(h.controller.snapshot().phase, 'cancelled');
     assert.equal(await h.store.load(), null);
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('并发 start（不 await 前一个）只取一次二维码', async () => {
+  const h = await harness([{ status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot' }]);
+  try {
+    const first = h.controller.start();
+    const second = h.controller.start(); // 不 await：两个调用在取码完成前就撞上
+    await Promise.all([first, second]);
+    // 关键断言：第二个 start 不该再取一张二维码、也不该再起一条状态机。
+    assert.equal(h.qrCodeCalls(), 1);
+    await h.controller.waitForSettled();
+    // onConfirmed 只应触发一次：两条状态机会各存一次、各连一次。
+    assert.deepEqual(h.confirmed, ['bot@im.bot']);
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('状态轮询连续失败到上限判定登录失败', async () => {
+  const h = await harness([], { statusThrows: true, timings: { maxPollFailures: 3 } });
+  try {
+    await h.controller.start();
+    await h.controller.waitForSettled();
+    const snapshot = h.controller.snapshot();
+    assert.equal(snapshot.phase, 'failed');
+    assert.match(snapshot.error ?? '', /登录轮询失败/);
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('服务端给的 baseurl 不在白名单时退回默认域名', async () => {
+  const h = await harness([
+    { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot', baseurl: 'https://evil.example.com' },
+  ]);
+  try {
+    await h.controller.start();
+    await h.controller.waitForSettled();
+    const stored = await h.store.load();
+    assert.equal(stored?.baseUrl, 'https://ilinkai.weixin.qq.com');
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('redirect_host 不在白名单时不切换轮询域名', async () => {
+  const h = await harness([
+    { status: 'scaned_but_redirect', redirect_host: 'evil.example.com' },
+    { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot' },
+  ]);
+  try {
+    await h.controller.start();
+    await h.controller.waitForSettled();
+    // 没切换：后续轮询仍打默认域名。
+    assert.equal(h.calls[1].baseUrl, 'https://ilinkai.weixin.qq.com');
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('连接回调抛错不把登录改写成 failed（登录态已落盘）', async () => {
+  const h = await harness(
+    [{ status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot' }],
+    { onConfirmedThrows: true },
+  );
+  try {
+    await h.controller.start();
+    await h.controller.waitForSettled();
+    assert.equal(h.controller.snapshot().phase, 'confirmed');
+    const stored = await h.store.load();
+    assert.equal(stored?.account, 'bot@im.bot');
   } finally {
     await rm(h.dir, { recursive: true, force: true });
   }

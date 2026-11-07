@@ -10,7 +10,7 @@
  */
 
 import type { ILinkApi } from './api.ts';
-import { DEFAULT_BASE_URL } from './api.ts';
+import { DEFAULT_BASE_URL, isAllowedApiUrl } from './api.ts';
 import type { QrStatusResponse } from './types.ts';
 import type { LoginState } from '../state/login-state.ts';
 import type { LoginStateStore } from '../state/login-state.ts';
@@ -47,6 +47,8 @@ export interface LoginTimings {
   pollGapMs: number;
   /** 等待主人输入验证码的最长时间。 */
   verifyWaitMs: number;
+  /** 扫码状态轮询连续失败多少次判定登录失败。 */
+  maxPollFailures: number;
 }
 
 export const DEFAULT_LOGIN_TIMINGS: LoginTimings = {
@@ -56,6 +58,7 @@ export const DEFAULT_LOGIN_TIMINGS: LoginTimings = {
   overallTimeoutMs: 8 * 60_000,
   pollGapMs: 1_000,
   verifyWaitMs: 120_000,
+  maxPollFailures: 5,
 };
 
 export interface LoginLogger {
@@ -112,6 +115,8 @@ export class LoginController {
   #apiBaseUrl = DEFAULT_BASE_URL;
   #abort: AbortController | null = null;
   #running: Promise<void> | null = null;
+  /** start() 的同步占位：取码要等网络，期间第二个 start 必须直接返回。 */
+  #starting = false;
 
   constructor(options: LoginControllerOptions) {
     this.#options = options;
@@ -142,18 +147,25 @@ export class LoginController {
    * 已经在进行中时直接返回当前快照——面板重复点「登录」不该起两条轮询。
    */
   async start(): Promise<LoginSnapshot> {
-    if (this.#running) return this.snapshot();
+    // 占位必须同步完成：#requestQrCode 是 await，写在它之后会让并发调用
+    // （双击、多标签页）各取一次码、各起一条状态机。
+    if (this.#running || this.#starting) return this.snapshot();
+    this.#starting = true;
     this.#reset();
-    const api = this.#options.apiFactory(DEFAULT_BASE_URL);
-    const ready = await this.#requestQrCode(api);
-    if (!ready) return this.snapshot();
-    const abort = new AbortController();
-    this.#abort = abort;
-    this.#running = this.#run(api, abort.signal).finally(() => {
-      this.#running = null;
-      this.#abort = null;
-    });
-    return this.snapshot();
+    try {
+      const api = this.#options.apiFactory(DEFAULT_BASE_URL);
+      const ready = await this.#requestQrCode(api);
+      if (!ready) return this.snapshot();
+      const abort = new AbortController();
+      this.#abort = abort;
+      this.#running = this.#run(api, abort.signal).finally(() => {
+        this.#running = null;
+        this.#abort = null;
+      });
+      return this.snapshot();
+    } finally {
+      this.#starting = false;
+    }
   }
 
   /** 面板提交验证码；状态机在 `need-verify-code` 时取用它。 */
@@ -172,7 +184,8 @@ export class LoginController {
   async cancel(): Promise<void> {
     this.#abort?.abort();
     await this.#running;
-    if (!this.done) this.#phase = 'cancelled';
+    // idle 表示从没开始过，别把它标成 cancelled（stop() 也会走到这里）。
+    if (!this.done && this.#phase !== 'idle') this.#phase = 'cancelled';
   }
 
   #reset(): void {
@@ -217,8 +230,11 @@ export class LoginController {
 
   async #run(api: ILinkApi, signal: AbortSignal): Promise<void> {
     const deadline = this.#now() + this.#timings.overallTimeoutMs;
-    try {
-      while (!signal.aborted) {
+    let failures = 0;
+    while (!signal.aborted) {
+      // try 包在循环体内：包住整个 while 的话，一次网络错误就退出循环，
+      // 登录停在 waiting 却再没有轮询，面板看起来「一直在等」。
+      try {
         if (this.#now() > deadline) {
           this.#fail('登录超时，请重试');
           return;
@@ -236,12 +252,19 @@ export class LoginController {
           baseUrl: this.#apiBaseUrl,
         });
         if (signal.aborted) return;
+        failures = 0;
         if (await this.#handleStatus(api, response)) return;
         await this.#sleep(this.#timings.pollGapMs, signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        // 网络错误不再折成「等待」：连续失败到上限直接报具体原因，面板才看得见。
+        failures += 1;
+        if (failures >= this.#timings.maxPollFailures) {
+          this.#fail(`登录轮询失败：${(error as Error)?.message ?? '未知错误'}`);
+          return;
+        }
+        await this.#sleep(Math.max(this.#timings.pollGapMs, 2_000), signal);
       }
-    } catch (error) {
-      if (signal.aborted) return;
-      this.#fail(`登录轮询失败：${(error as Error)?.message ?? '未知错误'}`);
     }
   }
 
@@ -265,7 +288,9 @@ export class LoginController {
       }
       case 'scaned_but_redirect': {
         const host = typeof response.redirect_host === 'string' ? response.redirect_host : '';
-        if (host !== '') this.#apiBaseUrl = `https://${host}`;
+        const candidate = host === '' ? '' : `https://${host}`;
+        // 带凭据的请求只认腾讯域名（ADR-0002）；不合格就留在原域名继续轮询。
+        if (candidate !== '' && isAllowedApiUrl(candidate)) this.#apiBaseUrl = candidate;
         return false;
       }
       case 'binded_redirect':
@@ -313,8 +338,10 @@ export class LoginController {
       this.#fail('登录确认缺少 bot_token 或 ilink_bot_id');
       return true;
     }
-    const baseUrl = typeof response.baseurl === 'string' && response.baseurl.trim() !== ''
-      ? response.baseurl.trim()
+    const requestedBaseUrl = typeof response.baseurl === 'string' ? response.baseurl.trim() : '';
+    // 服务端给的域名也要过白名单：这是带 token 请求的基址（ADR-0002）。
+    const baseUrl = requestedBaseUrl !== '' && isAllowedApiUrl(requestedBaseUrl)
+      ? requestedBaseUrl
       : DEFAULT_BASE_URL;
     const userId = typeof response.ilink_user_id === 'string' ? response.ilink_user_id.trim() : '';
     const state = await this.#options.store.save({
@@ -327,7 +354,14 @@ export class LoginController {
     this.#phase = 'confirmed';
     this.#qrContent = undefined;
     this.#options.logger?.info?.('微信扫码登录成功');
-    await this.#options.onConfirmed?.(state);
+    try {
+      await this.#options.onConfirmed?.(state);
+    } catch (error) {
+      // 登录本身已经成功且落盘；连接回调失败不该把状态改写成 failed 诱导重扫。
+      this.#options.logger?.warn?.(
+        `登录成功但连接回调失败：${error instanceof Error ? error.message : '未知错误'}`,
+      );
+    }
     return true;
   }
 }

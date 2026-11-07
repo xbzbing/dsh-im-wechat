@@ -65,6 +65,8 @@ export class WeixinBridge implements BridgeProvider {
   readonly #isEnabled: (() => boolean) | undefined;
   /** 已发到第几条：`delivery.id` → 条数，用于断点续发。 */
   readonly #progress = new Map<string, number>();
+  /** 在途投递：同一 `delivery.id` 的并发调用复用同一次，避免两路都从第 1 段发。 */
+  readonly #inflight = new Map<string, Promise<Receipt>>();
   #handle: BridgeHandle | null = null;
   #features: ReadonlySet<string> = new Set();
 
@@ -127,6 +129,16 @@ export class WeixinBridge implements BridgeProvider {
   }
 
   async deliver(delivery: Delivery): Promise<Receipt> {
+    const existing = this.#inflight.get(delivery.id);
+    if (existing) return existing;
+    const task = this.#deliverOnce(delivery).finally(() => {
+      this.#inflight.delete(delivery.id);
+    });
+    this.#inflight.set(delivery.id, task);
+    return task;
+  }
+
+  async #deliverOnce(delivery: Delivery): Promise<Receipt> {
     const base = { deliveryId: delivery.id };
     if (this.#isEnabled && !this.#isEnabled()) {
       return { ...base, status: 'failed', errorCode: 'other', error: '插件已停用' };

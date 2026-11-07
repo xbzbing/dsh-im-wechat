@@ -154,11 +154,66 @@ test('解密后不是图片时拒绝', async () => {
   assert.deepEqual(result, { ok: false, reason: '解密后不是 png/jpeg/webp/gif' });
 });
 
-test('网络异常按「没有图」返回原因', async () => {
+test('网络异常只回分类码，不把带签名参数的 URL 写进 reason', async () => {
+  const leaky = 'fetch failed for https://c2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=SECRET-SIG';
   const impl = (async () => {
-    throw new Error('ECONNRESET');
+    throw Object.assign(new Error(leaky), { cause: { code: 'ECONNRESET' } });
   }) as typeof globalThis.fetch;
-  const result = await downloadImage({ media: { encrypt_query_param: 'p' } }, { cdnBaseUrl: CDN, fetch: impl });
+  const result = await downloadImage({ media: { encrypt_query_param: 'SECRET-SIG' } }, { cdnBaseUrl: CDN, fetch: impl });
   assert.equal(result.ok, false);
-  assert.match((result as { reason: string }).reason, /下载失败/);
+  const reason = (result as { reason: string }).reason;
+  assert.match(reason, /下载失败/);
+  assert.equal(reason.includes('SECRET-SIG'), false);
+  assert.equal(reason.includes('encrypted_query_param'), false);
+});
+
+test('外部取消立刻中断下载', async () => {
+  const controller = new AbortController();
+  const impl = (async (_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    })) as typeof globalThis.fetch;
+  const pending = downloadImage(
+    { media: { encrypt_query_param: 'p' } },
+    { cdnBaseUrl: CDN, fetch: impl, signal: controller.signal },
+  );
+  controller.abort();
+  const result = await pending;
+  assert.deepEqual(result, { ok: false, reason: '下载被取消' });
+});
+
+test('非 2xx/3xx 与超限都显式丢弃响应体', async () => {
+  const cancelled: boolean[] = [];
+  function bodyResponse(status: number, declared?: number): Response {
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      headers: new Headers(declared === undefined ? {} : { 'content-length': String(declared) }),
+      body: {
+        cancel: async () => {
+          cancelled.push(true);
+        },
+        getReader: () => ({
+          read: async () => ({ done: true, value: undefined }),
+          cancel: async () => {
+            cancelled.push(true);
+          },
+        }),
+      },
+    } as unknown as Response;
+  }
+  const notFound = (async () => bodyResponse(404)) as typeof globalThis.fetch;
+  assert.equal((await downloadImage({ media: { encrypt_query_param: 'p' } }, { cdnBaseUrl: CDN, fetch: notFound })).ok, false);
+  const redirect = (async () => bodyResponse(302)) as typeof globalThis.fetch;
+  assert.equal((await downloadImage({ media: { encrypt_query_param: 'p' } }, { cdnBaseUrl: CDN, fetch: redirect })).ok, false);
+  const tooBig = (async () => bodyResponse(200, 9_999_999)) as typeof globalThis.fetch;
+  assert.equal(
+    (await downloadImage({ media: { encrypt_query_param: 'p' } }, { cdnBaseUrl: CDN, fetch: tooBig, maxBytes: 1024 })).ok,
+    false,
+  );
+  assert.equal(cancelled.length, 3);
 });

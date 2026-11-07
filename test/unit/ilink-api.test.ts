@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { ILinkApi, ILinkError, encodeClientVersion } from '../../src/host/ilink/api.ts';
+import { ILinkApi, ILinkError, encodeClientVersion, isAllowedApiUrl } from '../../src/host/ilink/api.ts';
 import { parseJsonKeepIntegers } from '../../src/host/ilink/json.ts';
 import { PLUGIN_VERSION } from '../../src/shared/version.ts';
 
@@ -164,12 +164,29 @@ test('业务 ret 非 0 归成 api 类错误并保留 ret', async () => {
   });
 });
 
-test('扫码轮询遇网络错误退成 wait，不中断登录', async () => {
+test('扫码轮询只把客户端超时折成 wait，网络错误上抛', async () => {
+  // 超时：服务端还没扫完，正常等待。
+  const hanging = (async (_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      });
+    })) as typeof globalThis.fetch;
+  const api = makeApi({ fetch: hanging });
+  assert.deepEqual(await api.getQrStatus({ qrcode: 'q1', timeoutMs: 5 }), { status: 'wait' });
+
+  // 网络错误必须上抛：折成 wait 会让 DNS 断了也显示「等待扫码」。
   const failing = (async () => {
     throw Object.assign(new Error('connect ECONNREFUSED'), { cause: { code: 'ECONNREFUSED' } });
   }) as typeof globalThis.fetch;
-  const api = makeApi({ fetch: failing });
-  assert.deepEqual(await api.getQrStatus({ qrcode: 'q1', timeoutMs: 10 }), { status: 'wait' });
+  const api2 = makeApi({ fetch: failing });
+  await assert.rejects(api2.getQrStatus({ qrcode: 'q1', timeoutMs: 10 }), (error: unknown) => {
+    assert.ok(error instanceof ILinkError);
+    assert.equal(error.kind, 'network');
+    return true;
+  });
 });
 
 test('扫码轮询解析状态字段', async () => {
@@ -183,6 +200,46 @@ test('扫码轮询解析状态字段', async () => {
     calls[0].url,
     'https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=q1&verify_code=42',
   );
+});
+
+test('响应必须是对象：网关返回非 JSON 对象按 api 错误拒绝', async () => {
+  const scalar = (async () => new Response('<html>gateway</html>', {
+    status: 200,
+    headers: { 'content-type': 'text/html' },
+  })) as typeof globalThis.fetch;
+  const api = makeApi({ fetch: scalar });
+  await assert.rejects(api.sendMessage({
+    from_user_id: '',
+    to_user_id: 'u1',
+    client_id: 'c1',
+    message_type: 2,
+    message_state: 2,
+  }), (error: unknown) => {
+    assert.ok(error instanceof ILinkError);
+    assert.equal(error.kind, 'api');
+    return true;
+  });
+  await assert.rejects(api.getUpdates({ cursor: '' }), (error: unknown) => error instanceof ILinkError);
+  await assert.rejects(api.getQrStatus({ qrcode: 'q1' }), (error: unknown) => error instanceof ILinkError);
+});
+
+test('getupdates 的 msgs 必须是数组', async () => {
+  const bad = (async () => new Response(JSON.stringify({ ret: 0, msgs: 'oops' }))) as typeof globalThis.fetch;
+  const api = makeApi({ fetch: bad });
+  await assert.rejects(api.getUpdates({ cursor: '' }), (error: unknown) => {
+    assert.ok(error instanceof ILinkError);
+    assert.match(error.message, /msgs/);
+    return true;
+  });
+});
+
+test('API 基址白名单只认腾讯域名', () => {
+  assert.equal(isAllowedApiUrl('https://ilinkai.weixin.qq.com'), true);
+  assert.equal(isAllowedApiUrl('https://idc2.ilink.weixin.qq.com/x'), true);
+  assert.equal(isAllowedApiUrl('http://ilinkai.weixin.qq.com'), false);
+  assert.equal(isAllowedApiUrl('https://evil.example.com'), false);
+  assert.equal(isAllowedApiUrl('https://qq.com.evil.com'), false);
+  assert.equal(isAllowedApiUrl('not a url'), false);
 });
 
 test('网络失败归成 network 类错误并带分类', async () => {

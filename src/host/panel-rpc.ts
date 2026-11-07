@@ -138,9 +138,17 @@ export function registerPanelRpc(
       },
     };
     try {
-      // 有 effect 就走生命周期（Cordis 卸载时自动摘路由）；没有就直接挂上。
-      if (typeof scope.effect === 'function') scope.effect(() => face.register(route), 'dsh-im-wechat: 面板 RPC');
-      else face.register(route);
+      // 有 effect 就走生命周期：回调必须交回清理函数，否则卸载/重装时摘不掉旧路由。
+      if (typeof scope.effect === 'function') {
+        scope.effect(() => {
+          const off = face.register(route) as unknown;
+          return () => {
+            if (typeof off === 'function') (off as () => void)();
+          };
+        }, 'dsh-im-wechat: 面板 RPC');
+      } else {
+        face.register(route);
+      }
     } catch (error) {
       // 同路径已注册（插件另一份实例）不该让入站链路一起起不来。
       logger.error?.('面板 RPC 注册失败', errorDetail(error));

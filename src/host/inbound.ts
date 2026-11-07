@@ -31,6 +31,8 @@ export interface InboundOptions {
   /** 核心声明了 `owner-lookup` 时传入；不传则不判定，按允许处理。 */
   senderIsOwner?: (sender: string) => boolean;
   fetch?: typeof globalThis.fetch;
+  /** 停机/停轮询时取消在途的图片下载。 */
+  signal?: AbortSignal;
   logger?: InboundLogger;
   now?: () => number;
   maxImageBytes?: number;
@@ -95,32 +97,34 @@ async function collectImages(message: WeixinMessage, options: InboundOptions): P
   // 不是主人就整条不下载（ADR-0004）：图片是主人内容里最敏感的部分。
   if (options.senderIsOwner && !options.senderIsOwner(message.from_user_id ?? '')) return [];
 
-  const items = imageItems(message.item_list);
+  const items = imageItems(message.item_list).slice(0, OWNER_IMAGES_MAX);
   if (items.length === 0) return [];
 
-  const images: OwnerImage[] = [];
-  for (let index = 0; index < items.length && images.length < OWNER_IMAGES_MAX; index += 1) {
-    const { item, itemId } = items[index];
+  // 并发下载：串行 9 张每张 15s 上限会把长轮询卡死 135 秒；并发后整条消息
+  // 的图片阶段最多耗时一张的超时。顺序按 index 对齐，失败的项跳过不挪位。
+  const results = await Promise.all(items.map(async ({ item, itemId }, index) => {
     const result = await downloadImage(item, {
       cdnBaseUrl: options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
       ...(options.fetch ? { fetch: options.fetch } : {}),
       ...(options.maxImageBytes !== undefined ? { maxBytes: options.maxImageBytes } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
     });
     if (!result.ok) {
-      // 只记原因：不带 URL、不带密钥、不带字节。
+      // 只记分类后的 reason：不带 URL、不带密钥、不带字节。
       options.logger?.warn?.(`微信图片未采用：${result.reason}`);
-      continue;
+      return null;
     }
     const data = result.data.toString('base64');
     if (data.length > OWNER_IMAGE_DATA_MAX) {
       options.logger?.warn?.(`微信图片超过 ${OWNER_IMAGE_DATA_MAX} 字符上限，已丢弃`);
-      continue;
+      return null;
     }
-    images.push({
+    const image: OwnerImage = {
       mediaType: result.mediaType,
       data,
       name: imageName(index, result.mediaType, itemId === undefined ? undefined : String(itemId)),
-    });
-  }
-  return images;
+    };
+    return image;
+  }));
+  return results.filter((image): image is OwnerImage => image !== null);
 }

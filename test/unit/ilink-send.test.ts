@@ -64,6 +64,19 @@ test('超过硬上限的文本按 too-long 拒绝', async () => {
   assert.equal(sent.length, 0);
 });
 
+test('长度上限按码点计，emoji 不被数成两个', async () => {
+  const { api, sent } = await recordingApi();
+  // UTF-16 长度是 2*HARD_TEXT_LIMIT，码点数正好等于上限 → 应放行。
+  const text = '😀'.repeat(HARD_TEXT_LIMIT);
+  assert.equal(text.length, HARD_TEXT_LIMIT * 2);
+  await sendText(api, { to: 'owner-1', text, contextToken: 'ctx-1' });
+  assert.equal(sent.length, 1);
+  await assert.rejects(
+    sendText(api, { to: 'owner-1', text: '😀'.repeat(HARD_TEXT_LIMIT + 1), contextToken: 'ctx-1' }),
+    (error: unknown) => error instanceof SendError && error.code === 'too-long',
+  );
+});
+
 test('失败分类：确定没送达的 failed、可能已送达的 uncertain', () => {
   assert.deepEqual(classifySendFailure(new SendError('window-closed', 'x')), {
     code: 'window-closed',

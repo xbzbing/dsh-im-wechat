@@ -65,7 +65,9 @@ export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{
   if (params.to.trim() === '') {
     throw new SendError('other', '缺少收件人');
   }
-  if (params.text.length > HARD_TEXT_LIMIT) {
+  // 与 splitText 同单位（码点）：UTF-16 length 会把 emoji 数成两个，
+  // maxText=4000 时每个分片都可能「超限」，回执永远 failed 且重试无解。
+  if (Array.from(params.text).length > HARD_TEXT_LIMIT) {
     throw new SendError('too-long', `文本超过 ${HARD_TEXT_LIMIT} 字符`);
   }
   const clientId = params.clientId ?? newClientId();

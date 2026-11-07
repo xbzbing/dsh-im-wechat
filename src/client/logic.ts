@@ -114,6 +114,21 @@ export function qrImageUrl(content: string, scale = 5): string | null {
   }
 }
 
+/**
+ * 只有 https 链接才渲染成可点的 `<a href>`。
+ *
+ * `qrContent` 来自服务端响应，`javascript:` 形式会在面板同源执行脚本；
+ * 不合格时面板退回纯文本 + 复制按钮，登录流程不受影响。
+ */
+export function isHttpsUrl(value: unknown): boolean {
+  if (typeof value !== 'string' || value.trim() === '') return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /** 扫码是否还在进行中（决定面板用 2 秒还是 15 秒轮询）。 */
 export function isLoginActive(phase: string): boolean {
   return phase === 'waiting' || phase === 'scanned' || phase === 'need-verify-code';

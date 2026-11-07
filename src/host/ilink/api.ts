@@ -86,12 +86,52 @@ export function encodeClientVersion(version: string): number {
   return ((major & 0xff) << 16) | ((minor & 0xff) << 8) | (patch & 0xff);
 }
 
+/**
+ * 响应必须是 JSON 对象。
+ *
+ * 网关 200 返回一段 HTML、或空 body 解析出标量时，不能按「成功」处理——
+ * `sendMessage` 尤其危险：核心会据此认为交付已送达。
+ */
+function expectObject(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ILinkError('api', `${label} 响应结构异常`);
+  }
+  return value as Record<string, unknown>;
+}
+
+/** 带凭据的 API 只允许打到腾讯域名（ADR-0002）。 */
+export function isAllowedApiUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+  const host = parsed.hostname.toLowerCase();
+  return host === 'weixin.qq.com' || host.endsWith('.weixin.qq.com');
+}
+
+/** 解析响应体；不是合法 JSON 时按 api 类错误抛出，不把 SyntaxError 漏给上层。 */
+function parseJson(text: string, label: string): unknown {
+  try {
+    return parseJsonKeepIntegers(text);
+  } catch {
+    throw new ILinkError('api', `${label} 响应不是合法 JSON`);
+  }
+}
+
 function ensureTrailingSlash(url: string): string {
   return url.endsWith('/') ? url : `${url}/`;
 }
 
-/** 网络层失败的分类：只用于日志与健康状态，不作为重试策略的唯一依据。 */
-function classifyNetworkFailure(error: unknown): string {
+/**
+ * 网络层失败的分类：只用于日志与健康状态，不作为重试策略的唯一依据。
+ *
+ * 导出给媒体下载用：底层异常的 message 可能带完整 URL（CDN 直链有签名参数），
+ * 只允许把分类码写进日志。
+ */
+export function classifyNetworkFailure(error: unknown): string {
   const cause = (error as { cause?: { code?: unknown; message?: unknown } } | null)?.cause;
   const code = typeof cause?.code === 'string' ? cause.code : '';
   const text = `${code} ${String(cause?.message ?? '')} ${String((error as Error | null)?.message ?? '')}`;
@@ -227,7 +267,13 @@ export class ILinkApi {
 
   async #post<T>(endpoint: string, body: unknown, options: Partial<RequestOptions> = {}): Promise<T> {
     const text = await this.#request({ method: 'POST', endpoint, body, ...options });
-    return parseJsonKeepIntegers(text) as T;
+    return parseJson(text, endpoint) as T;
+  }
+
+  /** POST + 对象校验：`getupdates` / `sendmessage` 这类关键响应不接受非对象。 */
+  async #postObject(endpoint: string, body: unknown, options: Partial<RequestOptions> = {}): Promise<Record<string, unknown>> {
+    const text = await this.#request({ method: 'POST', endpoint, body, ...options });
+    return expectObject(parseJson(text, endpoint), endpoint);
   }
 
   /** 长轮询收消息。客户端的超时是正常控制流，返回空响应让调用方直接再轮。 */
@@ -238,11 +284,15 @@ export class ILinkApi {
   }): Promise<GetUpdatesResponse> {
     const timeoutMs = params.timeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
     try {
-      return await this.#post<GetUpdatesResponse>(
+      const response = await this.#postObject(
         'ilink/bot/getupdates',
         { get_updates_buf: params.cursor, base_info: this.baseInfo() },
         { timeoutMs, signal: params.signal },
       );
+      if (response.msgs !== undefined && !Array.isArray(response.msgs)) {
+        throw new ILinkError('api', 'getupdates 响应 msgs 不是数组');
+      }
+      return response as GetUpdatesResponse;
     } catch (error) {
       if (error instanceof ILinkError && error.kind === 'timeout' && !params.signal?.aborted) {
         return { ret: 0, msgs: [], get_updates_buf: params.cursor };
@@ -253,16 +303,16 @@ export class ILinkApi {
 
   /** 发送一条消息（文本或已上传的媒体项）。业务失败抛 `api` 类错误并带上 `ret`。 */
   async sendMessage(message: OutboundMessage, options: { timeoutMs?: number } = {}): Promise<void> {
-    const response = await this.#post<GenericResponse>(
+    const response = await this.#postObject(
       'ilink/bot/sendmessage',
       { msg: message, base_info: this.baseInfo() },
       { timeoutMs: options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS },
     );
-    const ret = response.ret;
+    const ret = typeof response.ret === 'number' ? response.ret : undefined;
     if (ret !== undefined && ret !== 0) {
       throw new ILinkError('api', `sendmessage 失败 ret=${ret}`, { ret });
     }
-    const errcode = response.errcode;
+    const errcode = typeof response.errcode === 'number' ? response.errcode : undefined;
     if (errcode !== undefined && errcode !== 0) {
       throw new ILinkError('api', `sendmessage 失败 errcode=${errcode}`, { errcode });
     }
@@ -343,9 +393,11 @@ export class ILinkApi {
         signal: params.signal,
         baseUrl: params.baseUrl,
       });
-      return parseJsonKeepIntegers(text) as QrStatusResponse;
+      return expectObject(parseJson(text, 'get_qrcode_status'), 'get_qrcode_status') as QrStatusResponse;
     } catch (error) {
-      if (error instanceof ILinkError && error.kind !== 'api' && !params.signal?.aborted) {
+      // 只有客户端超时是「服务端还没扫完」的正常等待；网络与 HTTP 失败必须上抛，
+      // 否则 DNS 断了也显示「等待扫码」，面板看不出任何异常。
+      if (error instanceof ILinkError && error.kind === 'timeout' && !params.signal?.aborted) {
         return { status: 'wait' };
       }
       throw error;

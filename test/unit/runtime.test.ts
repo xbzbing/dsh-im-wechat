@@ -253,6 +253,26 @@ test('停用开关会停轮询并持久化，重启后沿用', async () => {
   });
 });
 
+test('stop() 会取消进行中的扫码登录，确认后不再连回', async () => {
+  await withDir(async (dir) => {
+    // 扫码永远停在 waiting：只有 stop() 主动取消才会结束。
+    const api = fakeApi({ qrStatus: [{ status: 'wait' }, { status: 'wait' }, { status: 'wait' }] });
+    const superagent = fakeSuperagent();
+    const binder = new BridgeBinder();
+    binder.attach(superagent.scope);
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    runtime.attachBinder(binder);
+    await runtime.start();
+    await runtime.startLogin();
+    assert.equal(runtime.status().login.phase, 'waiting');
+
+    await runtime.stop();
+    assert.equal(runtime.status().login.phase, 'cancelled');
+    // 停机之后桥不该被重新注册进来。
+    assert.equal(superagent.providers.length, 0);
+  });
+});
+
 test('登出清掉登录态与桥注册', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);

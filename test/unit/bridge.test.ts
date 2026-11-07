@@ -150,6 +150,19 @@ test('分条中途失败后重试从断点续发，不重复已发内容', async
   });
 });
 
+test('同一 delivery.id 的并发投递只发一遍（不重复打扰主人）', async () => {
+  await withHarness({}, async (h) => {
+    const [first, second] = await Promise.all([
+      h.bridge.deliver(delivery({ id: 'same' })),
+      h.bridge.deliver(delivery({ id: 'same' })),
+    ]);
+    assert.equal(first.status, 'sent');
+    assert.equal(second.status, 'sent');
+    assert.equal(h.sent.length, 1);
+    assert.equal(first.bridgeMessageId, second.bridgeMessageId);
+  });
+});
+
 test('结果未知回 uncertain，核心不重发', async () => {
   await withHarness({ failAt: [1], error: new ILinkError('timeout', '超时') }, async (h) => {
     const receipt = await h.bridge.deliver(delivery());

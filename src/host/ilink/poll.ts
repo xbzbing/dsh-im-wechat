@@ -39,6 +39,8 @@ export interface PollTimings {
   dedupeCapacity: number;
   /** 空响应的最小间隔：服务端没真正挂住长轮询时，别把请求打成一串。 */
   minPollGapMs: number;
+  /** 一条入站消息投递失败后最多重投几次（游标不推进 + 身份撤回）。 */
+  maxDeliveryAttempts: number;
 }
 
 export const DEFAULT_POLL_TIMINGS: PollTimings = {
@@ -48,6 +50,7 @@ export const DEFAULT_POLL_TIMINGS: PollTimings = {
   maxConsecutiveFailures: 3,
   dedupeCapacity: 2_000,
   minPollGapMs: 500,
+  maxDeliveryAttempts: 3,
 };
 
 export interface PollLoopOptions {
@@ -90,6 +93,8 @@ export class PollLoop {
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** 见过的身份串；Map 的插入顺序就是 LRU 顺序。 */
   readonly #seen = new Map<string, true>();
+  /** 投递失败的重试计数（按身份）。 */
+  readonly #retries = new Map<string, number>();
 
   constructor(options: PollLoopOptions) {
     this.#options = options;
@@ -150,16 +155,34 @@ export class PollLoop {
       const suggested = response.longpolling_timeout_ms;
       if (typeof suggested === 'number' && suggested > 0) timeoutMs = suggested;
 
+      const messages = response.msgs ?? [];
+      // 整批投递完成后才推进游标：中途停机或投递失败不推进，重启后重拉这批，
+      // 核心按 (bridge, messageId) 去重兜底（at-least-once 而不是 at-most-once）。
+      let batchDone = true;
+      for (const message of messages) {
+        if (signal.aborted) {
+          batchDone = false;
+          break;
+        }
+        const { identity, delivered } = await this.#accept(message);
+        if (delivered || identity === null) continue;
+        const attempts = (this.#retries.get(identity) ?? 0) + 1;
+        if (attempts < this.#timings.maxDeliveryAttempts) {
+          this.#retries.set(identity, attempts);
+          // 撤回身份让下一轮同一批重投；这一批后面的消息等重投时一起处理。
+          this.#seen.delete(identity);
+          batchDone = false;
+          break;
+        }
+        // 重试用尽：放弃这条（身份留在 #seen，重拉时按重复丢弃），
+        // 继续处理后面的消息，不让单条坏消息永久卡住游标。
+        this.#retries.delete(identity);
+        options.logger?.warn?.('入站消息投递失败已达上限，放弃重投');
+      }
       const next = typeof response.get_updates_buf === 'string' ? response.get_updates_buf : '';
-      if (next !== '' && next !== cursor) {
+      if (batchDone && next !== '' && next !== cursor) {
         cursor = next;
         await this.#saveCursor(cursor);
-      }
-
-      const messages = response.msgs ?? [];
-      for (const message of messages) {
-        if (signal.aborted) return;
-        await this.#accept(message);
       }
       // 服务端若没按长轮询挂住（立刻返回空响应），这里补一点间隔，避免空转打满。
       const gap = this.#timings.minPollGapMs;
@@ -169,22 +192,27 @@ export class PollLoop {
     }
   }
 
-  async #accept(message: WeixinMessage): Promise<void> {
+  async #accept(message: WeixinMessage): Promise<{ identity: string | null; delivered: boolean }> {
     const token = typeof message.context_token === 'string' ? message.context_token : '';
     if (token !== '') {
       this.#options.contextTokens.set(this.#options.account, message.from_user_id ?? '', token);
     }
     const identity = messageIdentity(this.#options.account, message);
-    if (identity === null) return;
+    // 连稳定身份都没有的帧不采纳，也不进重试账本。
+    if (identity === null) return { identity: null, delivered: true };
     if (this.#seen.has(identity)) {
       this.#options.logger?.info?.('丢弃重复的入站帧');
-      return;
+      return { identity, delivered: true };
     }
     this.#remember(identity);
     try {
       await this.#options.onMessage(message);
+      this.#retries.delete(identity);
+      return { identity, delivered: true };
     } catch (error) {
+      // 不吞：调用方决定撤回身份重投还是放弃，游标相应地不推进。
       this.#options.logger?.warn?.('处理入站消息失败', messageOf(error));
+      return { identity, delivered: false };
     }
   }
 

@@ -13,6 +13,7 @@
 
 import { createDecipheriv } from 'node:crypto';
 
+import { classifyNetworkFailure } from './api.ts';
 import type { CdnMedia, ImageItem } from './types.ts';
 
 /** 单张上限：密文与明文各判一次。 */
@@ -95,10 +96,21 @@ export interface ImageDownloadOptions {
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
   maxBytes?: number;
+  /** 外部取消（停机/停轮询）：立刻中断在途下载。 */
+  signal?: AbortSignal;
 }
 
 function fail(reason: string): ImageDownloadResult {
   return { ok: false, reason };
+}
+
+/** 未消费的 body 不放回连接池，失败路径必须显式丢弃（undici 约束）。 */
+async function discardBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // 已经读不动了就随它去。
+  }
 }
 
 /** CDN 兜底地址：直链不可用时按 `encrypt_query_param` 拼。 */
@@ -120,7 +132,10 @@ export function resolveMediaUrl(media: CdnMedia, cdnBaseUrl: string): string | n
 /** 读出响应体，超过上限立刻放弃（不把整段灌进内存再判）。 */
 async function readLimited(response: Response, maxBytes: number): Promise<Buffer | null> {
   const declared = Number.parseInt(response.headers.get('content-length') ?? '', 10);
-  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await discardBody(response);
+    return null;
+  }
   const reader = response.body?.getReader();
   if (!reader) {
     const buffer = Buffer.from(await response.arrayBuffer());
@@ -164,19 +179,31 @@ export async function downloadImage(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
-  let ciphertext: Buffer | null;
+  const onExternalAbort = (): void => controller.abort();
+  if (options.signal) {
+    if (options.signal.aborted) controller.abort();
+    else options.signal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  let response: Response | null = null;
+  let ciphertext: Buffer | null = null;
   try {
     response = await fetchImpl(url, { redirect: 'manual', signal: controller.signal });
     if (response.status >= 300 && response.status < 400) {
+      await discardBody(response);
       return fail(`CDN 返回重定向 ${response.status}`);
     }
-    if (!response.ok) return fail(`CDN 返回 ${response.status}`);
+    if (!response.ok) {
+      await discardBody(response);
+      return fail(`CDN 返回 ${response.status}`);
+    }
     ciphertext = await readLimited(response, maxBytes);
   } catch (error) {
-    return fail(`下载失败：${(error as Error)?.message ?? '未知错误'}`);
+    // 只回分类码：底层异常的 message 会带完整 URL（直链有签名参数），不能进日志。
+    if (options.signal?.aborted) return fail('下载被取消');
+    return fail(`下载失败（${classifyNetworkFailure(error)}）`);
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', onExternalAbort);
   }
   if (ciphertext === null) return fail(`图片超过 ${maxBytes} 字节上限`);
 
@@ -184,8 +211,9 @@ export async function downloadImage(
   if (key) {
     try {
       plaintext = decryptAesEcb(ciphertext, key);
-    } catch (error) {
-      return fail(`解密失败：${(error as Error)?.message ?? '未知错误'}`);
+    } catch {
+      // AES 解密的底层错误只说明「密钥或密文不对」，没有更多信息可取。
+      return fail('解密失败');
     }
     if (plaintext.length > maxBytes) return fail(`解密后超过 ${maxBytes} 字节上限`);
   }

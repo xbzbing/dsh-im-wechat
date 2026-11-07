@@ -28,6 +28,8 @@ export interface PluginContext {
   effect?(execute: () => unknown, label?: string): unknown;
   inject?(services: string[], install: (scope: PluginContext) => void): unknown;
   connection?: ConnectionFace;
+  /** Cordis 事件：`prepend` 抢链首，`global` 收所有会话的事件。 */
+  on?(event: string, listener: (...args: never[]) => unknown, options?: { prepend?: boolean; global?: boolean }): unknown;
 }
 
 /** 日志里的错误展示：Error 取 message，其它原样交给 logger。 */

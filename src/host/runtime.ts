@@ -16,7 +16,14 @@ import { PollLoop } from './ilink/poll.ts';
 import type { PollHealth } from './ilink/poll.ts';
 import { SessionGuard } from './ilink/session-guard.ts';
 import { toOwnerMessageDraft } from './inbound.ts';
+import { messageText } from './ilink/identity.ts';
 import type { WeixinMessage } from './ilink/types.ts';
+import { sendText } from './ilink/send.ts';
+import { QuestionBroker } from './questions.ts';
+import type { QuestionNext, QuestionRequest } from './questions.ts';
+import { LongTaskNotifier } from './long-tasks.ts';
+import { RootAgents } from './host-agents.ts';
+import type { HostAgents } from './host-agents.ts';
 import { WeixinBridge } from './superagent/bridge.ts';
 import type { BridgeHealth } from './superagent/protocol.ts';
 import { BridgeBinder } from './superagent/link.ts';
@@ -52,6 +59,10 @@ export interface RuntimeStatus {
   superagent: boolean;
   /** 自有功能（问题提醒、长任务提醒）是否生效。 */
   ownFeatures: boolean;
+  /** 等待主人作答的问题数。 */
+  pendingQuestions: number;
+  /** 正在跟踪的回合数（长任务提醒用）。 */
+  trackingTasks: number;
   loggedIn: boolean;
   accountTail?: string;
   /** 上次扫码成功的时间；面板的「登录时间」用它。 */
@@ -96,6 +107,11 @@ export class WeixinRuntime {
   #enabled = true;
   #superagent = true;
   #started = false;
+  readonly #roots = new RootAgents();
+  readonly #questions: QuestionBroker;
+  readonly #longTasks: LongTaskNotifier;
+  /** 最近一个给机器人发消息的人：登录态里没有 `ilink_user_id` 时用它当收件人。 */
+  #lastSender: string | null = null;
   #stopped = false;
 
   constructor(deps: RuntimeDeps = {}) {
@@ -117,6 +133,20 @@ export class WeixinRuntime {
     this.#tokenStore = new ContextTokenStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
     this.#localConfig = new LocalConfigStore({ dir: this.#dir, logger: this.#logger });
     this.#guard = new SessionGuard({ now: this.#now });
+    this.#questions = new QuestionBroker({
+      send: (text) => this.#sendToOwner(text),
+      recipient: () => this.#ownerRecipient(),
+      isRoot: (agentId) => this.#roots.isRoot(agentId),
+      logger: this.#logger,
+      now: this.#now,
+    });
+    this.#longTasks = new LongTaskNotifier({
+      send: (text) => this.#sendToOwner(text),
+      recipient: () => this.#ownerRecipient(),
+      isRoot: (sessionId) => this.#roots.isRoot(sessionId),
+      now: this.#now,
+      logger: this.#logger,
+    });
     this.#loginController = new LoginController({
       apiFactory: (baseUrl) => this.#createApi({ baseUrl }),
       store: this.#loginStore,
@@ -133,6 +163,32 @@ export class WeixinRuntime {
 
   get bridge(): WeixinBridge | null {
     return this.#bridge;
+  }
+
+  /** `agents` 服务接入（index.ts 的子 fiber）：根会话集合随服务就绪与 agent 生命周期刷新。 */
+  attachAgents(agents: HostAgents | null): void {
+    this.#roots.attach(agents);
+  }
+
+  refreshRoots(): void {
+    this.#roots.refresh();
+  }
+
+  /** `user-questions/request` 监听器。 */
+  handleQuestion(request: QuestionRequest, next: QuestionNext): Promise<unknown> {
+    return this.#questions.handle(request, next, this.#ownFeaturesActive());
+  }
+
+  /** `session/event` 监听器：长任务提醒。 */
+  handleSessionEvent(session: unknown, event: unknown): void {
+    if (!this.#ownFeaturesActive()) return;
+    const sessionId = typeof session === 'string'
+      ? session
+      : typeof (session as { id?: unknown } | null)?.id === 'string'
+        ? String((session as { id: string }).id)
+        : '';
+    if (sessionId === '') return;
+    this.#longTasks.handleEvent(sessionId, event);
   }
 
   attachBinder(binder: BridgeBinder): void {
@@ -154,6 +210,7 @@ export class WeixinRuntime {
     }
     await this.#tokenStore.hydrate(this.#loginState.account);
     this.#connect(this.#loginState);
+    this.#syncOwnFeatures();
   }
 
   /** 停机：收敛登录状态机、停轮询、通知服务端、解绑桥。 */
@@ -164,6 +221,8 @@ export class WeixinRuntime {
     // 扫码确认就会重写 login.json 并在插件已 dispose 之后重新建桥。
     await this.#loginController.cancel();
     const api = this.#api;
+    this.#questions.close();
+    this.#longTasks.configure(false);
     await this.#stopPolling();
     this.#api = null;
     this.#binder?.bind(null);
@@ -182,6 +241,8 @@ export class WeixinRuntime {
       enabled: this.#enabled,
       superagent: this.#superagent,
       ownFeatures: this.#ownFeaturesActive(),
+      pendingQuestions: this.#questions.snapshot().pending,
+      trackingTasks: this.#longTasks.tracking,
       loggedIn: login !== null,
       ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
       login: this.#loginController.snapshot(),
@@ -203,6 +264,40 @@ export class WeixinRuntime {
    */
   #ownFeaturesActive(): boolean {
     return this.#enabled && !this.#superagent && this.#loginState !== null && !this.#stopped;
+  }
+
+  /** 自有功能的开合跟着启停/登录/接入开关走；关掉时把在等的提问交回 Web。 */
+  #syncOwnFeatures(): void {
+    const active = this.#ownFeaturesActive();
+    this.#longTasks.configure(active);
+    if (!active) this.#questions.cancelAll();
+  }
+
+  /** 自有功能的收件人：扫码的微信用户优先，其次最近一个发消息的人。 */
+  #ownerRecipient(): string | null {
+    if (!this.#ownFeaturesActive()) return null;
+    const userId = this.#loginState?.userId;
+    if (typeof userId === 'string' && userId !== '') return userId;
+    return this.#lastSender;
+  }
+
+  /** 把一段文本发到主人的微信；没有可用令牌时返回 false。 */
+  async #sendToOwner(text: string): Promise<boolean> {
+    const api = this.#api;
+    const account = this.#loginState?.account;
+    const recipient = this.#ownerRecipient();
+    if (!api || !account || recipient === null) return false;
+    try {
+      await sendText(api, {
+        to: recipient,
+        text,
+        contextToken: this.#tokenStore.get(account, recipient),
+      });
+      return true;
+    } catch (error) {
+      this.#noteError(`提醒发送失败：${messageOf(error)}`);
+      return false;
+    }
   }
 
   /** 开始扫码登录；返回初始快照（含二维码内容）。 */
@@ -234,6 +329,8 @@ export class WeixinRuntime {
     this.#bridge = null;
     this.#binder?.bind(null);
     this.#loginState = null;
+    this.#lastSender = null;
+    this.#syncOwnFeatures();
     this.#health = { state: 'down', code: 'auth-expired', reason: '已登出' };
     await this.#loginStore.clear();
     if (account) await this.#tokenStore.clearAccount(account);
@@ -245,6 +342,7 @@ export class WeixinRuntime {
     this.#superagent = enabled;
     await this.#localConfig.save({ superagent: enabled });
     this.#binder?.bind(enabled ? this.#bridge : null);
+    this.#syncOwnFeatures();
     return this.status();
   }
 
@@ -254,6 +352,7 @@ export class WeixinRuntime {
     await this.#localConfig.save({ enabled });
     if (enabled) this.#startPolling();
     else await this.#stopPolling();
+    this.#syncOwnFeatures();
     return this.status();
   }
 
@@ -284,6 +383,7 @@ export class WeixinRuntime {
     });
     this.#binder?.bind(this.#superagent ? this.#bridge : null);
     this.#startPolling();
+    this.#syncOwnFeatures();
   }
 
   #startPolling(): void {
@@ -329,7 +429,18 @@ export class WeixinRuntime {
   async #handleInbound(message: WeixinMessage, signal: AbortSignal): Promise<void> {
     const bridge = this.#bridge;
     const binder = this.#binder;
-    if (!bridge || !binder) return;
+    if (!bridge) return;
+    const sender = typeof message.from_user_id === 'string' ? message.from_user_id : '';
+    if (sender !== '') this.#lastSender = sender;
+
+    // 自有功能先认领：这条文本可能是主人在回答微信里的问题。
+    if (this.#ownFeaturesActive()) {
+      const text = messageText(message.item_list);
+      if (text.trim() !== '' && this.#questions.reply(text)) return;
+    }
+
+    // 没有接入核心（或核心不在）：消息到此为止，不入库也不回话。
+    if (!this.#superagent || !binder) return;
     const ownerLookup = bridge.ownerLookup;
     const draft = await toOwnerMessageDraft(message, {
       account: bridge.account,

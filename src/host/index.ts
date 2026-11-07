@@ -12,8 +12,9 @@
 
 import { normalizePluginConfig } from './config.ts';
 import type { PluginConfig } from './config.ts';
-import { errorDetail } from './host-context.ts';
+import { errorDetail, injectOptional } from './host-context.ts';
 import type { PluginContext } from './host-context.ts';
+import type { HostAgents } from './host-agents.ts';
 import { registerPanelRpc } from './panel-rpc.ts';
 import { WeixinRuntime } from './runtime.ts';
 import type { RuntimeStatus } from './runtime.ts';
@@ -47,6 +48,14 @@ export async function apply(
 
   runtime.attachBinder(binder);
   installBridgeBinder(ctx, binder);
+
+  // 根会话识别：子代理的提问与回合不打扰主人。
+  injectOptional(ctx, 'agents', (scope) => {
+    runtime.attachAgents((scope as { agents?: HostAgents }).agents ?? null);
+    scope.effect?.(() => () => runtime.attachAgents(null), 'dsh-im-wechat: 解挂 agents');
+  });
+
+  registerHostListeners(ctx, runtime);
   registerPanelRpc(ctx, { runtime, logger });
   ctx.effect?.(() => () => {
     void runtime.stop();
@@ -55,4 +64,21 @@ export async function apply(
   await runtime.start().catch((error: unknown) => {
     logger.error?.('微信插件启动失败', errorDetail(error));
   });
+}
+
+/**
+ * 宿主事件监听：问题提醒与长任务提醒。
+ *
+ * 提问必须 `prepend`：Web 端的转发监听器在 Host 启动时就注册了，排在它后面永远轮不到
+ * 我们（与如流桥同一处坑）。`session/event` 要 `global`：所有会话的事件都要收到。
+ */
+function registerHostListeners(ctx: PluginContext, runtime: WeixinRuntime): void {
+  if (typeof ctx.on !== 'function') return;
+  type QuestionNext = () => Promise<unknown>;
+  ctx.on('user-questions/request', ((request: unknown, next: QuestionNext) =>
+    runtime.handleQuestion(request as Parameters<WeixinRuntime['handleQuestion']>[0], next)) as (...args: never[]) => unknown, { prepend: true });
+  ctx.on('session/event', ((session: unknown, event: unknown) =>
+    runtime.handleSessionEvent(session, event)) as (...args: never[]) => unknown, { global: true });
+  ctx.on('agent/created', (() => runtime.refreshRoots()) as (...args: never[]) => unknown, { global: true });
+  ctx.on('agent/disposed', (() => runtime.refreshRoots()) as (...args: never[]) => unknown, { global: true });
 }

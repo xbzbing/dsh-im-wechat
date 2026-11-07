@@ -11,51 +11,13 @@
  * 3. **分条**：超过 `maxText` 时按段落边界切分，宁可多条也不截断。
  */
 
-import type { Delivery, Interaction, InteractionQuestion } from './protocol.ts';
+import { renderInteraction } from '../../shared/question-text.ts';
+
+export { renderInteraction } from '../../shared/question-text.ts';
+import type { Delivery } from './protocol.ts';
 
 /** 桥上声明的单条字符上限。 */
 export const MAX_TEXT_CHARS = 1_800;
-
-/** 交互卡不存在时，题目与选项的呈现。 */
-export function renderInteraction(interaction: Interaction): string {
-  const { questions } = interaction;
-  if (questions.length === 0) return '';
-
-  const planReview = questions.length === 1 && questions[0]?.intent === 'plan-review';
-  if (planReview) {
-    const question = questions[0] as InteractionQuestion;
-    const options = question.options ?? [];
-    const approve = options[0]?.label ?? '批准';
-    const keep = options.find((option) => option.label !== approve)?.label ?? '继续规划';
-    return [
-      '计划等待审阅',
-      ...(question.detail ? ['', question.detail] : []),
-      '',
-      `回复「${approve}」开始执行；回复「${keep}」或其他文字即作为修改意见，继续规划。`,
-    ].join('\n');
-  }
-
-  const lines: string[] = ['需要你回答的问题', ''];
-  questions.forEach((question, index) => {
-    const title = question.header ? `${question.header}：${question.question}` : question.question;
-    lines.push(`${questions.length > 1 ? `${index + 1}. ` : ''}${title}${question.multiSelect ? '（可多选）' : ''}`);
-    if (question.detail) lines.push('', question.detail);
-    if (question.options?.length) {
-      lines.push('');
-      question.options.forEach((option, at) => {
-        lines.push(`${at + 1}. ${option.description ? `${option.label} — ${option.description}` : option.label}`);
-      });
-    }
-    lines.push('');
-  });
-  if (interaction.rationale) lines.push(`建议理由：${interaction.rationale}`, '');
-  lines.push(
-    questions.length > 1
-      ? '按题目顺序分行（或用「；」「。」分隔）回复，每段对应一题，可写序号或选项文字。'
-      : '回复序号选择（多选用逗号分隔），或直接回复文字作答。',
-  );
-  return lines.join('\n');
-}
 
 /** 组装一条交付的完整文本；`detail` 不支持折叠，按协议直接省略。 */
 export function composeDeliveryText(delivery: Delivery): string {

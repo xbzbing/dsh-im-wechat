@@ -149,11 +149,21 @@ export function WeixinSettingsPanel(props: any) {
       setActionError(t('阈值必须是大于 0 的分钟数'));
       return;
     }
-    await run('longtask', async () => {
-      await rpcCall(ENDPOINTS.setLongTask, { minutes: value });
+    setBusy('longtask');
+    setActionError('');
+    try {
+      const next = await rpcCall(ENDPOINTS.setLongTask, { minutes: value });
+      // 直接用 Host 返回的快照回显：等下一轮轮询再来，输入框会先跳回旧值。
+      // 顺带作废在途的状态请求，否则它可能把刚保存的值覆盖回去。
+      requestSeq.current += 1;
+      setStatus(next);
       setMinutesDirty(false);
-    });
-  }, [minutes, rpcCall, run, t]);
+    } catch (error) {
+      setActionError(describeError(error).message);
+    } finally {
+      setBusy('');
+    }
+  }, [minutes, rpcCall, t]);
 
   if (loading && !status) {
     return h('div', { className: 'wx-root', 'data-plugin': 'dsh-im-wechat' },

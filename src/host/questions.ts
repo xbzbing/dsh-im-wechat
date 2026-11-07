@@ -49,6 +49,8 @@ interface Pending {
   readonly id: string;
   readonly questions: AskQuestion[];
   readonly createdAt: number;
+  /** 本地取消器：abort 会连带 abort 宿主看到的 union signal，Web 端据此收起卡片。 */
+  readonly cancel: AbortController;
   resolve(answer: Answer): void;
   reject(error: unknown): void;
 }
@@ -148,16 +150,16 @@ export class QuestionBroker {
     this.#sweep();
     const pendingId = this.#newId();
     const answer = deferred<Answer>();
+    const local = new AbortController();
     const pending: Pending = {
       id: pendingId,
       questions,
       createdAt: this.#now(),
+      cancel: local,
       resolve: (value) => answer.resolve(value),
       reject: (error) => answer.reject(error),
     };
     this.#pending.set(pendingId, pending);
-
-    const local = new AbortController();
     const original = request.signal;
     request.signal = original ? AbortSignal.any([original, local.signal]) : local.signal;
     const aborted = whenAborted(request.signal);
@@ -173,7 +175,11 @@ export class QuestionBroker {
       (error: unknown) => ({ kind: 'im-error', error }),
     );
 
-    const timer = setTimeout(() => local.abort(), this.#waitMs);
+    // 超时只放弃微信这一路：abort union 会把 Web 端正等的同一条提问一起取消。
+    const timer = setTimeout(() => {
+      this.#pending.delete(pendingId);
+      answer.reject(abortReason('等待微信作答超时，已交回 Web 端'));
+    }, this.#waitMs);
 
     try {
       let outcome = await Promise.race([webSettled, im, aborted.promise.then(() => ({ kind: 'aborted' as const }))]);
@@ -188,7 +194,9 @@ export class QuestionBroker {
       }
       if (outcome.kind === 'web') return outcome.value;
       if (outcome.kind === 'web-error' || outcome.kind === 'im-error') throw outcome.error;
-      throw abortReason('提问已取消');
+      // 带上取消方的原因：停机、切换接入方式、宿主自己取消，各自有可读的话。
+      const reason = request.signal?.reason as unknown;
+      throw reason instanceof Error ? reason : abortReason('提问已取消');
     } finally {
       clearTimeout(timer);
       aborted.dispose();
@@ -203,6 +211,9 @@ export class QuestionBroker {
    */
   reply(text: string): boolean {
     for (const pending of this.#pending.values()) {
+      // 只有能落到选项/序号/批准词上的文本才算作答；否则「取消」「先别动」这类
+      // 普通消息会被误当成答案，把问题结掉（answerFromText 对单题总会给 custom）。
+      if (!looksLikeAnswer(pending.questions, text)) continue;
       const answer = answerFromText(pending.questions, text);
       if (!answer) continue;
       pending.resolve(answer);
@@ -215,6 +226,8 @@ export class QuestionBroker {
   /** 停机/停用：把所有等待中的提问交回 Web（abort 本地信号，不吞掉请求）。 */
   cancelAll(reason = '插件已停止'): void {
     for (const pending of this.#pending.values()) {
+      // abort 本地信号：宿主看到的 union signal 随之 abort，Web 端的问题卡片才会收起。
+      pending.cancel.abort(abortReason(reason));
       pending.reject(abortReason(reason));
     }
     this.#pending.clear();
@@ -233,6 +246,7 @@ export class QuestionBroker {
     const deadline = this.#now() - PENDING_TTL_MS;
     for (const [id, pending] of this.#pending) {
       if (pending.createdAt < deadline) {
+        pending.cancel.abort(abortReason('提问等待超时'));
         pending.reject(abortReason('提问等待超时'));
         this.#pending.delete(id);
       }
@@ -240,7 +254,9 @@ export class QuestionBroker {
     while (this.#pending.size > PENDING_MAX) {
       const oldest = this.#pending.keys().next();
       if (oldest.done) break;
-      this.#pending.get(oldest.value)?.reject(abortReason('提问过多'));
+      const dropped = this.#pending.get(oldest.value);
+      dropped?.cancel.abort(abortReason('提问过多'));
+      dropped?.reject(abortReason('提问过多'));
       this.#pending.delete(oldest.value);
     }
   }
@@ -248,6 +264,47 @@ export class QuestionBroker {
   #noteError(message: string): void {
     this.#lastError = { at: this.#now(), message };
   }
+}
+
+/**
+ * 文本是否「像」一个答案：命中选项文字、序号、多选分隔，或计划审阅的批准/继续词。
+ *
+ * 只用来决定要不要认领；真正的解析仍交给 `answerFromText`。
+ */
+export function looksLikeAnswer(questions: readonly AskQuestion[], text: string): boolean {
+  const reply = text.trim();
+  if (reply === '' || questions.length === 0) return false;
+
+  const plan = questions.length === 1 ? questions[0] : null;
+  if (plan?.intent?.kind === 'plan-review') {
+    const options = plan.options ?? [];
+    const approve = plan.intent.approve ?? options[0]?.label ?? '批准';
+    const keep = options.find((option) => option.label !== approve)?.label ?? '继续规划';
+    if (reply.toLowerCase() === approve.toLowerCase() || reply.toLowerCase() === keep.toLowerCase()) return true;
+    return /^(1|2|批准|通过|同意|可以|继续规划|approve|yes|y|ok|keep planning)$/i.test(reply);
+  }
+
+  const segments = reply.split(/[；;。\n]+/).map((segment) => segment.trim()).filter(Boolean);
+  if (questions.length > 1) {
+    // 多题：分段数对上，且每段都能落到选项/序号上才算作答。
+    if (segments.length !== questions.length) return false;
+    return segments.every((segment, index) => resolvesToOption(questions[index], segment));
+  }
+  return resolvesToOption(questions[0], reply);
+}
+
+function resolvesToOption(question: AskQuestion, reply: string): boolean {
+  const options = question.options ?? [];
+  if (options.length === 0) return false;
+  if (options.some((option) => option.label.toLowerCase() === reply.toLowerCase())) return true;
+  const tokens = reply.split(/[\s,，、]+/).filter(Boolean);
+  return tokens.length > 0 && tokens.every((token) => {
+    if (/^\d+$/.test(token)) {
+      const index = Number(token) - 1;
+      return index >= 0 && index < options.length;
+    }
+    return options.some((option) => option.label.toLowerCase() === token.toLowerCase());
+  });
 }
 
 function abortReason(message: string): Error {

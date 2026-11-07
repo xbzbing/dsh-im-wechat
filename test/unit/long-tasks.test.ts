@@ -60,9 +60,11 @@ test('没超过阈值不发提醒', async () => {
   assert.equal(h.sent.length, 0);
 });
 
-test('回合里主人插过话就不算无人值守，不发提醒', async () => {
+test('回合中途主人插过话就不算无人值守，不发提醒', async () => {
   const h = harness();
   h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  // 第一条用户消息是回合的开头 prompt，不算插话；第二条才是中途插话。
+  h.notifier.handleEvent('s1', event('user/message', { source: { kind: 'user' } }, 100));
   h.notifier.handleEvent('s1', event('user/message', { source: { kind: 'user' } }, 1_000));
   h.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 20 * 60_000));
   await new Promise((resolve) => setImmediate(resolve));
@@ -90,7 +92,7 @@ test('停用后不再跟踪，也不发提醒', async () => {
 test('失败回合标注执行失败；没有标题时用「未命名会话」', async () => {
   const h = harness();
   h.notifier.handleEvent('s2', event('turn/start', { turn: 1 }, 0));
-  h.notifier.handleEvent('s2', event('turn/end', { turn: 1, error: { message: 'boom' } }, 15 * 60_000));
+  h.notifier.handleEvent('s2', event('turn/end', { turn: 1, reason: { kind: 'error' } }, 15 * 60_000));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.sent.length, 1);
   assert.match(h.sent[0], /未命名会话/);

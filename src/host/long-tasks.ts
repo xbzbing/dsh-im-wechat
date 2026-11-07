@@ -52,6 +52,8 @@ interface SessionRecord {
   interacted: boolean;
   /** 目标的一句话描述：提醒里说清「这是在干什么」。 */
   objective: string;
+  /** 是否已经见过本回合的第一条用户消息（开头那条 prompt 不算插话）。 */
+  promptSeen: boolean;
 }
 
 const UNTITLED_SESSION = '未命名会话';
@@ -122,7 +124,7 @@ export class LongTaskNotifier {
   configure(enabled: boolean): void {
     if (enabled === this.#enabled) return;
     this.#enabled = enabled;
-    if (!enabled) this.#records.clear();
+    if (!enabled) this.clear();
   }
 
   get tracking(): number {
@@ -146,7 +148,13 @@ export class LongTaskNotifier {
         const operation = typeof data.operation === 'string' ? data.operation : '';
         const goal = asRecord(data.goal);
         const objective = typeof goal?.objective === 'string' ? goal.objective.trim() : '';
-        if (operation === 'clear' || objective === '') return;
+        if (operation === 'clear' || objective === '') {
+          // 目标被清掉：记录里也不能留旧目标，否则后续提醒继续显示已经不存在的目标。
+          this.#objectives.delete(sessionId);
+          const current = this.#records.get(sessionId);
+          if (current) current.objective = '';
+          return;
+        }
         const record = this.#records.get(sessionId);
         if (record) record.objective = objective;
         else this.#objectives.set(sessionId, objective);
@@ -162,10 +170,18 @@ export class LongTaskNotifier {
         return;
       }
       case 'user/message': {
-        // 主人在本回合里答过问题/插过话：这段时间不算「无人值守的长任务」。
+        // 回合开头的 prompt 本身就是用户消息（agent-loop 先 turn/start 再 append），
+        // 不能算「插话」，否则每个主人发起的回合都会被判成被打断、提醒永不触发。
         const record = this.#records.get(sessionId);
+        if (!record) return;
         const source = asRecord(data.source);
-        if (record && (source?.kind === 'user' || source?.kind === 'user-question-reply')) record.interacted = true;
+        if (source?.kind === 'user-question-reply') {
+          record.interacted = true;
+          return;
+        }
+        if (source?.kind !== 'user') return;
+        if (!record.promptSeen) record.promptSeen = true;
+        else record.interacted = true;
         return;
       }
       case 'turn/end':
@@ -199,7 +215,15 @@ export class LongTaskNotifier {
     const existing = this.#records.get(sessionId);
     if (existing?.running && existing.turn === turn) return;
     const objective = this.#objectives.get(sessionId) ?? '';
-    this.#records.set(sessionId, { startedAt: at, turn, answer: '', running: true, interacted: false, objective });
+    this.#records.set(sessionId, {
+      startedAt: at,
+      turn,
+      answer: '',
+      running: true,
+      interacted: false,
+      objective,
+      promptSeen: false,
+    });
     while (this.#records.size > TRACKED_MAX) {
       const oldest = this.#records.keys().next();
       if (oldest.done) break;
@@ -212,7 +236,10 @@ export class LongTaskNotifier {
     if (!record?.running) return;
     record.running = false;
     const duration = at - record.startedAt;
-    const failed = Boolean(asRecord(data.error) ?? data.reason);
+    // 宿主的 turn/end 是 `{turn, reason}`，reason 恒定是对象；失败要读 `reason.kind`。
+    const reason = asRecord(data.reason);
+    const kind = typeof reason?.kind === 'string' ? reason.kind : '';
+    const failed = kind !== '' && kind !== 'completed' && kind !== 'max-tokens';
     if (record.interacted || duration <= this.#thresholdMs) {
       this.#records.delete(sessionId);
       return;

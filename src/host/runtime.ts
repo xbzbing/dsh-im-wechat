@@ -110,8 +110,6 @@ export class WeixinRuntime {
   readonly #roots = new RootAgents();
   readonly #questions: QuestionBroker;
   readonly #longTasks: LongTaskNotifier;
-  /** 最近一个给机器人发消息的人：登录态里没有 `ilink_user_id` 时用它当收件人。 */
-  #lastSender: string | null = null;
   #stopped = false;
 
   constructor(deps: RuntimeDeps = {}) {
@@ -278,12 +276,23 @@ export class WeixinRuntime {
     if (!active) this.#questions.cancelAll('已切换为接入我的超级助理，提问交回 Web 端');
   }
 
-  /** 自有功能的收件人：扫码的微信用户优先，其次最近一个发消息的人。 */
+  /**
+   * 自有功能的收件人：**只认扫码登录的那个微信用户**。
+   *
+   * 不能退回到「最近一个发消息的人」：陌生人只要给机器人发一句话，就能把待答问题
+   * 答掉、还能成为后续提醒的收件人（ADR-0004 的同一类风险）。
+   */
   #ownerRecipient(): string | null {
     if (!this.#ownFeaturesActive()) return null;
     const userId = this.#loginState?.userId;
     if (typeof userId === 'string' && userId !== '') return userId;
-    return this.#lastSender;
+    return null;
+  }
+
+  /** 发送者是不是已确认的主人（扫码登录的用户）。 */
+  #isConfirmedOwner(sender: string): boolean {
+    const userId = this.#loginState?.userId;
+    return typeof userId === 'string' && userId !== '' && sender.toLowerCase() === userId.toLowerCase();
   }
 
   /** 把一段文本发到主人的微信；没有可用令牌时返回 false。 */
@@ -334,7 +343,6 @@ export class WeixinRuntime {
     this.#bridge = null;
     this.#binder?.bind(null);
     this.#loginState = null;
-    this.#lastSender = null;
     this.#syncOwnFeatures();
     this.#health = { state: 'down', code: 'auth-expired', reason: '已登出' };
     await this.#loginStore.clear();
@@ -436,10 +444,10 @@ export class WeixinRuntime {
     const binder = this.#binder;
     if (!bridge) return;
     const sender = typeof message.from_user_id === 'string' ? message.from_user_id : '';
-    if (sender !== '') this.#lastSender = sender;
 
     // 自有功能先认领：这条文本可能是主人在回答微信里的问题。
-    if (this.#ownFeaturesActive()) {
+    // 只认已确认主人的消息——陌生人的文本绝不能把主人的问题答掉。
+    if (this.#ownFeaturesActive() && this.#isConfirmedOwner(sender)) {
       const text = messageText(message.item_list);
       if (text.trim() !== '' && this.#questions.reply(text)) return;
     }

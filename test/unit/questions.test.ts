@@ -144,6 +144,42 @@ test('主人回答后返回结构化答案，并摘掉待答', async () => {
   assert.match(sent[0], /去哪吃饭/);
 });
 
+test('待答期间：纯文本不认领，但序号/选项能认领', async () => {
+  const { broker } = harness();
+  const request: { questions: unknown; signal?: AbortSignal } = { questions: SINGLE };
+  const controller = new AbortController();
+  request.signal = controller.signal;
+  const result = broker.handle(request, async () => new Promise(() => {}), true);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // 「取消」「先别动」这类不是答案，不能被结掉。
+  assert.equal(broker.reply('取消'), false);
+  assert.equal(broker.reply('先别动'), false);
+  assert.equal(broker.snapshot().pending, 1);
+
+  assert.equal(broker.reply('2'), true);
+  assert.deepEqual(await result, { answers: [{ id: 'q1', selected: ['饭'] }] });
+});
+
+test('cancelAll 会 abort 本地信号，Web 端的投递随之收缩', async () => {
+  const { broker } = harness();
+  const request: { questions: unknown; signal?: AbortSignal } = { questions: SINGLE };
+  request.signal = new AbortController().signal;
+  let observed: string | null = null;
+  const result = broker.handle(request, async () => new Promise((_resolve, reject) => {
+    // 宿主看到的 union signal：本地 abort 时要能看到原因。
+    request.signal?.addEventListener('abort', () => {
+      observed = String((request.signal?.reason as Error | undefined)?.message ?? '');
+      reject(request.signal?.reason);
+    }, { once: true });
+  }), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  broker.cancelAll('插件已停止');
+  await assert.rejects(result, /插件已停止/);
+  assert.equal(observed, '插件已停止');
+  assert.equal(broker.snapshot().pending, 0);
+});
+
 test('不是作答的文本不被消费（交给普通消息路径）', async () => {
   const broker = new QuestionBroker({
     send: async () => true,

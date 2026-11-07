@@ -20,7 +20,7 @@ import {
   isHttpsUrl,
   qrImageUrl,
 } from './logic.ts';
-import { h, useCallback, useEffect, useMemo, useState } from './platform.ts';
+import { h, useCallback, useEffect, useMemo, useRef, useState } from './platform.ts';
 import { ensureStyles } from './styles.ts';
 import { Button, IconCopy, IconLink, IconRefresh, Input, Pill, StateDot, Switch, copyText } from './ui.ts';
 
@@ -62,19 +62,27 @@ export function WeixinSettingsPanel(props: any) {
   const [busy, setBusy] = useState('');
   const [code, setCode] = useState('');
   const [copied, setCopied] = useState(false);
+  /** 状态请求的单调序号：Host 慢时旧响应可能后到，绝不能覆盖新快照。 */
+  const requestSeq = useRef(0);
 
   useEffect(() => {
     ensureStyles();
   }, []);
 
   const refresh = useCallback(async () => {
+    const seq = requestSeq.current + 1;
+    requestSeq.current = seq;
     try {
-      setStatus(await rpcCall(ENDPOINTS.status));
+      const next = await rpcCall(ENDPOINTS.status);
+      // 只接受最新一次请求的结果：登录确认态被旧的 waiting 快照覆盖会来回跳。
+      if (seq !== requestSeq.current) return;
+      setStatus(next);
       setActionError('');
     } catch (error) {
+      if (seq !== requestSeq.current) return;
       setActionError(describeError(error).message);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, [rpcCall]);
 

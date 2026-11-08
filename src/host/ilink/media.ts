@@ -11,7 +11,7 @@
  * 微信域名白名单内、禁跟随重定向、限大小与时限；任何一项不满足都当作「这条没有图」。
  */
 
-import { createDecipheriv } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
 import { classifyNetworkFailure } from './api.ts';
 import type { CdnMedia, ImageItem } from './types.ts';
@@ -85,6 +85,36 @@ export function parseBase64Key(aesKey: string | undefined): Buffer | null {
 export function decryptAesEcb(ciphertext: Buffer, key: Buffer): Buffer {
   const decipher = createDecipheriv('aes-128-ecb', key, null);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
+/** AES-128-ECB + PKCS#7 加密（出站上传用，ADR-0010）。 */
+export function encryptAesEcb(plaintext: Buffer, key: Buffer): Buffer {
+  const cipher = createCipheriv('aes-128-ecb', key, null);
+  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
+}
+
+/** 加密后的密文大小：PKCS#7 补齐到 16 的倍数（总是补，整倍数也补一整块）。 */
+export function aesEcbPaddedSize(rawSize: number): number {
+  return rawSize + 16 - (rawSize % 16);
+}
+
+/** 小写十六进制 MD5：`getuploadurl` 的 `rawfilemd5` 字段。 */
+export function md5Hex(bytes: Buffer): string {
+  return createHash('md5').update(bytes).digest('hex');
+}
+
+/** 十六进制密钥 → `media.aes_key` 的 base64(32 个十六进制字符) 编码。 */
+export function base64AesKeyFromHex(hex: string): string {
+  return Buffer.from(hex, 'ascii').toString('base64');
+}
+
+/** 随机十六进制密钥（32 个字符 = 16 字节）。 */
+export function randomHexKey(randomBytes: (size: number) => Buffer = randomBytesDefault): string {
+  return randomBytes(16).toString('hex');
+}
+
+function randomBytesDefault(size: number): Buffer {
+  return randomBytes(size);
 }
 
 export type ImageDownloadResult =

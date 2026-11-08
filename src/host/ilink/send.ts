@@ -87,6 +87,55 @@ export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{
   return { clientId };
 }
 
+export interface SendImageParams {
+  to: string;
+  /** 上传后的 CDN 引用（`upload.ts` 的 `UploadedMedia`）。 */
+  upload: { encryptQueryParam: string; aesKeyHex: string; ciphertextSize: number };
+  contextToken: string | undefined;
+  runId?: string;
+  clientId?: string;
+  timeoutMs?: number;
+}
+
+/**
+ * 发一条图片（ADR-0010）。
+ *
+ * `image_item` 只放 `media`（下载参数 + base64 的十六进制密钥）与 `mid_size`（密文大小），
+ * 顶层 `aeskey` 放原始十六进制：官方实现正是这样，少了任一项微信客户端显示「图片已过期」。
+ */
+export async function sendImage(api: ILinkApi, params: SendImageParams): Promise<{ clientId: string }> {
+  const contextToken = (params.contextToken ?? '').trim();
+  if (contextToken === '') {
+    throw new SendError('window-closed', '缺少 context_token：主人最近没有发过消息');
+  }
+  if (params.to.trim() === '') throw new SendError('other', '缺少收件人');
+  const clientId = params.clientId ?? newClientId();
+  await api.sendMessage(
+    {
+      from_user_id: '',
+      to_user_id: params.to,
+      client_id: clientId,
+      message_type: MessageType.BOT,
+      message_state: MessageState.FINISH,
+      item_list: [{
+        type: MessageItemType.IMAGE,
+        image_item: {
+          media: {
+            encrypt_query_param: params.upload.encryptQueryParam,
+            aes_key: Buffer.from(params.upload.aesKeyHex, 'ascii').toString('base64'),
+          },
+          aeskey: params.upload.aesKeyHex,
+          mid_size: params.upload.ciphertextSize,
+        },
+      }],
+      context_token: contextToken,
+      ...(params.runId ? { run_id: params.runId } : {}),
+    },
+    params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {},
+  );
+  return { clientId };
+}
+
 export interface SendFailure {
   code: SendErrorCode;
   /** `failed`：确定没送达，核心会重试；`uncertain`：结果未知，核心不重发。 */

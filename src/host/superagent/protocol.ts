@@ -67,6 +67,17 @@ export interface Delivery {
   readonly supersedes?: string;
   readonly stream?: DeliveryStream;
   readonly inReplyTo?: string;
+  /** 出站图片（核心 ADR-0067）：桥在 capabilities.outbound.images 里声明能收，核心才会发。 */
+  readonly images?: readonly DeliveryImage[];
+}
+
+/** 与核心 Schema 一致：最多 4 张，单张 base64 不超过 14,000,000 字符。 */
+export const DELIVERY_IMAGES_MAX = 4;
+
+export interface DeliveryImage {
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  readonly data: string;
+  readonly name?: string;
 }
 
 export type ReceiptErrorCode = 'window-closed' | 'rate-limited' | 'auth-expired' | 'too-long' | 'other';
@@ -94,7 +105,7 @@ export interface BridgeCapabilities {
   detail: boolean;
   nativeCommands: boolean;
   quotas?: { scope: 'bot' | 'conversation'; max: number; windowMs: number }[];
-  outbound: { requiresPriorInbound: boolean; windowMs?: number };
+  outbound: { requiresPriorInbound: boolean; windowMs?: number; images?: boolean };
 }
 
 export interface BridgeHealth {

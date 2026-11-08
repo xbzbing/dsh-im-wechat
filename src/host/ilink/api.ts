@@ -167,6 +167,23 @@ interface RequestOptions {
   baseUrl?: string;
 }
 
+/** `getuploadurl` 的请求（字段名照协议，全小写无下划线）。 */
+export interface UploadUrlRequest {
+  filekey: string;
+  media_type: number;
+  to_user_id: string;
+  rawsize: number;
+  rawfilemd5: string;
+  filesize: number;
+  no_need_thumb: boolean;
+  aeskey: string;
+}
+
+export interface UploadUrlResponse {
+  uploadParam?: string;
+  uploadFullUrl?: string;
+}
+
 export class ILinkApi {
   readonly #fetch: typeof globalThis.fetch;
   readonly #baseUrl: string;
@@ -302,6 +319,28 @@ export class ILinkApi {
   }
 
   /** 发送一条消息（文本或已上传的媒体项）。业务失败抛 `api` 类错误并带上 `ret`。 */
+  /**
+   * 取 CDN 上传参数（`ilink/bot/getuploadurl`）。拿到后由 `upload.ts` 加密并 POST 到 CDN，
+   * 再从响应头 `x-encrypted-param` 取回下载参数，最后发一条 `image_item` 消息（ADR-0010）。
+   */
+  async getUploadUrl(request: UploadUrlRequest, options: { timeoutMs?: number } = {}): Promise<UploadUrlResponse> {
+    const response = await this.#postObject(
+      'ilink/bot/getuploadurl',
+      { ...request, base_info: this.baseInfo() },
+      { timeoutMs: options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS },
+    );
+    const ret = typeof response.ret === 'number' ? response.ret : undefined;
+    if (ret !== undefined && ret !== 0) {
+      throw new ILinkError('api', `getuploadurl 失败 ret=${ret}`, { ret });
+    }
+    const uploadParam = typeof response.upload_param === 'string' ? response.upload_param : undefined;
+    const uploadFullUrl = typeof response.upload_full_url === 'string' ? response.upload_full_url : undefined;
+    if ((uploadParam === undefined || uploadParam === '') && (uploadFullUrl === undefined || uploadFullUrl === '')) {
+      throw new ILinkError('api', 'getuploadurl 没有回上传参数');
+    }
+    return { ...(uploadParam === undefined ? {} : { uploadParam }), ...(uploadFullUrl === undefined ? {} : { uploadFullUrl }) };
+  }
+
   async sendMessage(message: OutboundMessage, options: { timeoutMs?: number } = {}): Promise<void> {
     const response = await this.#postObject(
       'ilink/bot/sendmessage',

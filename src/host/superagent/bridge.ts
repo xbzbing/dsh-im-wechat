@@ -9,7 +9,9 @@
  * 里——进程重启后重发一遍，比「以为发过其实没发」安全。
  */
 
-import { classifySendFailure, sendText } from '../ilink/send.ts';
+import { classifySendFailure, sendImage, sendText } from '../ilink/send.ts';
+import { DEFAULT_CDN_BASE_URL } from '../ilink/api.ts';
+import { CdnUploadError, uploadImage } from '../ilink/upload.ts';
 import type { ILinkApi } from '../ilink/api.ts';
 import type { SessionGuard } from '../ilink/session-guard.ts';
 import type { ContextTokenStore } from '../state/context-tokens.ts';
@@ -50,6 +52,10 @@ export interface WeixinBridgeOptions {
   isEnabled?: () => boolean;
   /** 交付进入投递流程时回调（收件人）：用于收起「正在输入」（ADR-0007）。 */
   onDelivered?: (recipient: string) => void;
+  /** CDN 基址（服务端下发的配置）；上传图片时用。 */
+  cdnBaseUrl?: string;
+  /** 上传图片用的 fetch；测试注入，运行时用全局 fetch。 */
+  uploadFetch?: typeof globalThis.fetch;
 }
 
 export class WeixinBridge implements BridgeProvider {
@@ -70,6 +76,10 @@ export class WeixinBridge implements BridgeProvider {
   readonly #progress = new Map<string, number>();
   /** 在途投递：同一 `delivery.id` 的并发调用复用同一次，避免两路都从第 1 段发。 */
   readonly #inflight = new Map<string, Promise<Receipt>>();
+  /** 已发到第几张图（ADR-0010）：断点续发，避免重试把已到的图再发一遍。 */
+  readonly #imageProgress = new Map<string, number>();
+  readonly #cdnBaseUrl: string;
+  readonly #uploadFetch: typeof globalThis.fetch | undefined;
   #handle: BridgeHandle | null = null;
   #features: ReadonlySet<string> = new Set();
 
@@ -83,6 +93,8 @@ export class WeixinBridge implements BridgeProvider {
     this.#health = options.health;
     this.#isEnabled = options.isEnabled;
     this.#onDelivered = options.onDelivered;
+    this.#cdnBaseUrl = options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL;
+    this.#uploadFetch = options.uploadFetch;
     this.capabilities = {
       // 微信客户端原生渲染 Markdown（表格、代码块、标题都支持），见 ADR-0008。
       markdown: 'full',
@@ -91,7 +103,8 @@ export class WeixinBridge implements BridgeProvider {
       nativeCommands: false,
       // 平台连发限制待真机实测（M5），先按保守值声明，核心据此节流。
       quotas: [{ scope: 'bot', max: 10, windowMs: 60_000 }],
-      outbound: { requiresPriorInbound: true },
+      // 能随交付发图片（ADR-0010）：核心据此把 Delivery.images 一起发过来。
+      outbound: { requiresPriorInbound: true, images: true },
     };
   }
 
@@ -145,6 +158,40 @@ export class WeixinBridge implements BridgeProvider {
     return task;
   }
 
+  // 逐张上传并发送；返回失败时只带失败字段。进度按张记，重试从下一张接着发。
+  async #sendImages(
+    api: ILinkApi,
+    delivery: Delivery,
+    recipient: string,
+    contextToken: string | undefined,
+  ): Promise<Pick<Receipt, 'status' | 'error' | 'errorCode'> | undefined> {
+    const images = delivery.images ?? [];
+    let sent = this.#imageProgress.get(delivery.id) ?? 0;
+    for (; sent < images.length; sent += 1) {
+      const image = images[sent]!;
+      try {
+        const upload = await uploadImage(
+          api,
+          { data: Buffer.from(image.data, 'base64'), toUserId: recipient },
+          { cdnBaseUrl: this.#cdnBaseUrl, ...(this.#uploadFetch ? { fetch: this.#uploadFetch } : {}) },
+        );
+        await sendImage(api, { to: recipient, upload, contextToken });
+        this.#imageProgress.set(delivery.id, sent + 1);
+      } catch (error) {
+        const failure = classifySendFailure(error);
+        if (failure.certainty === 'uncertain') {
+          this.#imageProgress.delete(delivery.id);
+          this.#logger?.warn?.(`微信图片发送结果未知（${delivery.id}）`, failure.message);
+          return { status: 'uncertain', error: failure.message };
+        }
+        const message = error instanceof CdnUploadError ? `图片上传失败：${error.message}` : failure.message;
+        this.#logger?.warn?.(`微信图片发送失败（${delivery.id}）`, message);
+        return { status: 'failed', errorCode: failure.code, error: message };
+      }
+    }
+    return undefined;
+  }
+
   async #deliverOnce(delivery: Delivery): Promise<Receipt> {
     const base = { deliveryId: delivery.id };
     if (this.#isEnabled && !this.#isEnabled()) {
@@ -165,10 +212,17 @@ export class WeixinBridge implements BridgeProvider {
 
     const text = composeDeliveryText(delivery);
     const parts = splitText(text, this.#maxText);
-    if (parts.length === 0) return { ...base, status: 'sent' };
+    const images = delivery.images ?? [];
+    if (parts.length === 0 && images.length === 0) return { ...base, status: 'sent' };
 
     const recipient = delivery.recipient;
     const contextToken = this.#contextTokens.get(this.account, recipient);
+
+    // 图片先发：文字里通常写着「图见上」，图没到就发文字会让人以为没发。
+    if (images.length > 0) {
+      const failure = await this.#sendImages(api, delivery, recipient, contextToken);
+      if (failure) return { ...base, ...failure };
+    }
     let sent = this.#progress.get(delivery.id) ?? 0;
     let lastClientId: string | undefined;
 
@@ -192,6 +246,7 @@ export class WeixinBridge implements BridgeProvider {
     }
 
     this.#progress.delete(delivery.id);
+    this.#imageProgress.delete(delivery.id);
     return {
       ...base,
       status: 'sent',

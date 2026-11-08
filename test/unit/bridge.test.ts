@@ -37,6 +37,8 @@ interface Harness {
   sent: Sent[];
   guard: SessionGuard;
   tokens: ContextTokenStore;
+  images: Record<string, unknown>[];
+  uploads: string[];
 }
 
 async function harness(
@@ -46,6 +48,9 @@ async function harness(
     withToken?: boolean;
     noApi?: boolean;
     onDelivered?: (recipient: string) => void;
+    uploadStatus?: number;
+    uploadParam?: string;
+    uploadFails?: boolean;
   } = {},
 ): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-bridge-'));
@@ -54,25 +59,39 @@ async function harness(
   if (options.withToken !== false) tokens.set(ACCOUNT, OWNER, 'ctx-1');
   const guard = new SessionGuard();
   let calls = 0;
+  const images: Record<string, unknown>[] = [];
+  const uploads: string[] = [];
   const api = {
-    async sendMessage(message: { to_user_id: string; item_list?: { text_item?: { text?: string } }[] }) {
+    async sendMessage(message: { to_user_id: string; item_list?: Record<string, unknown>[] }) {
       calls += 1;
       if (options.failAt?.includes(calls)) throw options.error ?? new Error('boom');
+      const item = message.item_list?.[0];
+      if (item?.image_item !== undefined) {
+        images.push(item.image_item as Record<string, unknown>);
+        return;
+      }
       sent.push({
         to: message.to_user_id,
-        text: message.item_list?.[0]?.text_item?.text ?? '',
+        text: (item?.text_item as { text?: string } | undefined)?.text ?? '',
       });
     },
+    async getUploadUrl() {
+      if (options.uploadFails) throw new ILinkError('api', 'getuploadurl 失败 ret=-1', { ret: -1 });
+      uploads.push('getuploadurl');
+      return { uploadParam: 'up', uploadFullUrl: 'https://novac2c.cdn.weixin.qq.com/c2c/upload?x=1' };
+    },
   } as unknown as ILinkApi;
+  const uploadFetch = (async () => new Response('', { status: options.uploadStatus ?? 200, headers: { 'x-encrypted-param': options.uploadParam ?? 'dl-1' } })) as unknown as typeof globalThis.fetch;
   const bridge = new WeixinBridge({
     account: ACCOUNT,
     api: () => (options.noApi ? null : api),
     contextTokens: tokens,
     guard,
     maxText: 20,
+    uploadFetch,
     ...(options.onDelivered ? { onDelivered: options.onDelivered } : {}),
   });
-  return { dir, bridge, sent, guard, tokens };
+  return { dir, bridge, sent, guard, tokens, images, uploads };
 }
 
 async function withHarness(
@@ -245,5 +264,54 @@ test('交付进入投递流程就回调 onDelivered（收起正在输入）', as
     // 该 harness 没挂回调，确认不挂也能跑。
     const receipt = await h.bridge.deliver(delivery({ id: 'failing' }));
     assert.equal(receipt.status, 'failed');
+  });
+});
+
+const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]).toString('base64');
+
+function withImage(overrides: Partial<Delivery> = {}): Delivery {
+  return delivery({ title: '', body: 'A · Q 版抱鲸鱼', images: [{ mediaType: 'image/png', data: PNG_BASE64, name: 'a.png' }], ...overrides });
+}
+
+test('交付带图：先上传再发 image_item，然后才发文字', async () => {
+  await withHarness({}, async (h) => {
+    const receipt = await h.bridge.deliver(withImage());
+    assert.equal(receipt.status, 'sent');
+    assert.deepEqual(h.uploads, ['getuploadurl']);
+    assert.equal(h.images.length, 1);
+    const image = h.images[0]!;
+    const media = image.media as { encrypt_query_param?: string; aes_key?: string };
+    assert.equal(media.encrypt_query_param, 'dl-1');
+    // media.aes_key 是 base64 的 32 个十六进制字符；顶层 aeskey 是原始十六进制。
+    assert.match(Buffer.from(media.aes_key ?? '', 'base64').toString('ascii'), /^[0-9a-f]{32}$/);
+    assert.equal(image.aeskey, Buffer.from(media.aes_key ?? '', 'base64').toString('ascii'));
+    assert.equal(typeof image.mid_size, 'number');
+    assert.deepEqual(h.sent, [{ to: OWNER, text: 'A · Q 版抱鲸鱼' }]);
+  });
+});
+
+test('交付带图：上传失败按失败的 errorCode 回，文字一条都不发', async () => {
+  await withHarness({ uploadFails: true }, async (h) => {
+    const receipt = await h.bridge.deliver(withImage());
+    assert.equal(receipt.status, 'failed');
+    assert.equal(receipt.errorCode, 'other');
+    // 上传在 getuploadurl 就失败：错误来自 api 层，不让核心里出现「发送成功」的假象。
+    assert.match(receipt.error ?? '', /getuploadurl|图片上传失败/);
+    assert.deepEqual(h.sent, []);
+  });
+});
+
+test('交付带图：4xx 上传错误也不重排出半张图', async () => {
+  await withHarness({ uploadStatus: 403, uploadParam: '' }, async (h) => {
+    const receipt = await h.bridge.deliver(withImage());
+    assert.equal(receipt.status, 'failed');
+    assert.deepEqual(h.sent, []);
+    assert.deepEqual(h.images, []);
+  });
+});
+
+test('能力声明：outbound.images 为 true，核心才会把图发过来', async () => {
+  await withHarness({}, async (h) => {
+    assert.equal(h.bridge.capabilities.outbound.images, true);
   });
 });

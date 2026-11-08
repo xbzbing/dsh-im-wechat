@@ -505,6 +505,7 @@ export class WeixinRuntime {
       health: () => this.#health,
       isEnabled: () => this.#enabled,
       onDelivered: (recipient) => this.#typing.stop(recipient),
+      cdnBaseUrl: this.#config.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
     });
     this.#binder?.bind(this.#superagent ? this.#bridge : null);
     this.#startPolling();

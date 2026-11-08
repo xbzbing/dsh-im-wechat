@@ -5,3 +5,4 @@ docs/review/
 node_modules/
 lib/
 *.log
+.agents/

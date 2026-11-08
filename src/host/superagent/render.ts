@@ -1,16 +1,19 @@
 /**
  * 交付 → 微信文本。
  *
- * 微信没有富文本，也没有可编辑的消息卡片，所以桥要完成的降级有三步（ADR-0003）：
+ * 微信没有可编辑的消息卡片，两端对同一条文本的渲染也不一样（PC 端按 Markdown、移动端按
+ * 纯文本，ADR-0008），所以桥要完成的降级有五步（ADR-0003）：
  *
  * 1. **去 Markdown**：`**`、反引号、标题符号、链接语法都拍平成纯文本，链接保留
- *    `文字(地址)` 的可读形态。
+ *    `文字(地址)` 的可读形态。移动端不渲染标记，留着就是原始语法；PC 端虽能渲染，
+ *    也不能指望两端观感一致，宁可拍平后只在列表符号上迁就 PC。
  * 2. **没有交互卡也要能作答**：核心把结构化问题放在 `delivery.interaction` 里，
  *    不等同于正文；桥必须把题目与选项写成文字，并给出与核心 `answerFromText`
  *    一致的作答提示（序号 / 选项文字 / 自由输入），否则主人在微信里无从作答。
  * 3. **还原核心的转义**：核心给外部文本（卡片标题、评论摘录）先做过 markdown 转义，
  *    微信没有渲染器接手，`\*`、`\#` 这类会原样露出来，所以拍平时一并还原字符。
  * 4. **分条**：超过 `maxText` 时按段落边界切分，宁可多条也不截断。
+ * 5. **两端都能分行**：PC 端按 Markdown 渲染、移动端按纯文本渲染，见 `normalizeBlocks`。
  *
  * 代码（围栏块与行内代码）在拍平前先摘出来、拍平后放回：里面的反斜杠与下划线是作者本意
  * （`s/\(x\)/y/`、`\d+\.\d+`），不能被上面的规则改写。反转义的字符集与核心
@@ -36,7 +39,36 @@ export function composeDeliveryText(delivery: Delivery): string {
     const interaction = renderInteraction(delivery.interaction);
     if (interaction !== '') sections.push(interaction);
   }
-  return sections.join('\n\n');
+  return normalizeBlocks(sections.join('\n\n'));
+}
+
+/** 列表项：短横 / 星号 / 加号 / 有序序号，允许缩进（嵌套列表靠它保留层级）。 */
+const LIST_ITEM = /^\s*(?:[-*+]|\d+\.)\s+/;
+
+/**
+ * 让同一段文本在两端都分行：PC 端按 Markdown 渲染，移动端按纯文本渲染。
+ *
+ * 真机实测（2026-11-08，微信 Mac + iOS）：
+ * - 单个 `\n` 在 PC 端被折叠成一个空格，分条列表挤成一整段；移动端正常换行；
+ * - 行尾两个空格（CommonMark 硬换行）PC 端无效；
+ * - 空行（段落分隔）两端都换行，但每行之间会多出一条空行；
+ * - `- ` / `1. ` 列表语法 PC 端能渲染成紧凑列表，移动端照常逐行显示。
+ *
+ * 所以规则是：列表项之间保留单个换行（PC 认列表），非列表行之间补空行（PC 认段落），
+ * 列表结束后的第一行也补空行，免得被 Markdown 吞进上一条列表项。
+ */
+export function normalizeBlocks(text: string): string {
+  const out: string[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trimEnd();
+    if (line.trim() === '') {
+      if (out.length > 0 && out[out.length - 1] !== '') out.push('');
+      continue;
+    }
+    if (out.length > 0 && out[out.length - 1] !== '' && !LIST_ITEM.test(line)) out.push('');
+    out.push(line);
+  }
+  return out.join('\n').replace(/^\n+|\n+$/g, '');
 }
 
 /**
@@ -69,7 +101,7 @@ export function toPlainText(markdown: string): string {
     .replace(/(^|[ \t])_([^_\n]+)_(?=[ \t]|$)/gm, '$1$2')
     // 引用与列表。
     .replace(/^>\s?/gm, '')
-    .replace(/^(\s*)[-*+]\s+/gm, '$1• ')
+    .replace(/^(\s*)[-*+]\s+/gm, '$1- ')
     // 分隔线。
     .replace(/^\s*([-*_])\1{2,}\s*$/gm, '')
     // 反转义：只作用于代码之外的文本。放在最后，免得 `\-` 被当成列表或分隔线。

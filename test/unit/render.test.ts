@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { composeDeliveryText, renderInteraction, splitText, toPlainText } from '../../src/host/superagent/render.ts';
+import {
+  composeDeliveryText,
+  normalizeBlocks,
+  renderInteraction,
+  splitText,
+  toPlainText,
+} from '../../src/host/superagent/render.ts';
 import type { Delivery } from '../../src/host/superagent/protocol.ts';
 
 function delivery(overrides: Partial<Delivery> = {}): Delivery {
@@ -16,11 +22,25 @@ function delivery(overrides: Partial<Delivery> = {}): Delivery {
   };
 }
 
-test('标题与正文拍平成纯文本', () => {
+test('标题与正文拍平成纯文本，列表项保留 Markdown 列表符号', () => {
   assert.equal(
     composeDeliveryText(delivery({ title: '**构建完成**', body: '- 第一步\n- 第二步' })),
-    '构建完成\n\n• 第一步\n• 第二步',
+    '构建完成\n\n- 第一步\n- 第二步',
   );
+});
+
+test('列表项之间保留单个换行，非列表行之间补空行（PC 端 Markdown 才能分行）', () => {
+  // 列表：PC 端渲染成紧凑列表，移动端逐行显示。
+  assert.equal(normalizeBlocks('- a\n- b'), '- a\n- b');
+  assert.equal(normalizeBlocks('1. a\n2. b'), '1. a\n2. b');
+  // 列表前的引导行仍用单个换行，免得把列表推成新段落。
+  assert.equal(normalizeBlocks('命令\n- a\n- b'), '命令\n- a\n- b');
+  // 纯文本行：单个换行在 PC 端会被折叠，补成空行。
+  assert.equal(normalizeBlocks('a\nb'), 'a\n\nb');
+  // 列表结束后回到纯文本：补空行，免得被 Markdown 吞进上一条列表项。
+  assert.equal(normalizeBlocks('- a\n- b\n结论'), '- a\n- b\n\n结论');
+  // 空行归一，行尾空白清掉，首尾不留空行。
+  assert.equal(normalizeBlocks('\n\na   \n\n'), 'a');
 });
 
 test('Markdown 降级：标题、链接、代码、引用、分隔线', () => {

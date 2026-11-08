@@ -124,7 +124,8 @@ test('超长正文分条发送', async () => {
     const receipt = await h.bridge.deliver(delivery({ title: '', body }));
     assert.equal(receipt.status, 'sent');
     assert.ok(h.sent.length > 1);
-    assert.equal(h.sent.map((item) => item.text).join('\n'), body);
+    // 纯文本行之间会被补成空行（PC 端 Markdown 才能分段），比对时把空行折回换行。
+    assert.equal(h.sent.map((item) => item.text).join('\n').replace(/\n{2,}/g, '\n'), body);
   });
 });
 
@@ -153,7 +154,7 @@ test('分条中途失败后重试从断点续发，不重复已发内容', async
     const second = await failing.deliver(delivery({ id: 'multi', title: '', body }));
     assert.equal(second.status, 'sent');
     // 断点续发：第二批只补后面的段落。
-    assert.equal(h.sent.map((item) => item.text).join('\n'), body);
+    assert.equal(h.sent.map((item) => item.text).join('\n').replace(/\n{2,}/g, '\n'), body);
   });
 });
 

@@ -199,7 +199,7 @@ test('能力声明：纯文本、分条上限、无交互卡、需要先有入�
   });
   assert.equal(bridge.platform, 'weixin');
   assert.deepEqual(bridge.protocol, ['my-superagent/v1']);
-  assert.equal(bridge.capabilities.markdown, 'none');
+  assert.equal(bridge.capabilities.markdown, 'full');
   assert.deepEqual(bridge.capabilities.maxText, { max: 1_500, unit: 'char' });
   assert.equal(bridge.capabilities.interaction, undefined);
   assert.equal(bridge.capabilities.detail, false);

@@ -84,7 +84,8 @@ export class WeixinBridge implements BridgeProvider {
     this.#isEnabled = options.isEnabled;
     this.#onDelivered = options.onDelivered;
     this.capabilities = {
-      markdown: 'none',
+      // 微信客户端原生渲染 Markdown（表格、代码块、标题都支持），见 ADR-0008。
+      markdown: 'full',
       maxText: { max: this.#maxText, unit: 'char' },
       detail: false,
       nativeCommands: false,

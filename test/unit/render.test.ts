@@ -3,10 +3,9 @@ import { test } from 'node:test';
 
 import {
   composeDeliveryText,
-  normalizeBlocks,
   renderInteraction,
   splitText,
-  toPlainText,
+  toWeChatMarkdown,
 } from '../../src/host/superagent/render.ts';
 import type { Delivery } from '../../src/host/superagent/protocol.ts';
 
@@ -22,76 +21,86 @@ function delivery(overrides: Partial<Delivery> = {}): Delivery {
   };
 }
 
-test('标题与正文拍平成纯文本，列表项保留 Markdown 列表符号', () => {
+test('标题与正文保留 Markdown（客户端原生渲染）', () => {
   assert.equal(
     composeDeliveryText(delivery({ title: '**构建完成**', body: '- 第一步\n- 第二步' })),
-    '构建完成\n\n- 第一步\n- 第二步',
+    '**构建完成**\n\n- 第一步\n- 第二步',
   );
 });
 
-test('列表项之间保留单个换行，非列表行之间补空行（PC 端 Markdown 才能分行）', () => {
-  // 列表：PC 端渲染成紧凑列表，移动端逐行显示。
-  assert.equal(normalizeBlocks('- a\n- b'), '- a\n- b');
-  assert.equal(normalizeBlocks('1. a\n2. b'), '1. a\n2. b');
-  // 列表前的引导行仍用单个换行，免得把列表推成新段落。
-  assert.equal(normalizeBlocks('命令\n- a\n- b'), '命令\n- a\n- b');
-  // 纯文本行：单个换行在 PC 端会被折叠，补成空行。
-  assert.equal(normalizeBlocks('a\nb'), 'a\n\nb');
-  // 列表结束后回到纯文本：补空行，免得被 Markdown 吞进上一条列表项。
-  assert.equal(normalizeBlocks('- a\n- b\n结论'), '- a\n- b\n\n结论');
-  // 空行归一，行尾空白清掉，首尾不留空行。
-  assert.equal(normalizeBlocks('\n\na   \n\n'), 'a');
+test('表格、链接、H1-H4、引用、分隔线、代码原样透传', () => {
+  const source = [
+    '# 一级标题',
+    '',
+    '| 城市 | 温度 |',
+    '| --- | --- |',
+    '| 北京 | 12°C |',
+    '',
+    '> 引用',
+    '',
+    '---',
+    '',
+    '看 [文档](https://example.com/a) 与 `code`',
+    '',
+    '```bash',
+    'ls -l',
+    '```',
+  ].join('\n');
+  assert.equal(toWeChatMarkdown(source), source);
 });
 
-test('Markdown 降级：标题、链接、代码、引用、分隔线', () => {
-  const text = toPlainText(
-    ['# 标题', '看 [文档](https://example.com/a)', '> 引用', '`code` 与 **粗体**', '---', '```', 'fenced', '```'].join('\n'),
-  );
-  assert.match(text, /^标题$/m);
-  assert.match(text, /文档\(https:\/\/example\.com\/a\)/);
-  assert.match(text, /^引用$/m);
-  assert.match(text, /code 与 粗体/);
-  assert.equal(text.includes('---'), false);
-  assert.match(text, /^fenced$/m);
+test('H5/H6 客户端不渲染标记：去井号留文字，H1-H4 不动', () => {
+  assert.equal(toWeChatMarkdown('##### 五级标题'), '五级标题');
+  assert.equal(toWeChatMarkdown('###### 六级标题'), '六级标题');
+  assert.equal(toWeChatMarkdown('#### 四级标题'), '#### 四级标题');
 });
 
-test('单下划线斜体也拍平：核心的状态行不再漏出原始标记', () => {
-  assert.equal(
-    toPlainText('_模型 MiMo\\-V2\\.6\\-Flash · 思考 high · 上下文 175K / 1.0M（17%）_'),
-    '模型 MiMo-V2.6-Flash · 思考 high · 上下文 175K / 1.0M（17%）',
-  );
-  // 结尾前多一个空格（历史上真实出现过）同样要拍平。
-  assert.equal(toPlainText('_模型 m _'), '模型 m ');
+test('图片整段丢弃（客户端不渲染）', () => {
+  assert.equal(toWeChatMarkdown('看图 ![截图](https://example.com/a.png) 结束'), '看图 结束');
+  assert.equal(toWeChatMarkdown('![只有图](https://example.com/a.png)'), '');
 });
 
-test('核心对「别人写的文字」做的 markdown 转义在这里还原', () => {
-  assert.equal(toPlainText('\\*\\*不是加粗\\*\\*'), '**不是加粗**');
-  assert.equal(toPlainText('issue \\#118 由 \\@Echosong 创建'), 'issue #118 由 @Echosong 创建');
-  // 行首的转义短横不是列表项。
-  assert.equal(toPlainText('\\- 不是列表'), '- 不是列表');
+test('删除线去标记留文字（客户端不渲染）', () => {
+  assert.equal(toWeChatMarkdown('~~旧结论~~ 新结论'), '旧结论 新结论');
 });
 
-test('反转义的字符集与核心 escapeMarkdown 一致：斜杠不在其中，就不还原', () => {
-  // 跨仓耦合：核心 src/host/shared/markdown.ts 转义 `[\\`*_{}[]()#+-.!|<>@~]`，不含 `/`。
-  assert.equal(toPlainText('issue/118'), 'issue/118');
-  assert.equal(toPlainText('a\\/b'), 'a\\/b');
+test('中文斜体去标记，英文斜体保留', () => {
+  assert.equal(toWeChatMarkdown('*重点*'), '重点');
+  assert.equal(toWeChatMarkdown('_模型 MiMo-V2.6-Flash_'), '模型 MiMo-V2.6-Flash');
+  assert.equal(toWeChatMarkdown('***又粗又斜***'), '又粗又斜');
+  // 英文斜体客户端能渲染，保留标记。
+  assert.equal(toWeChatMarkdown('*italic*'), '*italic*');
+  assert.equal(toWeChatMarkdown('_italic_'), '_italic_');
 });
 
-test('代码里的反斜杠与下划线保持原样', () => {
+test('加粗始终保留，不会被斜体规则拆开', () => {
+  assert.equal(toWeChatMarkdown('**加粗中文**'), '**加粗中文**');
+  assert.equal(toWeChatMarkdown('__加粗中文__'), '__加粗中文__');
+  assert.equal(toWeChatMarkdown('**粗** 与 *斜*'), '**粗** 与 斜');
+});
+
+test('核心对「别人写的文字」做的转义保持不变（交给客户端的 Markdown 解析）', () => {
+  assert.equal(toWeChatMarkdown('\\*\\*不是加粗\\*\\*'), '\\*\\*不是加粗\\*\\*');
+  assert.equal(toWeChatMarkdown('issue \\#118 由 \\@Echosong 创建'), 'issue \\#118 由 \\@Echosong 创建');
+});
+
+test('代码里的反斜杠、下划线、井号保持原样', () => {
   const fenced = ['```bash', 'sed -E "s/\\(foo\\)/bar/" file', '```'].join('\n');
-  assert.equal(toPlainText(fenced), 'sed -E "s/\\(foo\\)/bar/" file');
-  assert.equal(toPlainText('正则 `\\d+\\.\\d+` 匹配小数'), '正则 \\d+\\.\\d+ 匹配小数');
-  assert.equal(toPlainText('`_config_` 与 `a_b` 都别动'), '_config_ 与 a_b 都别动');
+  assert.equal(toWeChatMarkdown(fenced), fenced);
+  assert.equal(toWeChatMarkdown('正则 `\\d+\\.\\d+` 匹配小数'), '正则 `\\d+\\.\\d+` 匹配小数');
+  assert.equal(toWeChatMarkdown('`_config_` 与 `a_b` 都别动'), '`_config_` 与 `a_b` 都别动');
+  assert.equal(toWeChatMarkdown('```\n# 不是标题\n* 不是列表\n```'), '```\n# 不是标题\n* 不是列表\n```');
 });
 
-test('单下划线规则不误伤文件名与括号里的标识符', () => {
-  assert.equal(toPlainText('_config_.json'), '_config_.json');
-  assert.equal(toPlainText('(_build_)'), '(_build_)');
+test('单下划线规则不误伤文件名、括号里的标识符与路径', () => {
+  assert.equal(toWeChatMarkdown('_config_.json'), '_config_.json');
+  assert.equal(toWeChatMarkdown('(_build_)'), '(_build_)');
+  assert.equal(toWeChatMarkdown('src/host/super_client/agent_bridge.ts'), 'src/host/super_client/agent_bridge.ts');
+  assert.equal(toWeChatMarkdown('session-a_b_c'), 'session-a_b_c');
 });
 
-test('标识符里的下划线不受单下划线斜体规则影响', () => {
-  assert.equal(toPlainText('src/host/super_client/agent_bridge.ts'), 'src/host/super_client/agent_bridge.ts');
-  assert.equal(toPlainText('session-a_b_c'), 'session-a_b_c');
+test('多余空行收敛成一条，行尾空白清掉', () => {
+  assert.equal(toWeChatMarkdown('甲\n\n\n\n乙   \n'), '甲\n\n乙');
 });
 
 test('detail 不折叠就省略', () => {

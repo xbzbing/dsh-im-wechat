@@ -46,10 +46,27 @@ test('单下划线斜体也拍平：核心的状态行不再漏出原始标记',
 
 test('核心对「别人写的文字」做的 markdown 转义在这里还原', () => {
   assert.equal(toPlainText('\\*\\*不是加粗\\*\\*'), '**不是加粗**');
-  assert.equal(toPlainText('dsh-my-superagent\\/issue'), 'dsh-my-superagent\\/issue');
   assert.equal(toPlainText('issue \\#118 由 \\@Echosong 创建'), 'issue #118 由 @Echosong 创建');
   // 行首的转义短横不是列表项。
   assert.equal(toPlainText('\\- 不是列表'), '- 不是列表');
+});
+
+test('反转义的字符集与核心 escapeMarkdown 一致：斜杠不在其中，就不还原', () => {
+  // 跨仓耦合：核心 src/host/shared/markdown.ts 转义 `[\\`*_{}[]()#+-.!|<>@~]`，不含 `/`。
+  assert.equal(toPlainText('issue/118'), 'issue/118');
+  assert.equal(toPlainText('a\\/b'), 'a\\/b');
+});
+
+test('代码里的反斜杠与下划线保持原样', () => {
+  const fenced = ['```bash', 'sed -E "s/\\(foo\\)/bar/" file', '```'].join('\n');
+  assert.equal(toPlainText(fenced), 'sed -E "s/\\(foo\\)/bar/" file');
+  assert.equal(toPlainText('正则 `\\d+\\.\\d+` 匹配小数'), '正则 \\d+\\.\\d+ 匹配小数');
+  assert.equal(toPlainText('`_config_` 与 `a_b` 都别动'), '_config_ 与 a_b 都别动');
+});
+
+test('单下划线规则不误伤文件名与括号里的标识符', () => {
+  assert.equal(toPlainText('_config_.json'), '_config_.json');
+  assert.equal(toPlainText('(_build_)'), '(_build_)');
 });
 
 test('标识符里的下划线不受单下划线斜体规则影响', () => {

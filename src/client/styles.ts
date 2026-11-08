@@ -135,8 +135,8 @@ export const STYLES = `
 .wx-setting-row.wx-row-stack { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 10px; }
 .wx-row-stack .wx-threshold-control { width: 100%; }
 .wx-row-stack .wx-select { flex: 1 1 auto; min-width: 0; max-width: 420px; }
-/* 控件行里的按钮不参与收缩，否则窄面板会把「保存」挤成两行。 */
-.wx-row-stack .wx-threshold-control > button { flex: none; white-space: nowrap; }
+/* 控件行里除下拉以外的控件不参与收缩，否则窄面板会把「保存」挤成两行（宿主 Button 可能包一层）。 */
+.wx-row-stack .wx-threshold-control > *:not(.wx-select) { flex: none; white-space: nowrap; }
 .wx-select:disabled { opacity: .5; }
 .wx-panel-muted { opacity: .72; }
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }

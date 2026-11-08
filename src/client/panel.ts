@@ -74,6 +74,8 @@ export function WeixinSettingsPanel(props: any) {
   /** 独立模式的工作区草稿；`dirty` 时不被轮询快照覆盖。 */
   const [workspaceId, setWorkspaceId] = useState('');
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
+  /** 独立模式卡片的展开状态；接入超级助理时默认收起，用户点开后不再被轮询合上。 */
+  const [directOpen, setDirectOpen] = useState<boolean | null>(null);
   /** 宿主给的工作区候选（官方目录）：面板只让选，不让手写路径。 */
   const [workspaces, setWorkspaces] = useState<{ id: string; title: string; path: string }[]>([]);
   const [workspacesReady, setWorkspacesReady] = useState(false);
@@ -228,6 +230,8 @@ export function WeixinSettingsPanel(props: any) {
   const loggedIn = status?.loggedIn === true;
   const enabled = status?.enabled !== false;
   const superagent = status?.superagent !== false;
+  // 接入超级助理时默认收起独立模式；用户手动展开后不再被状态刷新合上。
+  const directExpanded = directOpen ?? !superagent;
   const health = status?.health ?? {};
   const minutesValue = Number(minutes.trim());
   const canSaveMinutes = minutes.trim() !== ''
@@ -427,67 +431,78 @@ export function WeixinSettingsPanel(props: any) {
           : null)),
 
     h('section', { className: `wx-panel${superagent ? ' wx-panel-muted' : ''}` },
-      h('div', { className: 'wx-section-head' },
+      h('div', { className: 'wx-section-head wx-head-collapsible' },
         h('div', null,
           h('p', { className: 'wx-eyebrow' }, t('独立模式')),
-          h('h4', { className: 'wx-section-title' }, t('不接核心时的直连会话'))),
-        h('span', { className: 'wx-section-note' },
-          superagent ? t('已接入超级助理，这组设置暂停') : t('接入超级助理后自动沉默'))),
-      superagent
-        ? h('p', { className: 'wx-draft-hint' }, t('接入超级助理时由核心决定会话与模型；关掉上面的开关即可使用独立模式。'))
-        : null,
-      h('div', { className: 'wx-settings-list' },
-        h(SwitchRow, {
-          title: t('回合中再发消息时插话'),
-          description: t('关闭：排队等这一轮结束（默认）；打开：把消息插进正在跑的这一轮，本轮回答仍照常送回。'),
-          checked: directBusy,
-          disabled: superagent || busy !== '' || hostOlder || direct?.available === false,
-          onChange: (next: boolean) => void saveDirect({ busyMode: next ? 'steer' : 'queue' }),
-        }),
-        h('div', { className: 'wx-setting-row wx-threshold-row wx-row-stack' },
-          h('div', { className: 'wx-setting-copy' },
-            h('span', { className: 'wx-setting-title' }, t('工作区')),
-            h('span', { className: 'wx-setting-description' },
-              t('独立模式下第一次发消息时在这里新建会话，之后一直用它；不指定则用宿主的默认位置。'))),
-          h('div', { className: 'wx-threshold-control' },
-            h('select', {
-              className: 'wx-select',
-              value: workspaceId,
-              'aria-label': t('工作区'),
-              disabled: superagent || busy !== '' || hostOlder || direct?.available === false || !workspacesReady,
-              onChange: (event: any) => {
-                setWorkspaceDirty(true);
-                setWorkspaceId(String(event.target.value));
-              },
-            }, [
-              h('option', { value: '' }, t('不指定（宿主默认位置）')),
-              ...workspaces.map((workspace) => h('option', { value: workspace.id }, `${workspace.title} — ${workspace.path}`)),
-            ]),
-            h(Button, {
-              variant: 'outline',
-              size: 'sm',
+          h('h4', { className: 'wx-section-title' }, t('直连会话'))),
+        h('div', { className: 'wx-section-side' },
+          h('span', { className: 'wx-section-note' },
+            superagent ? t('由超级助理接管') : t('由本插件直接处理')),
+          h('button', {
+            type: 'button',
+            className: 'wx-collapse',
+            'aria-expanded': directExpanded,
+            onClick: () => setDirectOpen(!directExpanded),
+          }, directExpanded ? t('收起') : t('展开')))),
+      directExpanded
+        ? h('div', null,
+          h('p', { className: 'wx-draft-hint' },
+            superagent
+              ? t('接入超级助理后，会话与模型由核心决定；关闭上方开关即可启用独立模式。')
+              : t('未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，回答发回微信。')),
+          h('div', { className: 'wx-settings-list' },
+            h(SwitchRow, {
+              title: t('回合内插话'),
+              description: t('关闭时新消息排队等待当前回合结束；打开后插入正在运行的回合。'),
+              checked: directBusy,
               disabled: superagent || busy !== '' || hostOlder || direct?.available === false,
-              onClick: () => void saveDirect({ workspaceId }),
-            }, t('保存')))),
-        direct?.bound
-          ? h('div', { className: 'wx-setting-row' },
-            h('div', { className: 'wx-setting-copy' },
-              h('span', { className: 'wx-setting-title' }, t('当前绑定的会话')),
-              h('span', { className: 'wx-setting-description' },
-                `${String(direct.sessionId ?? '').slice(0, 18)}…${direct.running ? ` · ${t('正在跑')}` : ''}${
-                  direct.workspaceId && workspaces.some((workspace) => workspace.id === direct.workspaceId)
-                    ? ` · ${workspaces.find((workspace) => workspace.id === direct.workspaceId)!.title}`
-                    : ''}`)),
-            h(Button, {
-              variant: 'ghost',
-              size: 'sm',
-              disabled: superagent || busy !== '' || hostOlder,
-              onClick: () => void saveDirect({ reset: true }),
-            }, t('重置绑定')))
-          : h('p', { className: 'wx-draft-hint' },
-            t('还没有绑定会话：下一条微信消息会按这里的工作区新建一个。'))),
-      direct?.available === false
-        ? h('p', { className: 'wx-draft-hint' }, t('宿主没有提供会话服务，独立模式不可用。'))
+              onChange: (next: boolean) => void saveDirect({ busyMode: next ? 'steer' : 'queue' }),
+            }),
+            h('div', { className: 'wx-field-block' },
+              h('div', { className: 'wx-setting-copy' },
+                h('span', { className: 'wx-setting-title' }, t('工作区')),
+                h('span', { className: 'wx-setting-description' },
+                  t('首次消息在该工作区新建会话并持续复用；留空使用宿主的默认位置。'))),
+              h('div', { className: 'wx-threshold-control' },
+                h('select', {
+                  className: 'wx-select',
+                  value: workspaceId,
+                  'aria-label': t('工作区'),
+                  disabled: superagent || busy !== '' || hostOlder || direct?.available === false || !workspacesReady,
+                  onChange: (event: any) => {
+                    setWorkspaceDirty(true);
+                    setWorkspaceId(String(event.target.value));
+                  },
+                }, [
+                  h('option', { value: '' }, t('不指定（宿主默认位置）')),
+                  ...workspaces.map((workspace) => h('option', { value: workspace.id }, `${workspace.title} — ${workspace.path}`)),
+                ]),
+                h(Button, {
+                  variant: 'outline',
+                  size: 'sm',
+                  disabled: superagent || busy !== '' || hostOlder || direct?.available === false,
+                  onClick: () => void saveDirect({ workspaceId }),
+                }, t('保存')))),
+            direct?.bound
+              ? h('div', { className: 'wx-setting-row' },
+                h('div', { className: 'wx-setting-copy' },
+                  h('span', { className: 'wx-setting-title' }, t('当前会话')),
+                  h('span', { className: 'wx-setting-description' },
+                    `${String(direct.sessionId ?? '').slice(0, 18)}…${direct.running ? ` · ${t('运行中')}` : ''}${
+                      direct.workspaceId && workspaces.some((workspace) => workspace.id === direct.workspaceId)
+                        ? ` · ${workspaces.find((workspace) => workspace.id === direct.workspaceId)!.title}`
+                        : ''}`)),
+                h(Button, {
+                  variant: 'ghost',
+                  size: 'sm',
+                  disabled: superagent || busy !== '' || hostOlder,
+                  onClick: () => void saveDirect({ reset: true }),
+                }, t('重置绑定')))
+              : h('p', { className: 'wx-draft-hint' },
+                t('尚未绑定会话，下一条消息将按所选工作区新建。'))),
+          direct?.available === false
+            ? h('p', { className: 'wx-draft-hint' }, t('宿主未提供会话服务，独立模式不可用。'))
+            : null)
         : null),
 
     h('section', { className: 'wx-panel wx-runtime-panel' },

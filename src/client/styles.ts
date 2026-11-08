@@ -131,12 +131,18 @@ export const STYLES = `
 .wx-threshold-control { display: flex; align-items: center; gap: 6px; }
 .wx-minutes { width: 68px; }
 .wx-select { min-width: 0; width: 100%; height: 30px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 12px; }
-/* 带下拉/长输入的行：控件另起一行占满，窄面板里不会把标签挤成一列单字。 */
-.wx-setting-row.wx-row-stack { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 10px; }
-.wx-row-stack .wx-threshold-control { width: 100%; }
-.wx-row-stack .wx-select { flex: 1 1 auto; min-width: 0; max-width: 420px; }
+/* 标题 + 控件上下排的字段块：标题与说明在上，控件独占下一行。 */
+.wx-field-block { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; border-top: .5px solid var(--dsw-alias-border-l2); }
+.wx-field-block .wx-threshold-control { width: 100%; }
+.wx-field-block .wx-select { flex: 1 1 auto; min-width: 0; max-width: 420px; }
 /* 控件行里除下拉以外的控件不参与收缩，否则窄面板会把「保存」挤成两行（宿主 Button 可能包一层）。 */
-.wx-row-stack .wx-threshold-control > *:not(.wx-select) { flex: none; white-space: nowrap; }
+.wx-field-block .wx-threshold-control > *:not(.wx-select) { flex: none; white-space: nowrap; }
+/* 可折叠卡片的头部：右侧是状态说明 + 展开/收起。 */
+.wx-head-collapsible { align-items: center; }
+.wx-section-side { display: flex; align-items: center; gap: 10px; flex: none; }
+.wx-collapse { padding: 2px 0; border: 0; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; }
+.wx-collapse:hover { color: var(--dsw-alias-label-primary); }
+.wx-collapse:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; border-radius: 4px; }
 .wx-select:disabled { opacity: .5; }
 .wx-panel-muted { opacity: .72; }
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }

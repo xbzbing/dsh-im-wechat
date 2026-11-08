@@ -138,11 +138,16 @@ export const STYLES = `
 /* 控件行里除下拉以外的控件不参与收缩，否则窄面板会把「保存」挤成两行（宿主 Button 可能包一层）。 */
 .wx-field-block .wx-threshold-control > *:not(.wx-select) { flex: none; white-space: nowrap; }
 /* 可折叠卡片的头部：右侧是状态说明 + 展开/收起。 */
-.wx-head-collapsible { align-items: center; }
-.wx-section-side { display: flex; align-items: center; gap: 10px; flex: none; }
-.wx-collapse { padding: 2px 0; border: 0; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; }
-.wx-collapse:hover { color: var(--dsw-alias-label-primary); }
-.wx-collapse:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; border-radius: 4px; }
+.wx-head-collapsible { align-items: center; flex-wrap: wrap; row-gap: 8px; }
+/* 标题块至少占 220px：窄面板里状态与「展开」按钮换到下一行，标题不被挤成一字一行。 */
+.wx-head-collapsible > div:first-child { min-width: 0; flex: 1 1 220px; }
+.wx-section-side { margin-left: auto; display: flex; align-items: center; gap: 10px; flex: none; }
+.wx-collapse { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: .5px solid var(--dsw-alias-border-l2); border-radius: 999px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+.wx-collapse:hover { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-label-tertiary); }
+.wx-collapse:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; }
+/* 折叠箭头：收起时指右、展开时指下，纯 CSS 三角，不依赖图标包。 */
+.wx-chevron { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; transform: rotate(-90deg); transition: transform .15s; }
+.wx-chevron-open { transform: rotate(0deg); }
 .wx-select:disabled { opacity: .5; }
 .wx-panel-muted { opacity: .72; }
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }

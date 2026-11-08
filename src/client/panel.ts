@@ -442,10 +442,13 @@ export function WeixinSettingsPanel(props: any) {
             type: 'button',
             className: 'wx-collapse',
             'aria-expanded': directExpanded,
+            'aria-controls': 'wx-direct-body',
             onClick: () => setDirectOpen(!directExpanded),
-          }, directExpanded ? t('收起') : t('展开')))),
+          },
+          h('span', { className: `wx-chevron${directExpanded ? ' wx-chevron-open' : ''}`, 'aria-hidden': 'true' }),
+          directExpanded ? t('收起') : t('展开')))),
       directExpanded
-        ? h('div', null,
+        ? h('div', { id: 'wx-direct-body' },
           h('p', { className: 'wx-draft-hint' },
             superagent
               ? t('接入超级助理后，会话与模型由核心决定；关闭上方开关即可启用独立模式。')

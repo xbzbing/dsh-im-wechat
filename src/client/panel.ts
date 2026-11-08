@@ -444,7 +444,7 @@ export function WeixinSettingsPanel(props: any) {
           disabled: superagent || busy !== '' || hostOlder || direct?.available === false,
           onChange: (next: boolean) => void saveDirect({ busyMode: next ? 'steer' : 'queue' }),
         }),
-        h('div', { className: 'wx-setting-row wx-threshold-row' },
+        h('div', { className: 'wx-setting-row wx-threshold-row wx-row-stack' },
           h('div', { className: 'wx-setting-copy' },
             h('span', { className: 'wx-setting-title' }, t('工作区')),
             h('span', { className: 'wx-setting-description' },

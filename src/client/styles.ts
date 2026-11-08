@@ -130,7 +130,13 @@ export const STYLES = `
 .wx-setting-row > input[type="checkbox"] { flex: none; }
 .wx-threshold-control { display: flex; align-items: center; gap: 6px; }
 .wx-minutes { width: 68px; }
-.wx-select { min-width: 200px; max-width: 340px; height: 30px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 12px; }
+.wx-select { min-width: 0; width: 100%; height: 30px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 12px; }
+/* 带下拉/长输入的行：控件另起一行占满，窄面板里不会把标签挤成一列单字。 */
+.wx-setting-row.wx-row-stack { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 10px; }
+.wx-row-stack .wx-threshold-control { width: 100%; }
+.wx-row-stack .wx-select { flex: 1 1 auto; min-width: 0; max-width: 420px; }
+/* 控件行里的按钮不参与收缩，否则窄面板会把「保存」挤成两行。 */
+.wx-row-stack .wx-threshold-control > button { flex: none; white-space: nowrap; }
 .wx-select:disabled { opacity: .5; }
 .wx-panel-muted { opacity: .72; }
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }

@@ -100,8 +100,10 @@ export interface SendImageParams {
 /**
  * 发一条图片（ADR-0010）。
  *
- * `image_item` 只放 `media`（下载参数 + base64 的十六进制密钥）与 `mid_size`（密文大小），
- * 顶层 `aeskey` 放原始十六进制：官方实现正是这样，少了任一项微信客户端显示「图片已过期」。
+ * `image_item` 只放 `media`（下载参数 + base64 的十六进制密钥 + `encrypt_type`）与
+ * `mid_size`（密文大小），就这三样。多带的字段客户端会当真：顶层 `aeskey` 是原始十六进制，
+ * 客户端按它解密就得到一坨乱码，现象是聊天里一个灰块，而不是任何报错；
+ * `media.encrypt_type` 缺省时客户端不按「带缩略图元数据」解，同样渲染不出来。
  */
 export async function sendImage(api: ILinkApi, params: SendImageParams): Promise<{ clientId: string }> {
   const contextToken = (params.contextToken ?? '').trim();
@@ -123,8 +125,8 @@ export async function sendImage(api: ILinkApi, params: SendImageParams): Promise
           media: {
             encrypt_query_param: params.upload.encryptQueryParam,
             aes_key: Buffer.from(params.upload.aesKeyHex, 'ascii').toString('base64'),
+            encrypt_type: 1,
           },
-          aeskey: params.upload.aesKeyHex,
           mid_size: params.upload.ciphertextSize,
         },
       }],

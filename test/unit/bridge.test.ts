@@ -280,11 +280,14 @@ test('交付带图：先上传再发 image_item，然后才发文字', async () 
     assert.deepEqual(h.uploads, ['getuploadurl']);
     assert.equal(h.images.length, 1);
     const image = h.images[0]!;
-    const media = image.media as { encrypt_query_param?: string; aes_key?: string };
+    const media = image.media as { encrypt_query_param?: string; aes_key?: string; encrypt_type?: number };
     assert.equal(media.encrypt_query_param, 'dl-1');
-    // media.aes_key 是 base64 的 32 个十六进制字符；顶层 aeskey 是原始十六进制。
+    // media.aes_key 是 base64 的 32 个十六进制字符。
     assert.match(Buffer.from(media.aes_key ?? '', 'base64').toString('ascii'), /^[0-9a-f]{32}$/);
-    assert.equal(image.aeskey, Buffer.from(media.aes_key ?? '', 'base64').toString('ascii'));
+    // encrypt_type=1：媒体引用带缩略图/尺寸元数据，客户端按它解密；缺了会渲染成空白。
+    assert.equal(media.encrypt_type, 1);
+    // 顶层 aeskey 不能带：客户端认这个字段就拿到十六进制、解不出来，图变灰。
+    assert.equal(image.aeskey, undefined);
     assert.equal(typeof image.mid_size, 'number');
     assert.deepEqual(h.sent, [{ to: OWNER, text: 'A · Q 版抱鲸鱼' }]);
   });

@@ -35,6 +35,28 @@ test('Markdown 降级：标题、链接、代码、引用、分隔线', () => {
   assert.match(text, /^fenced$/m);
 });
 
+test('单下划线斜体也拍平：核心的状态行不再漏出原始标记', () => {
+  assert.equal(
+    toPlainText('_模型 MiMo\\-V2\\.6\\-Flash · 思考 high · 上下文 175K / 1.0M（17%）_'),
+    '模型 MiMo-V2.6-Flash · 思考 high · 上下文 175K / 1.0M（17%）',
+  );
+  // 结尾前多一个空格（历史上真实出现过）同样要拍平。
+  assert.equal(toPlainText('_模型 m _'), '模型 m ');
+});
+
+test('核心对「别人写的文字」做的 markdown 转义在这里还原', () => {
+  assert.equal(toPlainText('\\*\\*不是加粗\\*\\*'), '**不是加粗**');
+  assert.equal(toPlainText('dsh-my-superagent\\/issue'), 'dsh-my-superagent\\/issue');
+  assert.equal(toPlainText('issue \\#118 由 \\@Echosong 创建'), 'issue #118 由 @Echosong 创建');
+  // 行首的转义短横不是列表项。
+  assert.equal(toPlainText('\\- 不是列表'), '- 不是列表');
+});
+
+test('标识符里的下划线不受单下划线斜体规则影响', () => {
+  assert.equal(toPlainText('src/host/super_client/agent_bridge.ts'), 'src/host/super_client/agent_bridge.ts');
+  assert.equal(toPlainText('session-a_b_c'), 'session-a_b_c');
+});
+
 test('detail 不折叠就省略', () => {
   assert.equal(composeDeliveryText(delivery({ detail: '思考过程' })).includes('思考过程'), false);
 });

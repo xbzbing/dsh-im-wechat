@@ -6,6 +6,9 @@
   "description": "把微信（WeChat iLink）接入 DeepSeek Harness 的 IM 桥插件",
   "icon": "./assets/icon.svg",
   "main": "./lib/index.js",
+  "bin": {
+    "dsh-wechat-send": "./bin/dsh-wechat-send.mjs"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
@@ -14,6 +17,7 @@
     "./icon": "./assets/icon.svg"
   },
   "files": [
+    "bin",
     "lib",
     "cordis.patch.yml",
     "locale/*.json",

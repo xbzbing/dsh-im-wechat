@@ -217,6 +217,30 @@ for (const tool of ['typescript', 'esbuild']) {
   if (!manifest.devDependencies?.[tool]) fail(`devDependencies 缺少构建工具：${tool}`);
 }
 
+// 11.5 出站命令（ADR-0012）：bin 要对得上文件、带 shebang，且依赖的产物在包里。
+const binEntries = Object.entries(manifest.bin ?? {});
+if (!binEntries.some(([name]) => name === 'dsh-wechat-send')) {
+  fail("package.json 的 bin 缺少 dsh-wechat-send（ADR-0012 的出站命令）");
+}
+for (const [name, target] of binEntries) {
+  const relativePath = target.replace(/^\.\//, '');
+  if (!(await exists(relativePath))) {
+    fail(`bin '${name}' 指向的文件不存在：${target}`);
+    continue;
+  }
+  const text = await readFile(join(root, relativePath), 'utf8');
+  if (!text.startsWith('#!')) fail(`bin '${name}' 缺少 shebang：${target}`);
+  if (!text.includes('lib/src/host/cli.js')) {
+    fail(`bin '${name}' 应当调用构建产物 lib/src/host/cli.js`);
+  }
+  if (!files.includes('bin') && !files.some((entry) => relativePath.startsWith(entry))) {
+    fail(`files 白名单没有覆盖 bin 文件：${relativePath}`);
+  }
+}
+if (!(await exists('lib/src/host/cli.js'))) {
+  fail('缺少产物 lib/src/host/cli.js（先跑 npm run build）');
+}
+
 // 12. 真实打包清单：`files` 写错（glob 拼错、目录改名）只有 dry-run 能发现。
 //     `--ignore-scripts` 避免 prepack 又把 lib/ 重建一遍。
 const packed = (() => {
@@ -241,6 +265,7 @@ if (!packed) {
   for (const must of [
     'lib/index.js',
     'lib/client.js',
+    'bin/dsh-wechat-send.mjs',
     'cordis.patch.yml',
     'locale/zh.json',
     'locale/en.json',

@@ -53,6 +53,7 @@ dsh plugin --profile web remove dsh-im-wechat
 - **只打扰该打扰的人**：只提醒主人和根会话，子代理的提问与回合不打扰。
 - **不重复提醒**：接入我的超级助理后插件自动让位，问题与长任务提醒交给核心（[ADR-0006](docs/adr/0006-问题提醒与长任务提醒归谁发.md)）。
 - **正在输入**：消息交给会话后、首段回答送达前，微信那头显示「正在输入」；真机行为不符预期时可用 `typingIndicator: false` 关掉（[ADR-0007](docs/adr/0007-输入状态.md)）。
+- **出站快捷命令**：`dsh-wechat-send` 把文本或图片直接发到主人微信，模型在任意会话里一条命令即可，不用读插件源码（[ADR-0012](docs/adr/0012-出站快捷命令.md)）。
 - **设置面板**：扫码登录、开关渠道、选工作区、改长任务阈值，并查看账号尾号、绑定会话、提醒来源与最近错误；中文默认，跟随宿主浅色/深色主题。
 
 ## 使用
@@ -72,6 +73,44 @@ dsh plugin --profile web remove dsh-im-wechat
 - 「回合内插话」打开时，回合正在跑也会把新消息插进去（尽力而为，宿主窗口已关时退化成排队）；关闭时排队等这一轮结束。
 - 换工作区或想开新会话：点「重置绑定」，下一条消息按新设置重建。
 - 独立模式不解析命令、不做图片入站；需要这些能力请接入 `dsh-my-superagent`。
+
+## 出站入口（命令 / 命令行）
+
+同一套发送实现有两个入口，按「谁发起」选（[ADR-0012](docs/adr/0012-出站快捷命令.md)）：
+
+| 入口 | 谁用 | 说明 |
+| --- | --- | --- |
+| 斜杠命令 `/wechat` | 主人 | 在输入框自己发，可直接拖图片；**模型调不到**（命令不经过模型） |
+| `dsh-wechat-send` | 模型 / 脚本 | 模型用 bash 调用；普通会话里发图就走这条 |
+
+命令用法：
+
+```text
+/wechat status                     查看登录态与能不能发
+/wechat 构建已完成                  发一条文本
+/wechat image ./a.png ./b.png       发本地图片
+/wechat 四张头像 + 拖入图片          发输入框里的图片，附一句说明
+```
+
+命令行用法：
+
+```bash
+dsh-wechat-send status                       # 登录态、收件人与 context_token 是否可用
+dsh-wechat-send text '构建已完成'
+dsh-wechat-send image ./a.png ./b.png --text '四张头像'
+```
+
+- 收件人固定是扫码登录的主人，**没有** `--to`。
+- 图片先发、正文后发；支持 png / jpeg / webp / gif，单张 ≤ 10 MiB，一次 ≤ 10 张。
+- 退出码：`0` 成功、`1` 发送或前置条件失败、`2` 参数写错。
+- profile 的 `node_modules/.bin` 不在 `PATH` 上，接一下就能直接敲：
+
+```bash
+ln -sf ~/.dsh/profiles/web/node_modules/dsh-im-wechat/bin/dsh-wechat-send.mjs ~/.local/bin/dsh-wechat-send
+```
+
+
+唯一会卡住的情况：`status` 报缺少 `context_token`——iLink 协议要求主人最近给机器人发过消息。此时不要重试，先在微信里发一条，再执行。
 
 ## 配置
 
@@ -106,8 +145,10 @@ node scripts/dev-bridge.mjs run
 - `src/host/state/` — 登录态、长轮询游标、`context_token` 与会话绑定的本机持久化
 - `src/host/superagent/` — `my-superagent/v1` 桥适配与 Markdown 呈现
 - `src/host/runtime.ts`、`src/host/panel-rpc.ts` — 运行期装配与面板 RPC
+- `src/host/cli.ts`、`bin/dsh-wechat-send.mjs` — 出站快捷命令（ADR-0012）
 - `src/client/` — Web 设置面板
 - `src/shared/` — 跨上下文的纯函数（版本、二维码编码器）
+- `src/host/command.ts` — 斜杠命令 `/wechat`（人用；与 CLI 共用发送实现）
 - `docs/adr/` — 架构决策记录
 
 ## 许可

@@ -16,7 +16,9 @@
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`link`（延后注册的 `BridgeBinder`） |
 | `src/host/questions.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、作答匹配、长任务提醒、根会话识别 |
 | `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`；目录 `0700`、文件 `0600`、原子写 |
-| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`owner-channel.ts` 主人收发通道（收件人解析、主人判定、发送失败记账）、`panel-rpc.ts` 面板 RPC、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`owner-channel.ts` 主人收发通道（收件人解析、主人判定、发送失败记账）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `bin/dsh-wechat-send.mjs` | 出站命令入口，只把参数交给 `lib/src/host/cli.js`（ADR-0012） |
+| `src/host/command.ts` | 斜杠命令 `/wechat`：人用入口，复用 `cli.ts` 的解析与发送端口（ADR-0012） |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |
 | `src/shared/` | 跨上下文的纯函数：版本常量、二维码编码器 |
 | `test/unit/`、`test/fixtures/` | 单元测试与夹具 |
@@ -69,3 +71,5 @@ npm run check      # 提交前门禁：typecheck + test + verify
 - 桥不解析命令、不判断身份：命令由核心解析，是不是主人由核心按配对绑定判断；桥只上报渠道内的发送者标识。
 - 非主人的微信消息不解析命令；对外发言、授权类动作永远由核心决策，桥只负责呈现与转发。
 - 协议实现只用官方 `openclaw-weixin` 定义的接口，不做逆向扩展、不携带凭据到第三方端点。
+- 出站入口（`/wechat` 命令与 `dsh-wechat-send` 命令行）的收件人**恒为扫码登录的主人**，不提供指定收件人的参数：只解决「主人给自己发」，不新增「给第三方发言」的能力（ADR-0012）。
+- 斜杠命令是给人用的（`dsh-commands` 契约：handler 不经过模型），**模型调不到**；要模型主动发只能走 CLI 或注册工具，别再试图用命令解决模型侧需求。

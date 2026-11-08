@@ -12,6 +12,7 @@
 
 import { normalizePluginConfig } from './config.ts';
 import type { PluginConfig } from './config.ts';
+import { registerWeixinCommand } from './command.ts';
 import { errorDetail, injectOptional } from './host-context.ts';
 import type { PluginContext } from './host-context.ts';
 import type { HostAgents } from './host-agents.ts';
@@ -69,6 +70,8 @@ export async function apply(
 
   registerHostListeners(ctx, runtime);
   registerPanelRpc(ctx, { runtime, logger });
+  // `/wechat`：主人在输入框里自己发（命令不经过模型，ADR-0012）。
+  registerWeixinCommand(ctx, { dir: runtime.dir });
   ctx.effect?.(() => () => {
     void runtime.stop();
   }, 'dsh-im-wechat: 停止运行期');

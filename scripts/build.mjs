@@ -117,6 +117,9 @@ async function bundleClient(outDir) {
     minify: false,
     sourcemap: false,
     outfile: join(outDir, 'client.js'),
+    // 面板只认一个「无 import 的脚本」，图标以 data URL 内联进产物：
+    // 运行时零文件依赖，且与 package.json 的 icon 同源（assets/icon.svg）。
+    loader: { '.svg': 'dataurl' },
     logLevel: 'warning',
     // banner 在 ESM 入口里故意声明 `module`/`exports`，这两条告警是预期的；
     // 动态 `require(name)` 是平台原语的可选降级路径，同样预期。

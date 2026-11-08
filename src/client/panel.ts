@@ -23,6 +23,7 @@ import {
 import { h, useCallback, useEffect, useMemo, useRef, useState } from './platform.ts';
 import { ensureStyles } from './styles.ts';
 import { Button, IconCopy, IconLink, IconRefresh, Input, StateDot, Switch, copyText } from './ui.ts';
+import iconUrl from '../../assets/icon.svg';
 
 /** 健康状态 → StateDot 的取值。 */
 function healthDot(state: string): 'done' | 'warning' | 'error' | 'idle' {
@@ -248,9 +249,7 @@ export function WeixinSettingsPanel(props: any) {
 
     h('header', { className: 'wx-hero' },
       h('div', { className: 'wx-brand' },
-        h('div', { className: 'wx-mark', 'aria-hidden': 'true' },
-          h('span', { className: 'wx-mark-bubble wx-mark-bubble-main' }),
-          h('span', { className: 'wx-mark-bubble wx-mark-bubble-small' })),
+        h('img', { className: 'wx-mark', src: iconUrl, alt: '', 'aria-hidden': 'true' }),
         h('div', { className: 'wx-brand-copy' },
           h('h3', { className: 'wx-title' }, t('微信')),
           h('p', { className: 'wx-subtitle' }, t('把微信接入本机 Harness：扫码登录后，消息与交付会在微信和核心之间同步。')))),

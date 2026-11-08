@@ -1,9 +1,9 @@
 /**
  * 面板样式（一次性注入）。
  *
- * 颜色、圆角和层级全部来自 DSH 设计令牌；微信的品牌感只通过轻量的气泡标记
- * 表达，不把一整页染成品牌色。布局使用边框、间距和排版建立层次，避免重复的
- * 灰色大卡片。
+ * 颜色、圆角和层级全部来自 DSH 设计令牌；品牌感只通过项目主图标（构建期以
+ * data URL 内联进 client 产物）表达，不把一整页染成品牌色。布局使用边框、
+ * 间距和排版建立层次，避免重复的灰色大卡片。
  */
 
 const STYLE_ID = 'dsh-im-wechat-styles';
@@ -43,23 +43,8 @@ export const STYLES = `
   background: var(--dsw-alias-bg-layer-2);
 }
 .wx-brand { min-width: 0; display: flex; align-items: center; gap: 12px; }
-.wx-mark {
-  position: relative;
-  flex: none;
-  width: 42px;
-  height: 42px;
-  border: .5px solid var(--dsw-alias-border-l2);
-  border-radius: 13px;
-  background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1));
-}
-.wx-mark-bubble {
-  position: absolute;
-  display: block;
-  border: 1.5px solid var(--dsw-alias-state-business-primary);
-  border-radius: 7px 7px 7px 2px;
-}
-.wx-mark-bubble-main { width: 20px; height: 14px; top: 10px; left: 8px; }
-.wx-mark-bubble-small { width: 14px; height: 10px; right: 6px; bottom: 9px; border-radius: 2px 6px 6px 6px; background: var(--dsw-alias-bg-layer-2); }
+/* 项目主图标：构建期以 data URL 内联进 client 产物，与 package.json 的 icon 同源。 */
+.wx-mark { display: block; flex: none; width: 42px; height: 42px; border-radius: 10px; }
 .wx-brand-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .wx-title { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -.01em; }
 .wx-subtitle { max-width: 520px; margin: 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }

@@ -101,14 +101,17 @@ export function longTaskText(params: {
   objective?: string;
   durationMs: number;
   failed: boolean;
+  /** 失败原因（模型或 provider 报的原文，如「当前请求的额度已用尽」）。 */
+  failure?: string;
   answer: string;
   maxChars: number;
 }): string {
-  const heading = `长任务提醒 · ${params.title}`;
+  const heading = `${params.failed ? '任务失败' : '长任务提醒'} · ${params.title}`;
   const meta = [
     `耗时：${durationText(params.durationMs)}`,
     params.objective ? `目标：${params.objective.slice(0, 120)}` : '',
     `结果：${params.failed ? '执行失败' : '已完成'}`,
+    params.failed && params.failure ? `原因：${params.failure.slice(0, 300)}` : '',
   ].filter(Boolean).join('\n');
   const body = params.answer.trim();
   const text = body === '' ? `${heading}\n\n${meta}\n\n没有可提取的文本结论，请到 Web 查看。` : `${heading}\n\n${meta}\n\n${body}`;
@@ -155,7 +158,7 @@ export class LongTaskNotifier {
 
   /** `session/event` 监听器实现。 */
   handleEvent(sessionId: unknown, event: unknown): void {
-    if (!this.#enabled) return;
+    // 开关只管「完成」提醒：失败仍然要跟踪并提醒（ADR-0011），所以这里不拦。
     if (typeof sessionId !== 'string' || sessionId === '') return;
     const entry = asRecord(event) as SessionEvent | null;
     if (!entry || typeof entry.type !== 'string') return;
@@ -261,8 +264,23 @@ export class LongTaskNotifier {
     // 宿主的 turn/end 是 `{turn, reason}`，reason 恒定是对象；失败要读 `reason.kind`。
     const reason = asRecord(data.reason);
     const kind = typeof reason?.kind === 'string' ? reason.kind : '';
-    const failed = kind !== '' && kind !== 'completed' && kind !== 'max-tokens';
-    if (record.interacted || duration <= this.#thresholdMinutes * MINUTE_MS) {
+    // 主人自己停的（`reason.reason.kind === 'user'`）不提醒；别的 aborted 是外部原因，按失败算（ADR-0011）。
+    const byOwner = asRecord(reason?.reason)?.kind === 'user';
+    const aborted = kind === 'aborted';
+    if (aborted && byOwner) {
+      this.#records.delete(sessionId);
+      return;
+    }
+    const failed = aborted || (kind !== '' && kind !== 'completed' && kind !== 'max-tokens');
+    // 失败原因照原样带上：额度用尽、provider 超时这类信息读原文最快。
+    const failure = typeof asRecord(reason?.error)?.message === 'string' ? String(asRecord(reason?.error)?.message) : '';
+    // 失败立刻提醒，不看阈值、也不看主人在这一轮里插过话：任务没做成是必须知道的事。
+    // 开关只关「完成」提醒。
+    if (!failed && !this.#enabled) {
+      this.#records.delete(sessionId);
+      return;
+    }
+    if (!failed && (record.interacted || duration <= this.#thresholdMinutes * MINUTE_MS)) {
       this.#records.delete(sessionId);
       return;
     }
@@ -277,6 +295,7 @@ export class LongTaskNotifier {
       ...(record.objective !== '' ? { objective: record.objective } : {}),
       durationMs: duration,
       failed,
+      ...(failure !== '' ? { failure } : {}),
       answer: record.answer,
       maxChars: this.#maxChars,
     });

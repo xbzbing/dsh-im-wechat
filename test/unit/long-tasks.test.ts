@@ -165,6 +165,53 @@ test('失败回合标注执行失败；没有标题时用「未命名会话」',
   assert.match(h.sent[0], /结果：执行失败/);
 });
 
+test('失败不设门槛：短回合也提醒，标题写明任务失败', async () => {
+  for (const minutes of [1, 15]) {
+    for (const kind of ['error', 'aborted'] as const) {
+      const h = harness();
+      h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+      h.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind, error: { message: 'Connection error.' } } }, minutes * 60_000));
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(h.sent.length, 1, `kind=${kind} minutes=${minutes}`);
+      assert.match(h.sent[0], /任务失败 · 重构设置页/);
+      assert.match(h.sent[0], /结果：执行失败/);
+      assert.match(h.sent[0], /原因：Connection error\./);
+    }
+  }
+});
+
+test('失败不受「主人在这一轮里插过话」影响；关掉提醒开关也照发', async () => {
+  const interrupted = harness();
+  interrupted.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  interrupted.notifier.handleEvent('s1', event('user/message', { content: [{ type: 'text', text: '顺便看下日志' }] }, 1_000));
+  interrupted.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'error' } }, 2 * 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(interrupted.sent.length, 1);
+
+  const disabled = harness();
+  disabled.notifier.configure(false);
+  disabled.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  disabled.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'error' } }, 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(disabled.sent.length, 1, '失败提醒关不掉');
+
+  // 成功仍然受开关与阈值约束。
+  const ok = harness();
+  ok.notifier.configure(false);
+  ok.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  ok.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 20 * 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ok.sent.length, 0);
+});
+
+test('主人自己停的回合不提醒', async () => {
+  const h = harness();
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }, 30 * 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.sent.length, 0);
+});
+
 test('目标先到、后到都能出现在提醒里', async () => {
   const h = harness();
   // 先到：goal/change 在 turn/start 之前。
@@ -220,4 +267,21 @@ test('agents 服务抛错时退化成放行而不是崩溃', () => {
     },
   });
   assert.equal(roots.isRoot('x'), true);
+});
+
+test('失败原因带进提醒：额度用尽这类原文照发', async () => {
+  const h = harness();
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'error', error: { message: '当前请求的额度已用尽' } } }, 30_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(h.sent[0], /原因：当前请求的额度已用尽/);
+});
+
+test('没有错误信息时不留空的「原因：」行', async () => {
+  const h = harness();
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'error' } }, 30_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(h.sent[0], /结果：执行失败/);
+  assert.equal(h.sent[0].includes('原因：'), false);
 });

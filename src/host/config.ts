@@ -39,6 +39,10 @@ export interface PluginConfig {
   longTaskThresholdMinutes?: number;
   /** 是否发「正在输入」状态，默认开；真机行为不符预期时可关（ADR-0007）。 */
   typingIndicator?: boolean;
+  /** 独立模式（未接入超级助理）建会话的工作区 id；空表示宿主默认位置（ADR-0009）。 */
+  directWorkspaceId?: string;
+  /** 独立模式里回合正在跑时又来一条消息的提交方式：排队（默认）或插话（ADR-0009）。 */
+  directBusyMode?: BusyMode;
 }
 
 const MIN_MAX_TEXT = 200;
@@ -59,6 +63,16 @@ function asMaxText(value: unknown): number | undefined {
   return Math.min(MAX_MAX_TEXT, Math.max(MIN_MAX_TEXT, Math.round(value)));
 }
 
+/** 独立模式的提交方式；与宿主 `InputSubmitMode` 同一套取值。 */
+export type BusyMode = 'queue' | 'steer';
+
+export const DEFAULT_DIRECT_BUSY_MODE: BusyMode = 'queue';
+
+/** 只认 queue / steer；其余一律回落到默认（排队）。 */
+export function normalizeBusyMode(value: unknown): BusyMode | undefined {
+  return value === 'queue' || value === 'steer' ? value : undefined;
+}
+
 /** 把宿主给的配置收窄；未知字段忽略，非法值退回默认。 */
 export function normalizePluginConfig(input: unknown): PluginConfig {
   const record = (input !== null && typeof input === 'object' ? input : {}) as Record<string, unknown>;
@@ -77,6 +91,10 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (maxText !== undefined) config.maxText = maxText;
   const botAgent = asString(record.botAgent);
   if (botAgent !== undefined) config.botAgent = botAgent;
+  const directWorkspaceId = asString(record.directWorkspaceId);
+  if (directWorkspaceId !== undefined) config.directWorkspaceId = directWorkspaceId;
+  const directBusyMode = normalizeBusyMode(record.directBusyMode);
+  if (directBusyMode !== undefined) config.directBusyMode = directBusyMode;
   const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
   const typingIndicator = asBoolean(record.typingIndicator);
@@ -101,6 +119,10 @@ export interface StoredConfig {
   superagent?: boolean;
   /** 面板上改的长任务阈值（分钟）；缺省用静态配置或默认值。 */
   longTaskThresholdMinutes?: number;
+  /** 面板上改的独立模式工作区 id；空串表示宿主默认位置。 */
+  directWorkspaceId?: string;
+  /** 面板上改的独立模式提交方式。 */
+  directBusyMode?: BusyMode;
 }
 
 export const STORED_CONFIG_VERSION = 1;
@@ -131,11 +153,15 @@ export class LocalConfigStore {
     const enabled = asBoolean(record.enabled);
     const superagent = asBoolean(record.superagent);
     const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
+    const directWorkspaceId = asString(record.directWorkspaceId);
+    const directBusyMode = normalizeBusyMode(record.directBusyMode);
     this.#document = {
       version: STORED_CONFIG_VERSION,
       ...(enabled !== undefined ? { enabled } : {}),
       ...(superagent !== undefined ? { superagent } : {}),
       ...(longTaskMinutes !== undefined ? { longTaskThresholdMinutes: longTaskMinutes } : {}),
+      ...(directWorkspaceId !== undefined ? { directWorkspaceId } : {}),
+      ...(directBusyMode !== undefined ? { directBusyMode } : {}),
     };
     return this.#document;
   }
@@ -145,6 +171,8 @@ export class LocalConfigStore {
     enabled?: boolean;
     superagent?: boolean;
     longTaskThresholdMinutes?: number;
+    directWorkspaceId?: string;
+    directBusyMode?: BusyMode;
   }): Promise<StoredConfig> {
     this.#document = { ...this.#document, ...patch, version: STORED_CONFIG_VERSION };
     await writePrivateFile(this.#path, `${JSON.stringify(this.#document, null, 2)}\n`);

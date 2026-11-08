@@ -87,6 +87,27 @@ export const en = {
   '由超级助理发送': 'Sent by My Superagent',
   '登录态里没有记录扫码的微信用户，提醒无法发出：请重新扫码登录。':
     'The signed-in state has no WeChat user recorded, so reminders cannot be sent. Please sign in again.',
+  '独立模式': 'Standalone mode',
+  '不接核心时的直连会话': 'Direct session without the core',
+  '接入超级助理后自动沉默': 'Silent once connected to My Superagent',
+  '回合中再发消息时插话': 'Steer a new message into the running turn',
+  '关闭：排队等这一轮结束（默认）；打开：把消息插进正在跑的这一轮，本轮回答仍照常送回。':
+    'Off: queue until the current turn ends (default). On: insert the message into the running turn; that turn still replies as usual.',
+  '工作区': 'Workspace',
+  '不指定（宿主默认位置）': 'Not specified (host default)',
+  '不指定则用宿主的默认位置。': 'Leave unspecified to use the host default location.',
+  '已接入超级助理，这组设置暂停': 'Connected to My Superagent; these settings are paused',
+  '接入超级助理时由核心决定会话与模型；关掉上面的开关即可使用独立模式。':
+    'While My Superagent is connected it decides the session and model. Turn the switch above off to use standalone mode.',
+  '独立模式下第一次发消息时在这里新建会话，之后一直用它；不指定则用宿主的默认位置。':
+    'In standalone mode the first message creates a session in this workspace and keeps using it; leave unspecified for the host default location.',
+  '当前绑定的会话': 'Bound session',
+  '正在跑': 'running',
+  '重置绑定': 'Reset binding',
+  '还没有绑定会话：下一条微信消息会按这里的工作区新建一个。':
+    'No session is bound yet: the next WeChat message creates one in this workspace.',
+  '宿主没有提供会话服务，独立模式不可用。':
+    'The host exposes no session service, so standalone mode is unavailable.',
 } as const;
 
 /** 中文模式：键即译文。 */

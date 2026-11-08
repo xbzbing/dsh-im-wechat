@@ -15,6 +15,32 @@ async function withDir(run: (dir: string) => Promise<void>): Promise<void> {
   }
 }
 
+test('独立模式的工作区与提交方式：只认合法值，非法值丢掉交给默认', () => {
+  const config = normalizePluginConfig({ directWorkspaceId: 'ws-a', directBusyMode: 'steer' });
+  assert.equal(config.directWorkspaceId, 'ws-a');
+  assert.equal(config.directBusyMode, 'steer');
+  assert.equal(normalizePluginConfig({ directBusyMode: 'interrupt' }).directBusyMode, undefined);
+  assert.equal(normalizePluginConfig({ directWorkspaceId: '  ' }).directWorkspaceId, undefined);
+  assert.equal(normalizePluginConfig({ directBusyMode: 'queue' }).directBusyMode, 'queue');
+});
+
+test('面板改的独立模式设置会落盘并在下次加载时读回', async () => {
+  await withDir(async (dir) => {
+    const store = new LocalConfigStore({ dir });
+    await store.load();
+    await store.save({ directWorkspaceId: 'ws-b', directBusyMode: 'steer' });
+    const reloaded = new LocalConfigStore({ dir });
+    const document = await reloaded.load();
+    assert.equal(document.directWorkspaceId, 'ws-b');
+    assert.equal(document.directBusyMode, 'steer');
+    // 只改其中一项时，另一项要保留。
+    await reloaded.save({ directBusyMode: 'queue' });
+    const again = await new LocalConfigStore({ dir }).load();
+    assert.equal(again.directWorkspaceId, 'ws-b');
+    assert.equal(again.directBusyMode, 'queue');
+  });
+});
+
 test('profile 配置里的长任务阈值收窄到 1–1440 分钟，非法值直接丢掉（交给默认 30）', () => {
   assert.deepEqual(normalizePluginConfig({ longTaskThresholdMinutes: 45 }).longTaskThresholdMinutes, 45);
   assert.equal(normalizePluginConfig({ longTaskThresholdMinutes: 0 }).longTaskThresholdMinutes, 1);

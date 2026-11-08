@@ -130,6 +130,9 @@ export const STYLES = `
 .wx-setting-row > input[type="checkbox"] { flex: none; }
 .wx-threshold-control { display: flex; align-items: center; gap: 6px; }
 .wx-minutes { width: 68px; }
+.wx-select { min-width: 200px; max-width: 340px; height: 30px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 12px; }
+.wx-select:disabled { opacity: .5; }
+.wx-panel-muted { opacity: .72; }
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .wx-draft-hint { margin: 0 0 -2px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 

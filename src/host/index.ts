@@ -49,6 +49,18 @@ export async function apply(
   runtime.attachBinder(binder);
   installBridgeBinder(ctx, binder);
 
+  // 独立模式的工作区选择用宿主的工作区目录（面板下拉），没有这个服务时面板给出原因。
+  injectOptional(ctx, 'workspaceRegistry', (scope) => {
+    runtime.attachWorkspaceRegistry((scope as { workspaceRegistry?: unknown }).workspaceRegistry as never ?? null);
+    scope.effect?.(() => () => runtime.attachWorkspaceRegistry(null), 'dsh-im-wechat: 解挂 workspaceRegistry');
+  });
+
+  // 独立模式（未接入核心）要往会话里提交消息：宿主有 sessionController 才可用（ADR-0009）。
+  injectOptional(ctx, 'sessionController', (scope) => {
+    runtime.attachSessionController((scope as { sessionController?: unknown }).sessionController as never ?? null);
+    scope.effect?.(() => () => runtime.attachSessionController(null), 'dsh-im-wechat: 解挂 sessionController');
+  });
+
   // 根会话识别：子代理的提问与回合不打扰主人。
   injectOptional(ctx, 'agents', (scope) => {
     runtime.attachAgents((scope as { agents?: HostAgents }).agents ?? null);

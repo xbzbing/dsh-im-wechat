@@ -39,6 +39,11 @@ function harness(): Harness {
       calls.push(`longtask:${minutes}`);
       return { contract: 2, longTaskThresholdMinutes: minutes };
     },
+    setDirect: async (patch: { workspaceId?: string; busyMode?: string; reset?: boolean }) => {
+      calls.push(`direct:${JSON.stringify(patch)}`);
+      return { contract: 3, direct: { bound: false, workspaceId: patch.workspaceId ?? '', busyMode: patch.busyMode ?? 'queue', running: false, available: true } };
+    },
+    workspaces: () => ({ items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true }),
   };
   let route: PanelRoute | null = null;
   const ctx: PluginContext = {
@@ -124,6 +129,24 @@ test('登录动作转发给运行期', async () => {
   await call(h, envelope(ENDPOINTS.SUPERAGENT_SET, { enabled: false }));
   await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: 45 }));
   assert.deepEqual(h.calls, ['startLogin', 'code: 123456 ', 'enabled:false', 'superagent:false', 'longtask:45']);
+});
+
+test('独立模式设置转发给运行期，非法值在边界挡住', async () => {
+  const h = harness();
+  await call(h, envelope(ENDPOINTS.DIRECT_SET, { workspaceId: 'w1', busyMode: 'steer' }));
+  await call(h, envelope(ENDPOINTS.DIRECT_SET, { reset: true }));
+  assert.deepEqual(h.calls, [
+    'direct:{"workspaceId":"w1","busyMode":"steer"}',
+    'direct:{"reset":true}',
+  ]);
+  const list = await call(h, envelope(ENDPOINTS.WORKSPACES_LIST));
+  assert.deepEqual((list.result as { value: unknown }).value, { items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true });
+  const badMode = await call(h, envelope(ENDPOINTS.DIRECT_SET, { busyMode: 'interrupt' }));
+  assert.equal(badMode.result.error.code, 'invalid-config');
+  const badWorkspace = await call(h, envelope(ENDPOINTS.DIRECT_SET, { workspaceId: 3 }));
+  assert.equal(badWorkspace.result.error.code, 'invalid-config');
+  const badReset = await call(h, envelope(ENDPOINTS.DIRECT_SET, { reset: 'yes' }));
+  assert.equal(badReset.result.error.code, 'invalid-config');
 });
 
 test('入参校验：验证码不能为空、enabled 必须是布尔', async () => {

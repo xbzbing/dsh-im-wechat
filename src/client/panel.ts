@@ -71,6 +71,12 @@ export function WeixinSettingsPanel(props: any) {
   /** 阈值输入框的草稿；`dirty` 时不被状态刷新覆盖，免得正在输入的值被轮询冲掉。 */
   const [minutes, setMinutes] = useState('');
   const [minutesDirty, setMinutesDirty] = useState(false);
+  /** 独立模式的工作区草稿；`dirty` 时不被轮询快照覆盖。 */
+  const [workspaceId, setWorkspaceId] = useState('');
+  const [workspaceDirty, setWorkspaceDirty] = useState(false);
+  /** 宿主给的工作区候选（官方目录）：面板只让选，不让手写路径。 */
+  const [workspaces, setWorkspaces] = useState<{ id: string; title: string; path: string }[]>([]);
+  const [workspacesReady, setWorkspacesReady] = useState(false);
   /** 状态请求的单调序号：Host 慢时旧响应可能后到，绝不能覆盖新快照。 */
   const requestSeq = useRef(0);
 
@@ -172,6 +178,46 @@ export function WeixinSettingsPanel(props: any) {
       setBusy('');
     }
   }, [minutes, rpcCall, t]);
+
+  /** 独立模式：保存工作区或提交方式，或重置绑定（ADR-0009）。 */
+  const saveDirect = useCallback(async (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean }) => {
+    setBusy('direct');
+    setActionError('');
+    try {
+      const next = await rpcCall(ENDPOINTS.setDirect, patch);
+      requestSeq.current += 1;
+      setStatus(next);
+      if (patch.workspaceId !== undefined) setWorkspaceDirty(false);
+    } catch (error) {
+      setActionError(describeError(error).message);
+    } finally {
+      setBusy('');
+    }
+  }, [rpcCall]);
+
+  useEffect(() => {
+    let cancelled = false;
+    rpcCall(ENDPOINTS.workspaces)
+      .then((value: any) => {
+        if (cancelled) return;
+        setWorkspaces(Array.isArray(value?.items) ? value.items : []);
+        setWorkspacesReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspacesReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rpcCall]);
+
+  const direct = status?.direct ?? null;
+  const directBusy = direct?.busyMode === 'steer';
+  const directWorkspaceId = String(direct?.workspaceId ?? '');
+  useEffect(() => {
+    if (workspaceDirty || direct === null) return;
+    setWorkspaceId(directWorkspaceId);
+  }, [directWorkspaceId, direct, workspaceDirty]);
 
   if (loading && !status) {
     return h('div', { className: 'wx-root wx-loading', 'data-plugin': 'dsh-im-wechat' },
@@ -379,6 +425,70 @@ export function WeixinSettingsPanel(props: any) {
           ? h('p', { className: 'wx-draft-hint' },
             `${t('当前阈值')}：${typeof threshold === 'number' ? threshold : '—'} ${t('分钟')}`)
           : null)),
+
+    h('section', { className: `wx-panel${superagent ? ' wx-panel-muted' : ''}` },
+      h('div', { className: 'wx-section-head' },
+        h('div', null,
+          h('p', { className: 'wx-eyebrow' }, t('独立模式')),
+          h('h4', { className: 'wx-section-title' }, t('不接核心时的直连会话'))),
+        h('span', { className: 'wx-section-note' },
+          superagent ? t('已接入超级助理，这组设置暂停') : t('接入超级助理后自动沉默'))),
+      superagent
+        ? h('p', { className: 'wx-draft-hint' }, t('接入超级助理时由核心决定会话与模型；关掉上面的开关即可使用独立模式。'))
+        : null,
+      h('div', { className: 'wx-settings-list' },
+        h(SwitchRow, {
+          title: t('回合中再发消息时插话'),
+          description: t('关闭：排队等这一轮结束（默认）；打开：把消息插进正在跑的这一轮，本轮回答仍照常送回。'),
+          checked: directBusy,
+          disabled: superagent || busy !== '' || hostOlder || direct?.available === false,
+          onChange: (next: boolean) => void saveDirect({ busyMode: next ? 'steer' : 'queue' }),
+        }),
+        h('div', { className: 'wx-setting-row wx-threshold-row' },
+          h('div', { className: 'wx-setting-copy' },
+            h('span', { className: 'wx-setting-title' }, t('工作区')),
+            h('span', { className: 'wx-setting-description' },
+              t('独立模式下第一次发消息时在这里新建会话，之后一直用它；不指定则用宿主的默认位置。'))),
+          h('div', { className: 'wx-threshold-control' },
+            h('select', {
+              className: 'wx-select',
+              value: workspaceId,
+              'aria-label': t('工作区'),
+              disabled: superagent || busy !== '' || hostOlder || direct?.available === false || !workspacesReady,
+              onChange: (event: any) => {
+                setWorkspaceDirty(true);
+                setWorkspaceId(String(event.target.value));
+              },
+            }, [
+              h('option', { value: '' }, t('不指定（宿主默认位置）')),
+              ...workspaces.map((workspace) => h('option', { value: workspace.id }, `${workspace.title} — ${workspace.path}`)),
+            ]),
+            h(Button, {
+              variant: 'outline',
+              size: 'sm',
+              disabled: superagent || busy !== '' || hostOlder || direct?.available === false,
+              onClick: () => void saveDirect({ workspaceId }),
+            }, t('保存')))),
+        direct?.bound
+          ? h('div', { className: 'wx-setting-row' },
+            h('div', { className: 'wx-setting-copy' },
+              h('span', { className: 'wx-setting-title' }, t('当前绑定的会话')),
+              h('span', { className: 'wx-setting-description' },
+                `${String(direct.sessionId ?? '').slice(0, 18)}…${direct.running ? ` · ${t('正在跑')}` : ''}${
+                  direct.workspaceId && workspaces.some((workspace) => workspace.id === direct.workspaceId)
+                    ? ` · ${workspaces.find((workspace) => workspace.id === direct.workspaceId)!.title}`
+                    : ''}`)),
+            h(Button, {
+              variant: 'ghost',
+              size: 'sm',
+              disabled: superagent || busy !== '' || hostOlder,
+              onClick: () => void saveDirect({ reset: true }),
+            }, t('重置绑定')))
+          : h('p', { className: 'wx-draft-hint' },
+            t('还没有绑定会话：下一条微信消息会按这里的工作区新建一个。'))),
+      direct?.available === false
+        ? h('p', { className: 'wx-draft-hint' }, t('宿主没有提供会话服务，独立模式不可用。'))
+        : null),
 
     h('section', { className: 'wx-panel wx-runtime-panel' },
       h('div', { className: 'wx-section-head' },

@@ -8,8 +8,7 @@
 
 import { errorDetail, injectOptional } from './host-context.ts';
 import type { PanelRoute, PluginContext, PluginLogger } from './host-context.ts';
-import type { RuntimeStatus, WeixinRuntime } from './runtime.ts';
-import type { LoginSnapshot } from './ilink/login.ts';
+import type { WeixinRuntime } from './runtime.ts';
 
 /** 面板 RPC 的挂载路径：客户端经 connection.rpc.call('/api', 'dsh-im-wechat', …) 访问。 */
 export const RPC_PATH = 'dsh-im-wechat';
@@ -23,6 +22,8 @@ export const ENDPOINTS = Object.freeze({
   ENABLED_SET: 'enabled.set',
   SUPERAGENT_SET: 'superagent.set',
   LONG_TASK_SET: 'longtask.set',
+  DIRECT_SET: 'direct.set',
+  WORKSPACES_LIST: 'workspaces.list',
 } as const);
 
 export type Endpoint = (typeof ENDPOINTS)[keyof typeof ENDPOINTS];
@@ -65,10 +66,12 @@ async function handleEndpoint(
   runtime: WeixinRuntime,
   endpoint: string,
   payload: unknown,
-): Promise<RuntimeStatus | LoginSnapshot> {
+): Promise<unknown> {
   switch (endpoint) {
     case ENDPOINTS.STATUS:
       return runtime.status();
+    case ENDPOINTS.WORKSPACES_LIST:
+      return runtime.workspaces();
     case ENDPOINTS.LOGIN_START:
       await runtime.startLogin();
       return runtime.status().login;
@@ -93,6 +96,25 @@ async function handleEndpoint(
       const enabled = payloadOf(payload).enabled;
       if (typeof enabled !== 'boolean') throw codedError('enabled 必须是布尔值', 'invalid-config');
       return runtime.setSuperagent(enabled);
+    }
+    case ENDPOINTS.DIRECT_SET: {
+      const record = payloadOf(payload);
+      const patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean } = {};
+      if (record.workspaceId !== undefined) {
+        if (typeof record.workspaceId !== 'string') throw codedError('workspaceId 必须是字符串', 'invalid-config');
+        patch.workspaceId = record.workspaceId;
+      }
+      if (record.busyMode !== undefined) {
+        if (record.busyMode !== 'queue' && record.busyMode !== 'steer') {
+          throw codedError('busyMode 只能是 queue 或 steer', 'invalid-config');
+        }
+        patch.busyMode = record.busyMode;
+      }
+      if (record.reset !== undefined) {
+        if (typeof record.reset !== 'boolean') throw codedError('reset 必须是布尔值', 'invalid-config');
+        patch.reset = record.reset;
+      }
+      return runtime.setDirect(patch);
     }
     case ENDPOINTS.LONG_TASK_SET: {
       const minutes = payloadOf(payload).minutes;

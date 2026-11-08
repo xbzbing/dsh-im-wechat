@@ -26,26 +26,36 @@ import type { QuestionNext, QuestionRequest } from './questions.ts';
 import { DEFAULT_LONG_TASK_MINUTES, LongTaskNotifier, normalizeLongTaskMinutes } from './long-tasks.ts';
 import { RootAgents } from './host-agents.ts';
 import type { HostAgents } from './host-agents.ts';
+import { DirectChat } from './direct.ts';
+import type { DirectController } from './direct.ts';
 import { WeixinBridge } from './superagent/bridge.ts';
 import type { BridgeHealth } from './superagent/protocol.ts';
 import { BridgeBinder } from './superagent/link.ts';
 import { ContextTokenStore } from './state/context-tokens.ts';
 import { LoginStateStore, accountTail } from './state/login-state.ts';
 import type { LoginState } from './state/login-state.ts';
+import { DirectBindingStore } from './state/direct-binding.ts';
 import { SyncCursorStore } from './state/sync-cursor.ts';
 import {
+  DEFAULT_DIRECT_BUSY_MODE,
   LocalConfigStore,
   defaultBotAgent,
+  normalizeBusyMode,
   normalizePluginConfig,
   resolveConfigDir,
 } from './config.ts';
-import type { PluginConfig } from './config.ts';
+import type { BusyMode, PluginConfig } from './config.ts';
 import { PLUGIN_VERSION } from '../shared/version.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 2;
+export const HOST_CONTRACT = 3;
 
 const MAX_ERRORS = 5;
+
+/** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
+export interface WorkspaceRegistry {
+  list(): readonly { id?: unknown; title?: unknown; path?: unknown }[];
+}
 
 export interface RuntimeLogger {
   info?(...args: unknown[]): unknown;
@@ -69,6 +79,15 @@ export interface RuntimeStatus {
   trackingTasks: number;
   /** 长任务提醒阈值（分钟）：回合超过它才提醒。 */
   longTaskThresholdMinutes: number;
+  /** 独立模式（未接入核心）的直连会话状态（ADR-0009）。 */
+  direct: {
+    bound: boolean;
+    sessionId?: string;
+    workspaceId: string;
+    busyMode: BusyMode;
+    running: boolean;
+    available: boolean;
+  };
   loggedIn: boolean;
   accountTail?: string;
   /** 上次扫码成功的时间；面板的「登录时间」用它。 */
@@ -118,6 +137,12 @@ export class WeixinRuntime {
   readonly #roots = new RootAgents();
   readonly #questions: QuestionBroker;
   readonly #longTasks: LongTaskNotifier;
+  readonly #directStore: DirectBindingStore;
+  readonly #direct: DirectChat;
+  #sessionController: DirectController | null = null;
+  #workspaceRegistry: WorkspaceRegistry | null = null;
+  #directWorkspaceId = '';
+  #directBusyMode: BusyMode = DEFAULT_DIRECT_BUSY_MODE;
   #stopped = false;
 
   constructor(deps: RuntimeDeps = {}) {
@@ -172,6 +197,21 @@ export class WeixinRuntime {
       logger: this.#logger,
       thresholdMinutes: this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
     });
+    this.#directWorkspaceId = this.#config.directWorkspaceId ?? '';
+    this.#directBusyMode = this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE;
+    this.#directStore = new DirectBindingStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
+    this.#direct = new DirectChat({
+      controller: () => this.#sessionController,
+      store: this.#directStore,
+      workspaceId: () => this.#directWorkspaceId,
+      busyMode: () => this.#directBusyMode,
+      send: (text) => this.#owner.send(text),
+      isOwner: (sender) => this.#owner.isOwner(sender),
+      ownerLabel: () => accountTail(this.#loginState?.userId ?? ''),
+      logger: this.#logger,
+      now: this.#now,
+      ...(this.#config.maxText !== undefined ? { maxText: this.#config.maxText } : {}),
+    });
     this.#loginController = new LoginController({
       apiFactory: (baseUrl) => this.#createApi({ baseUrl }),
       store: this.#loginStore,
@@ -199,6 +239,36 @@ export class WeixinRuntime {
     this.#roots.refresh();
   }
 
+  /** `sessionController` 服务接入（index.ts 的子 fiber）：独立模式直接往会话里提交消息。 */
+  attachSessionController(controller: DirectController | null): void {
+    this.#sessionController = controller;
+  }
+
+  /** `workspaceRegistry` 服务接入：面板用官方工作区列表选会话要加入哪个工作区。 */
+  attachWorkspaceRegistry(registry: WorkspaceRegistry | null): void {
+    this.#workspaceRegistry = registry;
+  }
+
+  /** 面板的工作区候选；宿主没有这个服务时 available=false，面板显示原因。 */
+  workspaces(): { items: { id: string; title: string; path: string }[]; available: boolean; reason?: string } {
+    const registry = this.#workspaceRegistry;
+    if (!registry || typeof registry.list !== 'function') {
+      return { items: [], available: false, reason: '宿主不提供工作区服务' };
+    }
+    try {
+      const items = registry.list().flatMap((workspace) => {
+        const id = typeof workspace?.id === 'string' ? workspace.id : '';
+        if (id === '') return [];
+        const title = typeof workspace.title === 'string' && workspace.title.trim() !== '' ? workspace.title.trim() : id;
+        const path = typeof workspace.path === 'string' ? workspace.path : '';
+        return [{ id, title, path }];
+      });
+      return { items, available: true };
+    } catch {
+      return { items: [], available: false, reason: '读取宿主工作区失败' };
+    }
+  }
+
   /** `user-questions/request` 监听器。 */
   handleQuestion(request: QuestionRequest, next: QuestionNext): Promise<unknown> {
     return this.#questions.handle(request, next, this.#ownFeaturesActive());
@@ -214,6 +284,13 @@ export class WeixinRuntime {
         : '';
     if (sessionId === '') return;
     this.#longTasks.handleEvent(sessionId, event);
+    // 独立模式：只跟踪绑定的那个会话；接入核心后这条链路整段沉默。
+    const binding = this.#direct.binding();
+    if (binding !== null && binding.sessionId === sessionId) {
+      const type = (event as { type?: unknown } | null)?.type;
+      if (type === 'turn/end') this.#typing.stop(this.#loginState?.userId ?? '');
+      this.#direct.handleEvent(sessionId, event);
+    }
   }
 
   attachBinder(binder: BridgeBinder): void {
@@ -231,6 +308,9 @@ export class WeixinRuntime {
     this.#longTasks.setThresholdMinutes(
       stored.longTaskThresholdMinutes ?? this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
     );
+    this.#directWorkspaceId = stored.directWorkspaceId ?? this.#config.directWorkspaceId ?? '';
+    this.#directBusyMode = stored.directBusyMode ?? this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE;
+    await this.#directStore.hydrate();
     this.#loginState = await this.#loginStore.load();
     if (!this.#loginState) {
       this.#health = { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
@@ -273,6 +353,7 @@ export class WeixinRuntime {
       ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
       pendingQuestions: this.#questions.snapshot().pending,
       trackingTasks: this.#longTasks.tracking,
+      direct: this.#direct.status(),
       longTaskThresholdMinutes: this.#longTasks.thresholdMinutes,
       loggedIn: login !== null,
       ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
@@ -362,6 +443,27 @@ export class WeixinRuntime {
     const next = normalizeLongTaskMinutes(minutes) ?? DEFAULT_LONG_TASK_MINUTES;
     this.#longTasks.setThresholdMinutes(next);
     await this.#localConfig.save({ longTaskThresholdMinutes: next });
+    return this.status();
+  }
+
+  /** 面板保存独立模式设置：工作区、提交方式，或重置绑定（ADR-0009）。 */
+  async setDirect(patch: { workspaceId?: string; busyMode?: BusyMode; reset?: boolean }): Promise<RuntimeStatus> {
+    const workspaceId = typeof patch.workspaceId === 'string' ? patch.workspaceId.trim() : undefined;
+    // 工作区是外部输入：宿主能列出来就必须是其中的一个，避免绑定一个不存在的 id。
+    if (workspaceId !== undefined && workspaceId !== '') {
+      const catalog = this.workspaces();
+      if (catalog.available && !catalog.items.some((item) => item.id === workspaceId)) {
+        throw Object.assign(new Error('所选工作区已不存在，请重新选择'), { code: 'invalid-config' });
+      }
+    }
+    const busyMode = normalizeBusyMode(patch.busyMode);
+    if (workspaceId !== undefined) this.#directWorkspaceId = workspaceId;
+    if (busyMode !== undefined) this.#directBusyMode = busyMode;
+    if (patch.reset === true) await this.#direct.reset();
+    await this.#localConfig.save({
+      ...(workspaceId !== undefined ? { directWorkspaceId: workspaceId } : {}),
+      ...(busyMode !== undefined ? { directBusyMode: busyMode } : {}),
+    });
     return this.status();
   }
 
@@ -462,8 +564,19 @@ export class WeixinRuntime {
       if (text.trim() !== '' && this.#questions.reply(text)) return;
     }
 
-    // 没有接入核心（或核心不在）：消息到此为止，不入库也不回话。
-    if (!this.#superagent || !binder) return;
+    // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；
+    // 没配会话控制器、或不是主人时照旧到此为止。
+    if (!this.#superagent || !binder) {
+      if (!this.#ownFeaturesActive()) return;
+      if (!this.#owner.isOwner(sender)) return;
+      const text = messageText(message.item_list);
+      if (text.trim() === '') return;
+      this.#typing.start(sender);
+      void this.#direct.submit(sender, text).catch((error: unknown) => {
+        this.#logger.warn?.('独立模式处理失败', messageOf(error));
+      });
+      return;
+    }
     const ownerLookup = bridge.ownerLookup;
     const draft = await toOwnerMessageDraft(message, {
       account: bridge.account,

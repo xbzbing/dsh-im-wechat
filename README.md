@@ -41,11 +41,12 @@ dsh plugin --profile web remove dsh-im-wechat
 
 新装即生效：loader 直接载入，不用重启 `dsh web`，刷新设置页就能看到「微信」。
 
-装好后在设置页找到「微信」：点「扫码登录」，用手机微信扫面板上的二维码（扫不了就复制链接在手机微信里打开），确认后状态变成「已登录」。登录态落在 `$DSH_HOME/dsh-im-wechat/login.json`（`0600`），重启或重装后沿用，不随包发布。
+装好后在设置页找到「微信」：点「扫码登录」，用手机微信扫面板上的二维码（扫不了就复制链接在手机微信里打开），确认后状态变成「已登录」。如果微信要求绑定 PIN，面板会提示输入手机微信显示的数字，提交后继续完成登录。登录态落在 `$DSH_HOME/dsh-im-wechat/login.json`（`0600`），重启或重装后沿用，不随包发布。
 
 ## 插件特性
 
 - **登录与收发**：手机微信扫码确认即可登录；长轮询收消息、主动接口发消息，不需要公网地址和回调域名。
+- **绑定 PIN**：微信要求绑定 PIN 时，面板提示输入手机显示的数字；`verifyPin: true` 可在服务端强制之前提前验证这条链路（[ADR-0014](docs/adr/0014-跟随openclaw-weixin-3.0.0-beta的绑定兼容.md)）。
 - **Markdown 原样透传**：微信客户端原生渲染 Markdown，表格、代码块、标题、列表、链接都按原样显示；图片、`#####`/`######`、中文斜体与删除线的标记会被剔除（[ADR-0008](docs/adr/0008-微信原生Markdown与出站文本过滤.md)）。单条超过 1800 字按段分条（`maxText` 可配）。
 - **独立模式直连会话**：面板里从宿主的工作区列表选一个工作区；首条消息在那里建会话并复用，回答发回微信；回合正在跑时按开关决定插话还是排队；可随时「重置绑定」换会话（[ADR-0009](docs/adr/0009-独立模式的直连会话.md)）。
 - **问题提醒**：题目与选项写成文字发到微信，回复序号或文字就能作答；微信与 Web 竞答，谁先答用谁，另一边自动收起。
@@ -122,6 +123,7 @@ profile 的 `cordis.patch.yml` 里按 loader id 叠加配置：
     longTaskThresholdMinutes: 45   # 长任务提醒阈值（分钟），默认 30，范围 1–1440
     maxText: 1800                  # 单条消息字符上限，默认 1800
     typingIndicator: true          # 「正在输入」状态，默认开（ADR-0007）
+    verifyPin: false               # 取码时强制服务端出 PIN，仅用于提前验证（ADR-0014）
 ```
 
 面板上改的设置（接入微信、接入我的超级助理、长任务阈值、独立模式的工作区与提交方式）落在
@@ -136,6 +138,8 @@ npm run check   # typecheck + test + verify
 # 不开面板的真机自测（终端里画二维码、打印入站消息、对 ping 回 pong）
 node scripts/dev-bridge.mjs login
 node scripts/dev-bridge.mjs run
+
+# 提前验证绑定 PIN：先 export DSH_WECHAT_VERIFY_PIN（值为 1），再执行上面的 login
 ```
 
 ## 目录

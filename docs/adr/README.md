@@ -43,6 +43,7 @@ flowchart TD
 | [0011](0011-失败立刻提醒.md) | 失败立刻提醒 | 已采纳 |
 | [0012](0012-出站快捷命令.md) | 出站快捷命令 `dsh-wechat-send` | 已采纳 |
 | [0013](0013-声明推送窗口.md) | 声明 `context_token` 的推送窗口 6 小时 | 已采纳 |
+| [0014](0014-跟随openclaw-weixin-3.0.0-beta的绑定兼容.md) | 跟随 openclaw-weixin 3.0.0-beta 的绑定兼容 | 已采纳 |
 
 ## 还没定的事
 

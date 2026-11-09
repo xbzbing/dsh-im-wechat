@@ -61,7 +61,7 @@ npm run check      # 提交前门禁：typecheck + test + verify
 ```
 
 - 需要在主人的 web profile 验收时：先 `dsh plugin --profile web remove dsh-im-wechat`，再 `dsh plugin --profile web add file:<仓库路径>`；host 半改动靠卸载重装生效，只改 client 半刷新页面即可。新装插件由 loader 直接载入，**不需要重启 `dsh web`**；重装时卸载与安装之间留十几秒，间隔太短可能不会重新加载新代码。
-- 真机自测不必开面板：`node scripts/dev-bridge.mjs login` 在终端画二维码并落盘登录态，`node scripts/dev-bridge.mjs run` 起长轮询（对 `ping` 回 `pong`），走的是 `src/` 里同一套实现。
+- 真机自测不必开面板：`node scripts/dev-bridge.mjs login` 在终端画二维码并落盘登录态，`node scripts/dev-bridge.mjs run` 起长轮询（对 `ping` 回 `pong`），走的是 `src/` 里同一套实现。要提前验证绑定 PIN，先把环境变量 `DSH_WECHAT_VERIFY_PIN` 设为 1，再跑 `node scripts/dev-bridge.mjs login`（ADR-0014）。
 - 插件 info 日志只进 Cordis 内存缓冲，终端看不到；排障写测试复现或后续在面板看最近错误。
 - 本项目的 OpenViking 记忆写入项目 peer `viking://user/xubingzhen/peers/github.com-xbzbing-dsh-im-wechat/`（由仓库 origin 自动派生），不写用户级记忆。
 

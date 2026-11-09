@@ -19,7 +19,7 @@ import { ContextTokenStore } from './state/context-tokens.ts';
 import { LoginStateStore, accountTail } from './state/login-state.ts';
 import type { LoginState } from './state/login-state.ts';
 import { resolveDataDir } from './state/paths.ts';
-import { PLUGIN_VERSION } from '../shared/version.ts';
+import { CHANNEL_VERSION, PLUGIN_VERSION } from '../shared/version.ts';
 
 /** 单次最多发几张：与交付扫描的上限同量级，避免一次刷屏。 */
 export const CLI_MAX_IMAGES = 10;
@@ -197,7 +197,7 @@ export function createPorts(options: { dir: string; fetch?: typeof globalThis.fe
     return createApi({
       baseUrl: state.baseUrl,
       token: state.botToken,
-      channelVersion: PLUGIN_VERSION,
+      channelVersion: CHANNEL_VERSION,
       botAgent: `dsh-im-wechat/${PLUGIN_VERSION}`,
       ...(options.fetch ? { fetch: options.fetch } : {}),
     });

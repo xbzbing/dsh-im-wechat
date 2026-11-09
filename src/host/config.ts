@@ -39,6 +39,11 @@ export interface PluginConfig {
   longTaskThresholdMinutes?: number;
   /** 是否发「正在输入」状态，默认开；真机行为不符预期时可关（ADR-0007）。 */
   typingIndicator?: boolean;
+  /**
+   * 取码时要求服务端强制出 PIN，仅用于提前验证 PIN 交互（3.0.0 起）。
+   * 默认关闭；关闭它不能阻止服务端自行要求 PIN。
+   */
+  verifyPin?: boolean;
   /** 独立模式（未接入超级助理）建会话的工作区 id；空表示宿主默认位置（ADR-0009）。 */
   directWorkspaceId?: string;
   /** 独立模式里回合正在跑时又来一条消息的提交方式：排队（默认）或插话（ADR-0009）。 */
@@ -99,6 +104,8 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
   const typingIndicator = asBoolean(record.typingIndicator);
   if (typingIndicator !== undefined) config.typingIndicator = typingIndicator;
+  const verifyPin = asBoolean(record.verifyPin);
+  if (verifyPin !== undefined) config.verifyPin = verifyPin;
   return config;
 }
 

@@ -9,3 +9,15 @@
 export const PACKAGE_NAME = 'dsh-im-wechat';
 
 export const PLUGIN_VERSION = '0.1.0';
+
+/**
+ * 跟随 openclaw-weixin 的协议代次。
+ *
+ * 协议规定 `base_info.channel_version` 的前三段必须是上游插件版本，自有版本
+ * 只能放在后缀里（例如 `3.0.1/hermes-1.2.0`）。3.0.0-beta-0 这一代是 3.x，
+ * 写成 `0.1.0` 会让 Bot 后台把客户端记成不支持或 0.0.0。
+ */
+export const ILINK_PROTOCOL_VERSION = '3.0.0';
+
+/** 给服务端上报的客户端版本：上游代次 + 本插件版本。 */
+export const CHANNEL_VERSION = `${ILINK_PROTOCOL_VERSION}/${PACKAGE_NAME}-${PLUGIN_VERSION}`;

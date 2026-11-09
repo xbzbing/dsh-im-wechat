@@ -23,7 +23,7 @@ import { LoginStateStore, accountTail } from '../src/host/state/login-state.ts';
 import { resolveDataDir } from '../src/host/state/paths.ts';
 import { SyncCursorStore } from '../src/host/state/sync-cursor.ts';
 import { encodeQr } from '../src/shared/qr.ts';
-import { PLUGIN_VERSION } from '../src/shared/version.ts';
+import { CHANNEL_VERSION, PLUGIN_VERSION } from '../src/shared/version.ts';
 
 const dir = resolveDataDir();
 const loginStore = new LoginStateStore({ dir });
@@ -40,7 +40,7 @@ function makeApi(token) {
   return createApi({
     baseUrl: stateBaseUrl,
     ...(token ? { token } : {}),
-    channelVersion: PLUGIN_VERSION,
+    channelVersion: CHANNEL_VERSION,
     botAgent: `dsh-im-wechat/${PLUGIN_VERSION}`,
   });
 }
@@ -85,6 +85,7 @@ async function login() {
     },
     store: loginStore,
     logger,
+    ...(process.env.DSH_WECHAT_VERIFY_PIN === '1' ? { verifyPin: true } : {}),
     onConfirmed: (state) => {
       process.stdout.write(`\n登录成功：${accountTail(state.account)}（${state.baseUrl}）\n`);
     },

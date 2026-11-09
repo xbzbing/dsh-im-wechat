@@ -45,7 +45,7 @@ import {
   resolveConfigDir,
 } from './config.ts';
 import type { BusyMode, PluginConfig } from './config.ts';
-import { PLUGIN_VERSION } from '../shared/version.ts';
+import { CHANNEL_VERSION, PLUGIN_VERSION } from '../shared/version.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
 export const HOST_CONTRACT = 3;
@@ -155,7 +155,7 @@ export class WeixinRuntime {
     this.#createApi = deps.createApi ?? ((options) => createApi({
       baseUrl: options.baseUrl,
       ...(options.token !== undefined ? { token: options.token } : {}),
-      channelVersion: PLUGIN_VERSION,
+      channelVersion: CHANNEL_VERSION,
       botAgent: agent,
       ...(this.#fetch ? { fetch: this.#fetch } : {}),
     }));
@@ -218,6 +218,7 @@ export class WeixinRuntime {
       localTokenList: () => (this.#loginState ? [this.#loginState.botToken] : []),
       logger: this.#logger,
       now: this.#now,
+      verifyPin: this.#config.verifyPin === true,
       onConfirmed: (state) => this.#handleConfirmed(state),
     });
   }

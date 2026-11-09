@@ -1,7 +1,7 @@
 /**
  * iLink HTTP 客户端。
  *
- * 端点、请求头与请求体字段以腾讯官方 `openclaw-weixin` 3.3.2（MIT）的
+ * 端点、请求头与请求体字段以腾讯官方 `openclaw-weixin` 3.0.0-beta-0（MIT）的
  * `src/api/api.ts` 为参考自写（ADR-0001）；这里只保留跑通桥所需的部分：
  * 扫码登录、长轮询、发送文本、读机器人配置、启停通知。
  *
@@ -25,6 +25,7 @@ import type {
   QrCodeResponse,
   QrStatusResponse,
 } from './types.ts';
+import { ILINK_PROTOCOL_VERSION } from '../../shared/version.ts';
 
 /** 扫码与 API 共用的默认域名；登录成功后以服务端返回的 `baseurl` 为准。 */
 export const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
@@ -38,10 +39,11 @@ export const ILINK_APP_ID = 'bot';
 /**
  * `iLink-App-ClientVersion`：`0x00MMNNPP`。
  *
- * 取官方 3.3.x 客户端的编码值（(3<<16)|(3<<8)|2 = 197378）。服务端按这个值
- * 判断客户端能力，跟着我们自己的包版本走会让它以为是个更老的客户端。
+ * 协议要求按 openclaw-weixin 的插件版本编码，而不是我们自己的包版本。
+ * 3.0.0-beta-0 这一代是 3.0.0（(3<<16) = 196608）。跟着我们的 0.1.0 走
+ * 会让服务端以为客户端比最低支持版本还老。
  */
-export const ILINK_APP_CLIENT_VERSION = 197378;
+export const ILINK_APP_CLIENT_VERSION = encodeClientVersion(ILINK_PROTOCOL_VERSION);
 
 export const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 export const DEFAULT_API_TIMEOUT_MS = 15_000;
@@ -80,7 +82,7 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-/** `0x00MMNNPP` 编码，单测钉住 3.3.2 → 197378。 */
+/** `0x00MMNNPP` 编码，单测钉住 3.0.0 → 196608。 */
 export function encodeClientVersion(version: string): number {
   const [major = 0, minor = 0, patch = 0] = version.split('.').map((part) => Number.parseInt(part, 10) || 0);
   return ((major & 0xff) << 16) | ((minor & 0xff) << 8) | (patch & 0xff);
@@ -141,6 +143,9 @@ export function classifyNetworkFailure(error: unknown): string {
   if (/UND_ERR_SOCKET|SSL|TLS|CERT/i.test(text)) return 'tls';
   return 'unknown';
 }
+
+/** 取码时要求安全侧强制出 PIN 的业务标识：明文 `{"verify_pin":1}` 的 UTF-8 标准 base64。 */
+export const BOT_SPAM_VERIFY_PIN_DATA = Buffer.from(JSON.stringify({ verify_pin: 1 }), 'utf8').toString('base64');
 
 export interface ILinkApiOptions {
   baseUrl: string;
@@ -420,17 +425,24 @@ export class ILinkApi {
    * 取登录二维码。
    *
    * `localTokenList` 是「本机已有的机器人 token」，服务端据此判断是否已绑定过，
-   * 与官方行为一致。扫码接口不带 Authorization。
+   * 与官方行为一致。扫码接口不带 Authorization，也不带 `base_info`。
+   *
+   * `verifyPin` 只用于提前验证 PIN 交互：打开后请求体多一个
+   * `bot_spam_business_data`（base64 的 `{"verify_pin":1}`）。关闭它不会阻止
+   * 服务端自行要求 PIN，真正的 PIN 仍由 `get_qrcode_status` 的状态触发。
    */
   async getBotQrCode(params: {
     botType?: string;
     localTokenList?: readonly string[];
+    verifyPin?: boolean;
     timeoutMs?: number;
   } = {}): Promise<QrCodeResponse> {
     const botType = params.botType ?? DEFAULT_BOT_TYPE;
+    const body: Record<string, unknown> = { local_token_list: params.localTokenList ?? [] };
+    if (params.verifyPin === true) body.bot_spam_business_data = BOT_SPAM_VERIFY_PIN_DATA;
     return this.#post<QrCodeResponse>(
       `ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`,
-      { local_token_list: params.localTokenList ?? [] },
+      body,
       { timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS },
     );
   }

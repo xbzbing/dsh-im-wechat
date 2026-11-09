@@ -18,13 +18,16 @@ interface StatusCall {
 function scriptedApi(statuses: Array<Record<string, unknown>>): {
   api: ILinkApi;
   calls: StatusCall[];
+  qrCalls: Record<string, unknown>[];
   counter: { count: number };
 } {
   const calls: StatusCall[] = [];
+  const qrCalls: Record<string, unknown>[] = [];
   const counter = { count: 0 };
   let index = 0;
   const api = {
-    async getBotQrCode() {
+    async getBotQrCode(params: Record<string, unknown> = {}) {
+      qrCalls.push(params);
       counter.count += 1;
       return { qrcode: `q-${counter.count}`, qrcode_img_content: `https://weixin.qq.com/x/q-${counter.count}` };
     },
@@ -35,13 +38,14 @@ function scriptedApi(statuses: Array<Record<string, unknown>>): {
       return next;
     },
   } as unknown as ILinkApi;
-  return { api, calls, counter };
+  return { api, calls, qrCalls, counter };
 }
 
 interface Harness {
   controller: LoginController;
   store: LoginStateStore;
   calls: StatusCall[];
+  qrCalls: Record<string, unknown>[];
   confirmed: string[];
   dir: string;
   /** 取二维码的次数：并发 start 只应请求一次。 */
@@ -55,6 +59,8 @@ async function harness(
     statusThrows?: boolean;
     /** 让 onConfirmed 抛错，验证登录结果不被连接失败改写。 */
     onConfirmedThrows?: boolean;
+    /** 取码时要求服务端出 PIN。 */
+    verifyPin?: boolean;
     timings?: Record<string, number>;
   } = {},
 ): Promise<Harness> {
@@ -80,6 +86,7 @@ async function harness(
     now: () => (clock += 1_000),
     // 让出宏任务：状态机的等待循环才能与测试的断言交替执行。
     sleep: async () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+    ...(options.verifyPin === true ? { verifyPin: true } : {}),
     onConfirmed: (state) => {
       if (options.onConfirmedThrows) throw new Error('connect boom');
       confirmed.push(state.account);
@@ -90,6 +97,7 @@ async function harness(
     controller,
     store,
     calls: scripted.calls,
+    qrCalls: scripted.qrCalls,
     confirmed,
     dir,
     qrCodeCalls: () => scripted.counter.count,
@@ -143,6 +151,64 @@ test('need_verifycode 时停下等主人输入，提交后继续', async () => {
     await h.controller.waitForSettled();
     assert.equal(h.controller.snapshot().phase, 'confirmed');
     assert.equal(h.calls.some((call) => call.verifyCode === '123456'), true);
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('confirmed_but_need_verifycode 同样停下等 PIN，提交后完成登录', async () => {
+  const h = await harness([
+    { status: 'confirmed_but_need_verifycode' },
+    { status: 'scaned' },
+    { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot' },
+  ]);
+  try {
+    await h.controller.start();
+    for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    // 旧逻辑只认 need_verifycode，会一直等到登录总超时。
+    assert.equal(h.controller.snapshot().phase, 'need-verify-code');
+    h.controller.submitVerifyCode('654321');
+    await h.controller.waitForSettled();
+    assert.equal(h.controller.snapshot().phase, 'confirmed');
+    assert.equal(h.calls.some((call) => call.verifyCode === '654321'), true);
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('PIN 提交后遇到 wait 仍继续携带，直到 scaned 确认接受', async () => {
+  const h = await harness([
+    { status: 'need_verifycode' },
+    { status: 'wait' },
+    { status: 'scaned' },
+    { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot' },
+  ]);
+  try {
+    await h.controller.start();
+    for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    h.controller.submitVerifyCode('123456');
+    await h.controller.waitForSettled();
+    // 第二次轮询没有结论时不能把 PIN 丢掉，否则服务端永远等不到数字。
+    assert.equal(h.calls[1].verifyCode, '123456');
+    assert.equal(h.calls[2].verifyCode, '123456');
+  } finally {
+    await rm(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('verifyPin 开关透传到取码请求，换码后仍然携带', async () => {
+  const h = await harness(
+    [
+      { status: 'expired' },
+      { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot@im.bot' },
+    ],
+    { verifyPin: true },
+  );
+  try {
+    await h.controller.start();
+    await h.controller.waitForSettled();
+    assert.deepEqual(h.qrCalls[0], { localTokenList: [], verifyPin: true });
+    assert.deepEqual(h.qrCalls[1], { localTokenList: [], verifyPin: true });
   } finally {
     await rm(h.dir, { recursive: true, force: true });
   }

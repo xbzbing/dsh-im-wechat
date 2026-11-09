@@ -6,7 +6,10 @@
  *
  * 状态与状态码取自协议：`wait` / `scaned` / `need_verifycode` / `expired` /
  * `verify_code_blocked` / `binded_redirect` / `scaned_but_redirect` / `confirmed`。
- * 语义按官方实现对齐：`binded_redirect` 是「本来就绑定过」，不是失败。
+ * 3.0.0 起服务端还会返回 `confirmed_but_need_verifycode`：绑定已确认，但安全
+ * 要求先补一次 PIN。判断规则是「状态名里包含 `need_verifycode`」，不要只认
+ * 旧状态名，否则会一直轮询到超时。语义按官方实现对齐：`binded_redirect` 是
+ * 「本来就绑定过」，不是失败。
  */
 
 import type { ILinkApi } from './api.ts';
@@ -24,6 +27,16 @@ export type LoginPhase =
   | 'binded'
   | 'failed'
   | 'cancelled';
+
+/**
+ * 是否需要主人补 PIN。
+ *
+ * `need_verifycode` 是旧状态；3.0.0 新增 `confirmed_but_need_verifycode`。
+ * 协议约定按子串判断，后续再出现同族状态也能接住。
+ */
+export function statusNeedsVerifyCode(status: string | undefined): boolean {
+  return typeof status === 'string' && status.includes('need_verifycode');
+}
 
 /** 面板读到的登录快照。`qrContent` 是二维码内容，同时是可打开的链接。 */
 export interface LoginSnapshot {
@@ -71,6 +84,11 @@ export interface LoginControllerOptions {
   store: LoginStateStore;
   /** 本机已有的机器人 token，服务端据此判断是否已绑定过。 */
   localTokenList?: () => readonly string[];
+  /**
+   * 取码时要求服务端出 PIN（`bot_spam_business_data`）。默认关闭，只用于
+   * 提前验证 PIN 交互；关闭它也不能阻止服务端自行要求 PIN。
+   */
+  verifyPin?: boolean;
   logger?: LoginLogger;
   now?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -202,7 +220,10 @@ export class LoginController {
 
   async #requestQrCode(api: ILinkApi): Promise<boolean> {
     try {
-      const response = await api.getBotQrCode({ localTokenList: this.#options.localTokenList?.() ?? [] });
+      const response = await api.getBotQrCode({
+        localTokenList: this.#options.localTokenList?.() ?? [],
+        ...(this.#options.verifyPin === true ? { verifyPin: true } : {}),
+      });
       const qrcode = typeof response.qrcode === 'string' ? response.qrcode : '';
       const content = typeof response.qrcode_img_content === 'string' ? response.qrcode_img_content : '';
       if (qrcode === '' || content === '') {
@@ -243,7 +264,6 @@ export class LoginController {
         if (this.#now() > this.#qrExpiresAt && !(await this.#refresh(api))) return;
 
         const verifying = this.#verifyCode;
-        if (verifying !== undefined) this.#verifyCode = undefined;
         const response = await api.getQrStatus({
           qrcode: this.#qrcode,
           ...(verifying !== undefined ? { verifyCode: verifying } : {}),
@@ -270,6 +290,15 @@ export class LoginController {
 
   /** 处理一次状态响应；返回 true 表示流程结束。 */
   async #handleStatus(api: ILinkApi, response: QrStatusResponse): Promise<boolean> {
+    // 先判 PIN：`confirmed_but_need_verifycode` 的绑定状态已经确认，但仍要
+    // 主人补数字；按旧逻辑落进 default 会一直等到登录总超时。
+    if (statusNeedsVerifyCode(response.status)) {
+      this.#phase = 'need-verify-code';
+      // 上一轮的号码已经被这次响应判过，等主人重新输入；新号码会随下一次
+      // 轮询提交。提交后不清空，直到 `scaned` 确认服务端已接受。
+      this.#verifyCode = undefined;
+      return this.#awaitVerifyCode();
+    }
     switch (response.status) {
       case 'wait':
         return false;
@@ -278,9 +307,6 @@ export class LoginController {
         // 服务端确认验证码正确后才允许清掉暂存值，与官方一致。
         this.#verifyCode = undefined;
         return false;
-      case 'need_verifycode':
-        this.#phase = 'need-verify-code';
-        return this.#awaitVerifyCode();
       case 'expired':
       case 'verify_code_blocked': {
         const refreshed = await this.#refresh(api);
@@ -326,6 +352,8 @@ export class LoginController {
       this.#fail('二维码多次失效，登录流程已停止');
       return false;
     }
+    // 换码后旧号码作废；继续带着它只会让新码的第一轮轮询被服务端判错。
+    this.#verifyCode = undefined;
     this.#qrcode = undefined;
     this.#phase = 'waiting';
     return this.#requestQrCode(api);

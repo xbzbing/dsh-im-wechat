@@ -2,7 +2,7 @@
  * 「正在输入」状态（ADR-0007）：主人的消息被核心受理后、首段交付送达前，
  * 让微信那头显示输入中。
  *
- * 协议事实（官方 `openclaw-weixin` 3.3.2 的参考实现）：
+ * 协议事实（官方 `openclaw-weixin` 3.0.0-beta-0 的参考实现）：
  * - `ilink/bot/getconfig` 按用户取 `typing_ticket`，请求要带该用户最近一条消息的
  *   `context_token`；ticket 缓存 24 小时，取失败按 2 秒起指数退避（上限 1 小时）；
  * - `ilink/bot/sendtyping` 带 ticket 发 status=1（开始）/ 2（取消），思考期间每

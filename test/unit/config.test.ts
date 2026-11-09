@@ -24,6 +24,13 @@ test('独立模式的工作区与提交方式：只认合法值，非法值丢�
   assert.equal(normalizePluginConfig({ directBusyMode: 'queue' }).directBusyMode, 'queue');
 });
 
+test('verifyPin 只认布尔值，默认不开启', () => {
+  assert.equal(normalizePluginConfig({ verifyPin: true }).verifyPin, true);
+  assert.equal(normalizePluginConfig({ verifyPin: false }).verifyPin, false);
+  assert.equal('verifyPin' in normalizePluginConfig({ verifyPin: 'true' }), false);
+  assert.equal('verifyPin' in normalizePluginConfig({}), false);
+});
+
 test('面板改的独立模式设置会落盘并在下次加载时读回', async () => {
   await withDir(async (dir) => {
     const store = new LocalConfigStore({ dir });

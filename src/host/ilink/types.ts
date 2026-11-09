@@ -1,7 +1,7 @@
 /**
  * iLink 协议的线上形状。
  *
- * 出处：腾讯官方 `openclaw-weixin` 3.3.2（MIT）里的 proto 映射（`GetUpdatesReq/Resp`、
+ * 出处：腾讯官方 `openclaw-weixin` 3.0.0-beta-0（MIT）里的 proto 映射（`GetUpdatesReq/Resp`、
  * `WeixinMessage`、`SendMessageReq`）与 JSON-over-HTTP 约定：字节字段在 JSON 里是
  * base64 字符串。这里只按形状描述，不含任何官方实现代码；端点与请求头见 `api.ts`。
  *

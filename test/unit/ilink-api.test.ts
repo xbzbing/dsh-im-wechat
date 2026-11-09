@@ -2,9 +2,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { ILinkApi, ILinkError, encodeClientVersion, isAllowedApiUrl } from '../../src/host/ilink/api.ts';
+import {
+  ILinkApi,
+  ILinkError,
+  ILINK_APP_CLIENT_VERSION,
+  encodeClientVersion,
+  isAllowedApiUrl,
+} from '../../src/host/ilink/api.ts';
 import { parseJsonKeepIntegers } from '../../src/host/ilink/json.ts';
-import { PLUGIN_VERSION } from '../../src/shared/version.ts';
+import { CHANNEL_VERSION, ILINK_PROTOCOL_VERSION, PACKAGE_NAME, PLUGIN_VERSION } from '../../src/shared/version.ts';
 
 const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
   version: string;
@@ -50,7 +56,7 @@ function makeApi(overrides: Partial<ConstructorParameters<typeof ILinkApi>[0]> =
   const { impl } = recordingFetch(jsonResponse({ ret: 0 }));
   return new ILinkApi({
     baseUrl: 'https://ilinkai.weixin.qq.com',
-    channelVersion: '0.1.0',
+    channelVersion: CHANNEL_VERSION,
     botAgent: 'dsh-im-wechat/0.1.0',
     token: 'token-abc',
     fetch: overrides.fetch ?? impl,
@@ -61,10 +67,14 @@ function makeApi(overrides: Partial<ConstructorParameters<typeof ILinkApi>[0]> =
 
 test('包版本常量与 package.json 一致', () => {
   assert.equal(PLUGIN_VERSION, manifest.version);
+  assert.equal(ILINK_PROTOCOL_VERSION, '3.0.0');
+  // 协议要求前三段是上游版本，自有版本只能跟在斜杠后面。
+  assert.equal(CHANNEL_VERSION, `3.0.0/${PACKAGE_NAME}-${manifest.version}`);
 });
 
 test('客户端版本按 0x00MMNNPP 编码', () => {
-  assert.equal(encodeClientVersion('3.3.2'), 197_378);
+  assert.equal(encodeClientVersion('3.0.0'), 196_608);
+  assert.equal(ILINK_APP_CLIENT_VERSION, 196_608);
   assert.equal(encodeClientVersion('0.1.0'), 256);
   assert.equal(encodeClientVersion('1'), 65_536);
 });
@@ -87,13 +97,13 @@ test('POST 带齐协议头与 base_info', async () => {
   assert.equal(call.url, 'https://ilinkai.weixin.qq.com/ilink/bot/getupdates');
   assert.equal(call.method, 'POST');
   assert.equal(call.headers['iLink-App-Id'], 'bot');
-  assert.equal(call.headers['iLink-App-ClientVersion'], '197378');
+  assert.equal(call.headers['iLink-App-ClientVersion'], '196608');
   assert.equal(call.headers.AuthorizationType, 'ilink_bot_token');
   assert.equal(call.headers.Authorization, 'Bearer token-abc');
   assert.equal(call.headers['X-WECHAT-UIN'], Buffer.from('1234567').toString('base64'));
   assert.deepEqual(call.body, {
     get_updates_buf: 'CURSOR',
-    base_info: { channel_version: '0.1.0', bot_agent: 'dsh-im-wechat/0.1.0' },
+    base_info: { channel_version: CHANNEL_VERSION, bot_agent: 'dsh-im-wechat/0.1.0' },
   });
 });
 
@@ -104,6 +114,18 @@ test('扫码接口不带 Authorization，鉴权接口才带', async () => {
   assert.equal(calls[0].headers.Authorization, undefined);
   assert.equal(calls[0].headers['X-WECHAT-UIN'] !== undefined, true);
   assert.ok(calls[0].url.endsWith('/ilink/bot/get_bot_qrcode?bot_type=3'));
+});
+
+test('verifyPin 打开时取码带 bot_spam_business_data，关闭时不带', async () => {
+  const { calls, impl } = recordingFetch(jsonResponse({ qrcode: 'q1', qrcode_img_content: 'https://x' }));
+  const api = makeApi({ fetch: impl, token: undefined });
+  await api.getBotQrCode({ localTokenList: [] });
+  assert.deepEqual(calls[0].body, { local_token_list: [] });
+  await api.getBotQrCode({ localTokenList: ['tok'], verifyPin: true });
+  assert.deepEqual(calls[1].body, {
+    local_token_list: ['tok'],
+    bot_spam_business_data: 'eyJ2ZXJpZnlfcGluIjoxfQ==',
+  });
 });
 
 test('长轮询超时按正常控制流返回空响应', async () => {

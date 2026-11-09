@@ -32,6 +32,14 @@ import { MAX_TEXT_CHARS, composeDeliveryText, splitText } from './render.ts';
 
 export const WEIXIN_PLATFORM = 'weixin';
 
+/**
+ * context_token 的声明有效期：6 小时（ADR-0013）。
+ *
+ * 声明过长会把注定被拒的交付排给本桥，声明过短会让还能发的窗口轮到别的桥；
+ * 核心据此在窗口外跳过本桥。真实边界由 `#logWindowClosed` 记录的 token 年龄收紧。
+ */
+export const TOKEN_WINDOW_MS = 6 * 60 * 60_000;
+
 export interface BridgeLogger {
   info?(...args: unknown[]): unknown;
   warn?(...args: unknown[]): unknown;
@@ -103,8 +111,8 @@ export class WeixinBridge implements BridgeProvider {
       nativeCommands: false,
       // 平台连发限制待真机实测（M5），先按保守值声明，核心据此节流。
       quotas: [{ scope: 'bot', max: 10, windowMs: 60_000 }],
-      // 能随交付发图片（ADR-0010）：核心据此把 Delivery.images 一起发过来。
-      outbound: { requiresPriorInbound: true, images: true },
+      // 窗口从收到 token 起算（ADR-0013）：核心据此在窗口外把交付让给下一座桥。
+      outbound: { requiresPriorInbound: true, windowMs: TOKEN_WINDOW_MS, images: true },
     };
   }
 
@@ -241,6 +249,8 @@ export class WeixinBridge implements BridgeProvider {
         }
         // 确定失败：保留进度，核心重试时从断点续发。
         this.#logger?.warn?.(`微信发送失败（${delivery.id}）`, failure.message);
+        // 被拒时记录 token 年龄：多次窗口拒绝的年龄会夹出真实有效期，用于收紧声明值（ADR-0013）。
+        if (failure.code === 'window-closed') this.#logWindowClosed(delivery.recipient);
         return { ...base, status: 'failed', errorCode: failure.code, error: failure.message };
       }
     }
@@ -262,5 +272,13 @@ export class WeixinBridge implements BridgeProvider {
       if (oldest.done) break;
       this.#progress.delete(oldest.value);
     }
+  }
+
+  /** 被拒时记下 token 年龄：收紧声明有效期的依据；从磁盘灌进来的年龄未知。 */
+  #logWindowClosed(recipient: string): void {
+    const age = this.#contextTokens.age(this.account, recipient);
+    this.#logger?.warn?.(age === undefined
+      ? '微信发送被拒：窗口已关（token 年龄未知）'
+      : `微信发送被拒：窗口已关（token 已存在 ${Math.round(age / 60_000)} 分钟）`);
   }
 }

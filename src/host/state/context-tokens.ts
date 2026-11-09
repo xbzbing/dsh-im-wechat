@@ -43,6 +43,8 @@ export class ContextTokenStore {
   readonly #logger: StateLogger | undefined;
   readonly #now: () => number;
   #cache = new Map<string, string>();
+  /** token 接收时刻，只在内存：拒信里报年龄用；落盘不带时间，重启后未知。 */
+  #receivedAt = new Map<string, number>();
   /** 串行化的写链：入站消息可能连发，不能并发写同一个文件。 */
   #writes: Promise<void> = Promise.resolve();
 
@@ -69,13 +71,21 @@ export class ContextTokenStore {
     return this.#cache.get(this.#cacheKey(account, userId));
   }
 
+  /** 这个 token 收到多久了；从磁盘灌进来的（重启前收到的）返回 undefined。 */
+  age(account: string, userId: string, now = this.#now()): number | undefined {
+    const at = this.#receivedAt.get(this.#cacheKey(account, userId));
+    return at === undefined ? undefined : Math.max(0, now - at);
+  }
+
   /** 记一条 token；写盘异步排队，发送路径不需要等它。 */
   set(account: string, userId: string, token: string): void {
     const cleaned = token.trim();
     if (cleaned === '') return;
     const normalizedUser = key(userId);
     if (normalizedUser === '') return;
-    this.#cache.set(this.#cacheKey(account, normalizedUser), cleaned);
+    const cacheKey = this.#cacheKey(account, normalizedUser);
+    this.#cache.set(cacheKey, cleaned);
+    this.#receivedAt.set(cacheKey, this.#now());
     this.#writes = this.#writes
       .then(() => this.#persist(account))
       .catch((error: unknown) => {
@@ -87,6 +97,9 @@ export class ContextTokenStore {
     const prefix = `${account}\u0000`;
     for (const cacheKey of [...this.#cache.keys()]) {
       if (cacheKey.startsWith(prefix)) this.#cache.delete(cacheKey);
+    }
+    for (const cacheKey of [...this.#receivedAt.keys()]) {
+      if (cacheKey.startsWith(prefix)) this.#receivedAt.delete(cacheKey);
     }
     await writePrivateFile(this.path(account), `${JSON.stringify({ tokens: {} })}\n`);
   }

@@ -8,7 +8,7 @@ import { ILinkError } from '../../src/host/ilink/api.ts';
 import type { ILinkApi } from '../../src/host/ilink/api.ts';
 import { SessionGuard } from '../../src/host/ilink/session-guard.ts';
 import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
-import { WeixinBridge } from '../../src/host/superagent/bridge.ts';
+import { TOKEN_WINDOW_MS, WeixinBridge } from '../../src/host/superagent/bridge.ts';
 import type { BridgeHandle, Delivery } from '../../src/host/superagent/protocol.ts';
 
 interface Sent {
@@ -39,6 +39,7 @@ interface Harness {
   tokens: ContextTokenStore;
   images: Record<string, unknown>[];
   uploads: string[];
+  warnings: string[];
 }
 
 async function harness(
@@ -55,6 +56,7 @@ async function harness(
 ): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-bridge-'));
   const sent: Sent[] = [];
+  const warnings: string[] = [];
   const tokens = new ContextTokenStore({ dir });
   if (options.withToken !== false) tokens.set(ACCOUNT, OWNER, 'ctx-1');
   const guard = new SessionGuard();
@@ -89,9 +91,10 @@ async function harness(
     guard,
     maxText: 20,
     uploadFetch,
+    logger: { warn: (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); } },
     ...(options.onDelivered ? { onDelivered: options.onDelivered } : {}),
   });
-  return { dir, bridge, sent, guard, tokens, images, uploads };
+  return { dir, bridge, sent, guard, tokens, images, uploads, warnings };
 }
 
 async function withHarness(
@@ -123,6 +126,14 @@ test('缺少 context_token 按 window-closed 回 failed', async () => {
     assert.equal(receipt.status, 'failed');
     assert.equal(receipt.errorCode, 'window-closed');
     assert.equal(h.sent.length, 0);
+  });
+});
+
+test('被服务端拒（ret=-2）时记录 token 年龄，供实测有效期用', async () => {
+  await withHarness({ failAt: [1], error: new ILinkError('api', 'sendmessage 失败 ret=-2', { ret: -2 }) }, async (h) => {
+    const receipt = await h.bridge.deliver(delivery());
+    assert.equal(receipt.errorCode, 'window-closed');
+    assert.ok(h.warnings.some((line) => /窗口已关（token 已存在 0 分钟）/.test(line)), `实际日志：${h.warnings.join(' | ')}`);
   });
 });
 
@@ -224,6 +235,9 @@ test('能力声明：纯文本、分条上限、无交互卡、需要先有入�
   assert.equal(bridge.capabilities.detail, false);
   assert.equal(bridge.capabilities.nativeCommands, false);
   assert.equal(bridge.capabilities.outbound.requiresPriorInbound, true);
+  // 声明窗口让核心在窗口外跳过本桥、把流量让给下一座，而不是每分钟空转（ADR-0013）。
+  assert.equal(bridge.capabilities.outbound.windowMs, TOKEN_WINDOW_MS);
+  assert.equal(bridge.capabilities.outbound.windowMs, 6 * 60 * 60_000);
 });
 
 test('核心能力声明决定图片下载与身份查询', () => {

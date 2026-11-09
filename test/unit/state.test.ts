@@ -127,6 +127,24 @@ test('context_token 按账号与用户归一存取并落盘', async () => {
   });
 });
 
+test('token 年龄可读：新 token 从 0 起算，从磁盘灌进来的按未知处理', async () => {
+  await withDir(async (dir) => {
+    let now = 1_000;
+    const store = new ContextTokenStore({ dir, now: () => now });
+    store.set('acc', 'user-a', 'tok-1');
+    assert.equal(store.age('acc', 'user-a'), 0);
+    now += 90 * 60_000;
+    assert.equal(store.age('acc', 'user-a'), 90 * 60_000);
+    await store.flush();
+
+    // 重启后 token 仍然可用，但收到时刻丢了：报未知，不猜。
+    const reloaded = new ContextTokenStore({ dir, now: () => now });
+    await reloaded.hydrate('acc');
+    assert.equal(reloaded.get('acc', 'user-a'), 'tok-1');
+    assert.equal(reloaded.age('acc', 'user-a'), undefined);
+  });
+});
+
 test('清空账号 token 后不再返回旧值', async () => {
   await withDir(async (dir) => {
     const store = new ContextTokenStore({ dir });

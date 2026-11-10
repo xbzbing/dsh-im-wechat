@@ -35,7 +35,10 @@ export function composeDeliveryText(delivery: Delivery): string {
   const sections: string[] = [];
   const title = typeof delivery.title === 'string' ? delivery.title.trim() : '';
   const body = typeof delivery.body === 'string' ? delivery.body.trim() : '';
-  if (title !== '') sections.push(toWeChatMarkdown(title));
+  // 回应主人刚发的那条消息（inReplyTo）只发正文：一问一答的正文自己就说明是什么，
+  // 加个「回复」抬头只是噪音（核心也按「回复不带标题」写标题，ADR-0030）。
+  // 正文为空时仍发标题：宁可多发一行，也不能因为丢标题而发出一条空消息。
+  if (title !== '' && (delivery.inReplyTo === undefined || body === '')) sections.push(toWeChatMarkdown(title));
   if (body !== '') sections.push(toWeChatMarkdown(body));
   if (delivery.interaction) {
     const interaction = renderInteraction(delivery.interaction);

@@ -28,6 +28,24 @@ test('标题与正文保留 Markdown（客户端原生渲染）', () => {
   );
 });
 
+test('回应主人消息的交付只发正文：一问一答不带标题', () => {
+  assert.equal(
+    composeDeliveryText(delivery({ title: '回复', body: '明天晴，12°C', inReplyTo: 'mid-1' })),
+    '明天晴，12°C',
+  );
+});
+
+test('主动推送才带标题：主人要知道这条是什么', () => {
+  assert.equal(
+    composeDeliveryText(delivery({ title: '长任务完成「周报」', body: '已完成' })),
+    '长任务完成「周报」\n\n已完成',
+  );
+});
+
+test('回应主人消息但正文为空时仍发标题：宁可多余，也不能发一条空消息', () => {
+  assert.equal(composeDeliveryText(delivery({ title: '回复', body: '', inReplyTo: 'mid-1' })), '回复');
+});
+
 test('表格、链接、H1-H4、引用、分隔线、代码原样透传', () => {
   const source = [
     '# 一级标题',

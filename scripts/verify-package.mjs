@@ -98,13 +98,22 @@ if (!Array.isArray(manifest.dsh?.client?.inject) || manifest.dsh.client.inject.l
 }
 if (manifest.type !== 'module') fail("package.json 的 type 必须是 'module'");
 
-// 3. 禁止把宿主内部包写成依赖（第二份副本会让 Host 的 Symbol 查表失效）
-const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
-for (const field of dependencyFields) {
-  for (const dep of Object.keys(manifest[field] ?? {})) {
-    if (dep.startsWith('@deepseek-ai/')) {
-      fail(`${field} 里不能出现宿主内部包：${dep}`);
-    }
+// 3. 零运行时依赖（ADR-0001）：运行时依赖字段必须为空，devDependencies 只放
+//    构建与类型工具——「顺手引个库」必须在这里翻车，不能只靠人肉评审。
+//    宿主内部包（第二份副本会让 Host 的 Symbol 查表失效）在任何字段都禁止。
+const RUNTIME_FIELDS = ['dependencies', 'peerDependencies', 'optionalDependencies'];
+const DEV_ALLOWLIST = new Set(['typescript', 'esbuild', '@types/node', '@types/react']);
+for (const field of RUNTIME_FIELDS) {
+  const deps = Object.keys(manifest[field] ?? {});
+  if (deps.length > 0) {
+    fail(`${field} 必须为空（零运行时依赖）：${deps.join(', ')}；协议实现自写，不引第三方库`);
+  }
+}
+for (const dep of Object.keys(manifest.devDependencies ?? {})) {
+  if (dep.startsWith('@deepseek-ai/')) {
+    fail(`devDependencies 里不能出现宿主内部包：${dep}`);
+  } else if (!DEV_ALLOWLIST.has(dep)) {
+    fail(`devDependencies 出现白名单外的包：${dep}（新增开发依赖需先评审并更新本白名单）`);
   }
 }
 
@@ -243,39 +252,44 @@ if (!(await exists('lib/src/host/cli.js'))) {
 
 // 12. 真实打包清单：`files` 写错（glob 拼错、目录改名）只有 dry-run 能发现。
 //     `--ignore-scripts` 避免 prepack 又把 lib/ 重建一遍。
-const packed = (() => {
-  const npmCli = process.env.npm_execpath;
-  if (!npmCli) return null;
-  try {
-    const result = spawnSync(process.execPath, [npmCli, 'pack', '--dry-run', '--json', '--ignore-scripts'], {
-      cwd: root,
-      encoding: 'utf8',
-    });
-    if (result.status !== 0) return null;
-    return JSON.parse(result.stdout).pop() ?? null;
-  } catch {
-    return null;
-  }
-})();
-if (!packed) {
-  // 环境里拿不到 npm CLI 时不算失败，只是少一层校验——把判断权留给上面几项。
-  process.stdout.write('提示：未能执行 npm pack --dry-run，跳过真实打包清单校验\n');
+//     环境里没有 npm CLI 才降级为跳过；跑了但失败/输出坏掉必须 fail，
+//     否则「files 写错」这种 step 12 想抓的场景会被当成环境问题放过。
+const npmCli = process.env.npm_execpath;
+if (!npmCli) {
+  process.stdout.write('提示：环境里没有 npm CLI，跳过真实打包清单校验\n');
 } else {
-  const shipped = new Set(packed.files.map((file) => file.path));
-  for (const must of [
-    'lib/index.js',
-    'lib/client.js',
-    'bin/dsh-wechat-send.mjs',
-    'cordis.patch.yml',
-    'locale/zh.json',
-    'locale/en.json',
-    'assets/icon.svg',
-  ]) {
-    if (!shipped.has(must)) fail(`真实打包清单缺少：${must}`);
-  }
-  for (const path of shipped) {
-    if (/^(src|test|scripts|docs\/local)\//.test(path) || /^tsconfig.*\.json$/.test(path)) {
-      fail(`真实打包清单里混进了不该发布的文件：${path}`);
+  const result = spawnSync(process.execPath, [npmCli, 'pack', '--dry-run', '--json', '--ignore-scripts'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    const firstLine = String(result.stderr ?? '').split('\n').find((line) => line.trim() !== '') ?? '';
+    fail(`npm pack --dry-run 失败：${firstLine || result.error?.message || '未知原因'}`);
+  } else {
+    let packed = null;
+    try {
+      packed = JSON.parse(result.stdout).pop() ?? null;
+    } catch (error) {
+      fail(`npm pack --dry-run 输出不是合法 JSON：${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (packed) {
+      const shipped = new Set(packed.files.map((file) => file.path));
+      for (const must of [
+        'lib/index.js',
+        'lib/client.js',
+        'bin/dsh-wechat-send.mjs',
+        'cordis.patch.yml',
+        'locale/zh.json',
+        'locale/en.json',
+        'assets/icon.svg',
+      ]) {
+        if (!shipped.has(must)) fail(`真实打包清单缺少：${must}`);
+      }
+      for (const path of shipped) {
+        if (/^(src|test|scripts|docs\/local)\//.test(path) || /^tsconfig.*\.json$/.test(path)) {
+          fail(`真实打包清单里混进了不该发布的文件：${path}`);
+        }
+      }
     }
   }
 }

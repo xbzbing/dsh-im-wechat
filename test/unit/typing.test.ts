@@ -126,12 +126,18 @@ test('getconfig 成功但没有 ticket：按退避重试，不按 24 小时缓�
 });
 
 test('没有可用客户端或未启用时什么也不发', async () => {
+  const noClientApi = fakeApi();
   const noClient = makeTyping({ api: null });
   noClient.indicator.start('owner-1');
-  const disabled = makeTyping({ api: fakeApi().api, enabled: false });
+  const disabledApi = fakeApi();
+  const disabled = makeTyping({ api: disabledApi.api, enabled: false });
   disabled.indicator.start('owner-1');
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(disabled.errors.length, 0);
+  // 「什么也不发」要有断言钉住：复用同一实例记账，确认既没取票也没发状态。
+  assert.equal(disabledApi.configCalls.length, 0, '未启用时不打 getconfig');
+  assert.equal(disabledApi.typingCalls.length, 0, '未启用时不发 sendtyping');
+  assert.equal(noClientApi.configCalls.length, 0, '没客户端时不打 getconfig');
   noClient.indicator.stopAll();
   disabled.indicator.stopAll();
 });

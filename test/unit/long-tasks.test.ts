@@ -167,7 +167,7 @@ test('失败回合标注执行失败；没有标题时用「未命名会话」',
 
 test('失败不设门槛：短回合也提醒，标题写明任务失败', async () => {
   for (const minutes of [1, 15]) {
-    for (const kind of ['error', 'aborted'] as const) {
+    for (const kind of ['error', 'aborted', 'blocked'] as const) {
       const h = harness();
       h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
       h.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind, error: { message: 'Connection error.' } } }, minutes * 60_000));
@@ -178,6 +178,24 @@ test('失败不设门槛：短回合也提醒，标题写明任务失败', async
       assert.match(h.sent[0], /原因：Connection error\./);
     }
   }
+});
+
+test('max-tokens 按完成门槛走：关掉开关不提醒，超阈值才提醒', async () => {
+  // max-tokens 不是失败：立刻提醒的名单里没有它（AGENTS 判据，缺测会把分类式改坏）。
+  const off = harness();
+  off.notifier.configure(false);
+  off.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  off.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'max-tokens' } }, 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(off.sent.length, 0, '关掉开关后 max-tokens 按完成处理，不提醒');
+
+  const long = harness();
+  long.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  long.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'max-tokens' } }, 40 * 60_000));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(long.sent.length, 1, '超阈值的 max-tokens 按完成提醒');
+  assert.match(long.sent[0], /结果：已完成/);
+  assert.equal(long.sent[0].includes('任务失败'), false);
 });
 
 test('失败不受「主人在这一轮里插过话」影响；关掉提醒开关也照发', async () => {

@@ -25,8 +25,14 @@ function harness(): Harness {
       calls.push(`code:${code}`);
       return { phase: 'waiting', refreshed: 0 };
     },
-    cancelLogin: async () => ({ phase: 'cancelled', refreshed: 0 }),
-    logout: async () => ({ contract: 1, loggedIn: false }),
+    cancelLogin: async () => {
+      calls.push('cancelLogin');
+      return { phase: 'cancelled', refreshed: 0 };
+    },
+    logout: async () => {
+      calls.push('logout');
+      return { contract: 1, loggedIn: false };
+    },
     setEnabled: async (enabled: boolean) => {
       calls.push(`enabled:${enabled}`);
       return { contract: 1, enabled };
@@ -129,6 +135,14 @@ test('登录动作转发给运行期', async () => {
   await call(h, envelope(ENDPOINTS.SUPERAGENT_SET, { enabled: false }));
   await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: 45 }));
   assert.deepEqual(h.calls, ['startLogin', 'code: 123456 ', 'enabled:false', 'superagent:false', 'longtask:45']);
+});
+
+test('登出与取消登录两个端点也转发给运行期', async () => {
+  // 这两个 case 标签写错不会有别的测试红：登出是清登录态的用户可见动作。
+  const h = harness();
+  await call(h, envelope(ENDPOINTS.LOGOUT));
+  await call(h, envelope(ENDPOINTS.LOGIN_CANCEL));
+  assert.deepEqual(h.calls, ['logout', 'cancelLogin']);
 });
 
 test('独立模式设置转发给运行期，非法值在边界挡住', async () => {

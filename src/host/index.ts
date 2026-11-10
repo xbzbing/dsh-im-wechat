@@ -18,13 +18,13 @@ import type { PluginContext } from './host-context.ts';
 import type { HostAgents } from './host-agents.ts';
 import { registerPanelRpc } from './panel-rpc.ts';
 import { WeixinRuntime } from './runtime.ts';
-import type { RuntimeStatus } from './runtime.ts';
+import type { RuntimeStatus } from './runtime-status.ts';
 import { BridgeBinder, installBridgeBinder } from './superagent/link.ts';
 
 export type { LoginStateView } from './state/login-state.ts';
 export type { PluginConfig, PluginContext };
 export type { RuntimeStatus };
-export { HOST_CONTRACT } from './runtime.ts';
+export { HOST_CONTRACT } from './runtime-status.ts';
 export { ENDPOINTS, RPC_PATH } from './panel-rpc.ts';
 
 export const name = 'dsh-im-wechat';

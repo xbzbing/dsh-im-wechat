@@ -6,20 +6,21 @@
  * 同一套 `#connect` / `#disconnect`，避免出现半连接状态。
  *
  * 这里不解析任何命令、不判断身份：入站消息转换成草稿后原样交给核心（AGENTS.md）。
+ *
+ * 本文件只留生命周期与装配；收消息流水线在 `inbound-pipeline.ts`，状态视图与
+ * 契约版本在 `runtime-status.ts`（AGENTS.md 文件规模规则）。
  */
 
 import { DEFAULT_CDN_BASE_URL, createApi } from './ilink/api.ts';
 import type { ILinkApi } from './ilink/api.ts';
 import { LoginController } from './ilink/login.ts';
 import type { LoginSnapshot } from './ilink/login.ts';
-import { PollLoop } from './ilink/poll.ts';
-import type { PollHealth } from './ilink/poll.ts';
 import { SessionGuard } from './ilink/session-guard.ts';
-import { toOwnerMessageDraft } from './inbound.ts';
-import { messageText } from './ilink/identity.ts';
-import type { WeixinMessage } from './ilink/types.ts';
 import { messageOf } from './host-context.ts';
 import { OwnerChannel } from './owner-channel.ts';
+import { InboundPipeline } from './inbound-pipeline.ts';
+import { HOST_CONTRACT, listWorkspaces } from './runtime-status.ts';
+import type { RuntimeDeps, RuntimeLogger, RuntimeStatus, WorkspaceCatalog, WorkspaceRegistry } from './runtime-status.ts';
 import { TypingIndicator } from './typing.ts';
 import { QuestionBroker } from './questions.ts';
 import type { QuestionNext, QuestionRequest } from './questions.ts';
@@ -47,65 +48,7 @@ import {
 import type { BusyMode, PluginConfig } from './config.ts';
 import { CHANNEL_VERSION, PLUGIN_VERSION } from '../shared/version.ts';
 
-/** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 3;
-
 const MAX_ERRORS = 5;
-
-/** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
-export interface WorkspaceRegistry {
-  list(): readonly { id?: unknown; title?: unknown; path?: unknown }[];
-}
-
-export interface RuntimeLogger {
-  info?(...args: unknown[]): unknown;
-  warn?(...args: unknown[]): unknown;
-  error?(...args: unknown[]): unknown;
-}
-
-export interface RuntimeStatus {
-  contract: number;
-  version: string;
-  enabled: boolean;
-  /** 是否接入「我的超级助理」。关掉后插件自带的问题与长任务提醒接管。 */
-  superagent: boolean;
-  /** 自有功能（问题提醒、长任务提醒）是否生效。 */
-  ownFeatures: boolean;
-  /** 登录态里是否记录了扫码的微信用户（没记录就无法确认主人，自有提醒会静默失效）。 */
-  ownerKnown: boolean;
-  /** 等待主人作答的问题数。 */
-  pendingQuestions: number;
-  /** 正在跟踪的回合数（长任务提醒用）。 */
-  trackingTasks: number;
-  /** 长任务提醒阈值（分钟）：回合超过它才提醒。 */
-  longTaskThresholdMinutes: number;
-  /** 独立模式（未接入核心）的直连会话状态（ADR-0009）。 */
-  direct: {
-    bound: boolean;
-    sessionId?: string;
-    workspaceId: string;
-    busyMode: BusyMode;
-    running: boolean;
-    available: boolean;
-  };
-  loggedIn: boolean;
-  accountTail?: string;
-  /** 上次扫码成功的时间；面板的「登录时间」用它。 */
-  loggedInAt?: number;
-  login: LoginSnapshot;
-  health: BridgeHealth;
-  bridge: { registered: boolean; id?: string; features: string[] };
-  lastError?: { at: number; message: string };
-}
-
-export interface RuntimeDeps {
-  config?: unknown;
-  logger?: RuntimeLogger;
-  fetch?: typeof globalThis.fetch;
-  now?: () => number;
-  /** 测试注入：造协议客户端。 */
-  createApi?: (options: { baseUrl: string; token?: string }) => ILinkApi;
-}
 
 export class WeixinRuntime {
   readonly #config: PluginConfig;
@@ -122,13 +65,12 @@ export class WeixinRuntime {
   readonly #loginController: LoginController;
   readonly #owner: OwnerChannel;
   readonly #typing: TypingIndicator;
+  readonly #pipeline: InboundPipeline;
 
   #binder: BridgeBinder | null = null;
   #bridge: WeixinBridge | null = null;
   #api: ILinkApi | null = null;
   #loginState: LoginState | null = null;
-  #pollAbort: AbortController | null = null;
-  #pollTask: Promise<void> | null = null;
   #health: BridgeHealth = { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
   #errors: { at: number; message: string }[] = [];
   #enabled = true;
@@ -221,6 +163,38 @@ export class WeixinRuntime {
       verifyPin: this.#config.verifyPin === true,
       onConfirmed: (state) => this.#handleConfirmed(state),
     });
+    this.#pipeline = new InboundPipeline({
+      enabled: () => this.#enabled,
+      stopped: () => this.#stopped,
+      connection: () => {
+        const api = this.#api;
+        const state = this.#loginState;
+        return api !== null && state !== null ? { api, account: state.account } : null;
+      },
+      cursor: this.#cursorStore,
+      contextTokens: this.#tokenStore,
+      guard: this.#guard,
+      logger: this.#logger,
+      now: this.#now,
+      fetch: this.#fetch,
+      cdnBaseUrl: this.#config.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
+      bridge: () => this.#bridge,
+      binder: () => this.#binder,
+      ownFeaturesActive: () => this.#ownFeaturesActive(),
+      isOwner: (sender) => this.#owner.isOwner(sender),
+      replyQuestion: (text) => this.#questions.reply(text),
+      superagentEnabled: () => this.#superagent,
+      typingStart: (sender) => this.#typing.start(sender),
+      submitDirect: (sender, text) => {
+        void this.#direct.submit(sender, text).catch((error: unknown) => {
+          this.#logger.warn?.('独立模式处理失败', messageOf(error));
+        });
+      },
+      setHealth: (health) => {
+        this.#health = health;
+      },
+      noteError: (message) => this.#noteError(message),
+    });
   }
 
   get dir(): string {
@@ -251,23 +225,8 @@ export class WeixinRuntime {
   }
 
   /** 面板的工作区候选；宿主没有这个服务时 available=false，面板显示原因。 */
-  workspaces(): { items: { id: string; title: string; path: string }[]; available: boolean; reason?: string } {
-    const registry = this.#workspaceRegistry;
-    if (!registry || typeof registry.list !== 'function') {
-      return { items: [], available: false, reason: '宿主不提供工作区服务' };
-    }
-    try {
-      const items = registry.list().flatMap((workspace) => {
-        const id = typeof workspace?.id === 'string' ? workspace.id : '';
-        if (id === '') return [];
-        const title = typeof workspace.title === 'string' && workspace.title.trim() !== '' ? workspace.title.trim() : id;
-        const path = typeof workspace.path === 'string' ? workspace.path : '';
-        return [{ id, title, path }];
-      });
-      return { items, available: true };
-    } catch {
-      return { items: [], available: false, reason: '读取宿主工作区失败' };
-    }
+  workspaces(): WorkspaceCatalog {
+    return listWorkspaces(this.#workspaceRegistry);
   }
 
   /** `user-questions/request` 监听器。 */
@@ -333,7 +292,7 @@ export class WeixinRuntime {
     this.#typing.stopAll();
     this.#questions.close();
     this.#longTasks.configure(false);
-    await this.#stopPolling();
+    await this.#pipeline.stop();
     this.#api = null;
     this.#binder?.bind(null);
     this.#bridge = null;
@@ -415,7 +374,7 @@ export class WeixinRuntime {
   async logout(): Promise<RuntimeStatus> {
     const account = this.#loginState?.account;
     await this.#loginController.cancel();
-    await this.#stopPolling();
+    await this.#pipeline.stop();
     this.#typing.stopAll();
     this.#api = null;
     this.#bridge = null;
@@ -472,9 +431,9 @@ export class WeixinRuntime {
   async setEnabled(enabled: boolean): Promise<RuntimeStatus> {
     this.#enabled = enabled;
     await this.#localConfig.save({ enabled });
-    if (enabled) this.#startPolling();
+    if (enabled) this.#pipeline.start();
     else {
-      await this.#stopPolling();
+      await this.#pipeline.stop();
       this.#typing.stopAll();
     }
     this.#syncOwnFeatures(enabled ? '插件已启用，提问交回 Web 端' : '插件已停用，提问交回 Web 端');
@@ -486,7 +445,7 @@ export class WeixinRuntime {
     this.#errors = [];
     this.#loginState = state;
     await this.#tokenStore.hydrate(state.account);
-    await this.#stopPolling();
+    await this.#pipeline.stop();
     this.#connect(state);
   }
 
@@ -509,115 +468,8 @@ export class WeixinRuntime {
       cdnBaseUrl: this.#config.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
     });
     this.#binder?.bind(this.#superagent ? this.#bridge : null);
-    this.#startPolling();
+    this.#pipeline.start();
     this.#syncOwnFeatures('已切换为接入我的超级助理，提问交回 Web 端');
-  }
-
-  #startPolling(): void {
-    if (this.#stopped) return;
-    const api = this.#api;
-    const state = this.#loginState;
-    if (!this.#enabled || !api || !state || this.#pollTask) return;
-    const abort = new AbortController();
-    this.#pollAbort = abort;
-    const loop = new PollLoop({
-      api,
-      account: state.account,
-      cursor: this.#cursorStore,
-      contextTokens: this.#tokenStore,
-      guard: this.#guard,
-      onMessage: (message) => this.#handleInbound(message, abort.signal),
-      onHealth: (health) => this.#handlePollHealth(health),
-      logger: this.#logger,
-    });
-    this.#pollTask = loop
-      .run(abort.signal)
-      .catch((error: unknown) => {
-        if (abort.signal.aborted) return;
-        this.#noteError(`轮询异常退出：${messageOf(error)}`);
-        this.#health = { state: 'down', code: 'other', reason: messageOf(error) };
-      })
-      .finally(() => {
-        this.#pollTask = null;
-        this.#pollAbort = null;
-      });
-    void api.notifyStart().catch(() => undefined);
-    this.#health = { state: 'ok' };
-  }
-
-  async #stopPolling(): Promise<void> {
-    this.#pollAbort?.abort();
-    await this.#pollTask;
-    this.#pollTask = null;
-    this.#pollAbort = null;
-  }
-
-  /** 入站：转换成草稿后交给核心；核心不在就不回话，也不丢弃登录态。 */
-  async #handleInbound(message: WeixinMessage, signal: AbortSignal): Promise<void> {
-    const bridge = this.#bridge;
-    const binder = this.#binder;
-    if (!bridge) return;
-    const sender = typeof message.from_user_id === 'string' ? message.from_user_id : '';
-
-    // 自有功能先认领：这条文本可能是主人在回答微信里的问题。
-    // 只认已确认主人的消息——陌生人的文本绝不能把主人的问题答掉。
-    if (this.#ownFeaturesActive() && this.#owner.isOwner(sender)) {
-      const text = messageText(message.item_list);
-      if (text.trim() !== '' && this.#questions.reply(text)) return;
-    }
-
-    // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；
-    // 没配会话控制器、或不是主人时照旧到此为止。
-    if (!this.#superagent || !binder) {
-      if (!this.#ownFeaturesActive()) return;
-      if (!this.#owner.isOwner(sender)) return;
-      const text = messageText(message.item_list);
-      if (text.trim() === '') return;
-      this.#typing.start(sender);
-      void this.#direct.submit(sender, text).catch((error: unknown) => {
-        this.#logger.warn?.('独立模式处理失败', messageOf(error));
-      });
-      return;
-    }
-    const ownerLookup = bridge.ownerLookup;
-    const draft = await toOwnerMessageDraft(message, {
-      account: bridge.account,
-      cdnBaseUrl: this.#config.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
-      imagesEnabled: bridge.imagesEnabled,
-      ...(ownerLookup ? { senderIsOwner: ownerLookup } : {}),
-      ...(this.#fetch ? { fetch: this.#fetch } : {}),
-      signal,
-      logger: this.#logger,
-      now: this.#now,
-    });
-    if (!draft) return;
-    const result = await binder.receive(draft);
-    if (result === null) {
-      // 「核心不在」是独立安装的常态，不记账；「服务在但桥没注册上」必须记账，
-      // 否则核心已装已开时每条消息都无声消失（registrationError 是唯一线索）。
-      const failure = binder.registrationError;
-      if (failure !== undefined) this.#noteError(`微信桥注册核心失败，入站暂未交付：${failure}`);
-      return;
-    }
-    if (result.accepted === false) {
-      // 拒收原因是核心的判断（不是主人、格式不合法……），桥只记账不回话。
-      this.#noteError(`核心拒收入站消息：${result.reason}`);
-      return;
-    }
-    // 核心受理了：大模型开始思考，微信那头显示「正在输入」（ADR-0007）。
-    // 拒收（非主人、格式不合法）不开启——陌生人触发不了机器人状态。
-    this.#typing.start(sender);
-  }
-
-  #handlePollHealth(health: PollHealth): void {
-    this.#health = health.state === 'ok'
-      ? { state: 'ok' }
-      : {
-        state: health.state,
-        ...(health.code ? { code: health.code } : {}),
-        ...(health.reason ? { reason: health.reason } : {}),
-      };
-    if (health.state !== 'ok' && health.reason) this.#noteError(health.reason);
   }
 
   #noteError(message: string): void {

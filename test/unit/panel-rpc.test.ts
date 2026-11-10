@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ENDPOINTS, RPC_PATH, registerPanelRpc } from '../../src/host/panel-rpc.ts';
-import { HOST_CONTRACT } from '../../src/host/runtime.ts';
+import { HOST_CONTRACT } from '../../src/host/runtime-status.ts';
 import type { PanelRoute, PluginContext } from '../../src/host/host-context.ts';
 import { REQUIRED_CONTRACT } from '../../src/client/constants.ts';
 

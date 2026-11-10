@@ -170,12 +170,22 @@ export class LoginController {
     if (this.#running || this.#starting) return this.snapshot();
     this.#starting = true;
     this.#reset();
+    // 取消可能落在取码的 await 里：控制器同步建好，那个窗口里的 cancel() 才打得到标；
+    // 取码回来先看标，取消了就不再起状态机（否则会跑完整个登录甚至落盘）。
+    const abort = new AbortController();
+    this.#abort = abort;
     try {
       const api = this.#options.apiFactory(DEFAULT_BASE_URL);
       const ready = await this.#requestQrCode(api);
-      if (!ready) return this.snapshot();
-      const abort = new AbortController();
-      this.#abort = abort;
+      if (abort.signal.aborted) {
+        this.#abort = null;
+        this.#phase = 'cancelled';
+        return this.snapshot();
+      }
+      if (!ready) {
+        this.#abort = null;
+        return this.snapshot();
+      }
       this.#running = this.#run(api, abort.signal).finally(() => {
         this.#running = null;
         this.#abort = null;

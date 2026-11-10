@@ -368,3 +368,48 @@ test('已经在登录中时重复 start 不另起流程', async () => {
     await rm(h.dir, { recursive: true, force: true });
   }
 });
+
+test('取二维码期间取消：状态机不再启动，登录以 cancelled 收尾', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-login-cancel-'));
+  const store = new LoginStateStore({ dir });
+  let signalRequested!: () => void;
+  const requested = new Promise<void>((resolve) => {
+    signalRequested = resolve;
+  });
+  let releaseQr!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseQr = resolve;
+  });
+  let statusCalls = 0;
+  const api = {
+    async getBotQrCode() {
+      signalRequested();
+      await gate;
+      return { qrcode: 'q-1', qrcode_img_content: 'https://weixin.qq.com/x/q-1' };
+    },
+    async getQrStatus() {
+      statusCalls += 1;
+      return { status: 'wait' };
+    },
+  } as unknown as ILinkApi;
+  const controller = new LoginController({
+    apiFactory: () => api,
+    store,
+    now: () => Date.now(),
+    // 让出宏任务：状态机的等待循环才能与测试的断言交替执行。
+    sleep: async () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+  });
+  try {
+    const startTask = controller.start();
+    await requested;
+    await controller.cancel();
+    releaseQr();
+    await startTask;
+    assert.equal(controller.snapshot().phase, 'cancelled');
+    assert.equal(controller.done, true);
+    assert.equal(statusCalls, 0, '取消后不该起扫码状态机');
+  } finally {
+    await controller.cancel();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

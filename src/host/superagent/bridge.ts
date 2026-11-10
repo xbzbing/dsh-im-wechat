@@ -66,6 +66,20 @@ export interface WeixinBridgeOptions {
   cdnBaseUrl?: string;
   /** 上传图片用的 fetch；测试注入，运行时用全局 fetch。 */
   uploadFetch?: typeof globalThis.fetch;
+  /** 分条节流的等待；测试注入以免真实等待声明窗口。 */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** 进度表只放最近 100 条，避免长时间运行后无界增长。 */
+const PROGRESS_LIMIT = 100;
+
+function rememberBounded(map: Map<string, number>, key: string, value: number): void {
+  map.set(key, value);
+  while (map.size > PROGRESS_LIMIT) {
+    const oldest = map.keys().next();
+    if (oldest.done) break;
+    map.delete(oldest.value);
+  }
 }
 
 export class WeixinBridge implements BridgeProvider {
@@ -91,6 +105,7 @@ export class WeixinBridge implements BridgeProvider {
   readonly #imageProgress = new Map<string, number>();
   readonly #cdnBaseUrl: string;
   readonly #uploadFetch: typeof globalThis.fetch | undefined;
+  readonly #sleep: (ms: number) => Promise<void>;
   #handle: BridgeHandle | null = null;
   #features: ReadonlySet<string> = new Set();
 
@@ -107,6 +122,7 @@ export class WeixinBridge implements BridgeProvider {
     this.#onDelivered = options.onDelivered;
     this.#cdnBaseUrl = options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL;
     this.#uploadFetch = options.uploadFetch;
+    this.#sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     this.capabilities = {
       // 微信客户端原生渲染 Markdown（表格、代码块、标题都支持），见 ADR-0008。
       markdown: 'full',
@@ -188,7 +204,7 @@ export class WeixinBridge implements BridgeProvider {
           { cdnBaseUrl: this.#cdnBaseUrl, ...(this.#uploadFetch ? { fetch: this.#uploadFetch } : {}) },
         );
         await sendImage(api, { to: recipient, upload, contextToken });
-        this.#imageProgress.set(delivery.id, sent + 1);
+        rememberBounded(this.#imageProgress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
         if (failure.certainty === 'uncertain') {
@@ -245,17 +261,30 @@ export class WeixinBridge implements BridgeProvider {
     }
     let sent = this.#progress.get(delivery.id) ?? 0;
     let lastClientId: string | undefined;
+    // 桥自己执行自己声明的配额：核心只见一次 deliver，按交付节流管不到分条扇出。
+    const quota = this.capabilities.quotas?.[0];
 
     for (; sent < parts.length; sent += 1) {
+      if (quota !== undefined && sent > 0 && sent % quota.max === 0) {
+        await this.#sleep(quota.windowMs);
+        // 等待期间可能被停用/暂停：复查，进度保留，核心重试时断点续发。
+        if (this.#isEnabled && !this.#isEnabled()) {
+          return { ...base, status: 'failed', errorCode: 'other', error: '插件已停用' };
+        }
+        if (this.#guard.isPaused(this.account)) {
+          return { ...base, status: 'failed', errorCode: 'auth-expired', error: 'token 已失效，已暂停发送' };
+        }
+      }
       try {
         const result = await sendText(api, { to: recipient, text: parts[sent], contextToken });
         lastClientId = result.clientId;
-        this.#remember(delivery.id, sent + 1);
+        rememberBounded(this.#progress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
         if (failure.certainty === 'uncertain') {
-          // 结果未知：核心不重发，进度已无意义。
+          // 结果未知：核心不重发，进度与图片断点都已无意义，清掉不留死条目。
           this.#progress.delete(delivery.id);
+          this.#imageProgress.delete(delivery.id);
           this.#logger?.warn?.(`微信发送结果未知（${delivery.id}）`, failure.message);
           return { ...base, status: 'uncertain', error: failure.message };
         }
@@ -274,16 +303,6 @@ export class WeixinBridge implements BridgeProvider {
       status: 'sent',
       ...(lastClientId ? { bridgeMessageId: lastClientId } : {}),
     };
-  }
-
-  /** 进度表只放最近 100 条，避免长时间运行后无界增长。 */
-  #remember(deliveryId: string, sentParts: number): void {
-    this.#progress.set(deliveryId, sentParts);
-    while (this.#progress.size > 100) {
-      const oldest = this.#progress.keys().next();
-      if (oldest.done) break;
-      this.#progress.delete(oldest.value);
-    }
   }
 
   /** 被拒时记下 token 年龄：收紧声明有效期的依据；从磁盘灌进来的年龄未知。 */

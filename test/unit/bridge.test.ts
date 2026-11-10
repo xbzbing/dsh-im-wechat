@@ -53,6 +53,8 @@ async function harness(
     uploadStatus?: number;
     uploadParam?: string;
     uploadFails?: boolean;
+    maxText?: number;
+    sleep?: (ms: number) => Promise<void>;
   } = {},
 ): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-bridge-'));
@@ -90,8 +92,9 @@ async function harness(
     api: () => (options.noApi ? null : api),
     contextTokens: tokens,
     guard,
-    maxText: 20,
+    maxText: options.maxText ?? 20,
     ownerId: () => (options.noOwner ? undefined : OWNER),
+    ...(options.sleep ? { sleep: options.sleep } : {}),
     uploadFetch,
     logger: { warn: (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); } },
     ...(options.onDelivered ? { onDelivered: options.onDelivered } : {}),
@@ -168,6 +171,17 @@ test('闸门内不发送，回 auth-expired', async () => {
     assert.equal(receipt.errorCode, 'auth-expired');
     assert.equal(h.sent.length, 0);
     assert.equal(h.bridge.health().code, 'auth-expired');
+  });
+});
+
+test('单交付内分条按声明配额节流：每 10 条等一个窗口', async () => {
+  // 核心只见一次 deliver，分条扇出发生在桥内部——配额必须由桥自己执行。
+  const sleeps: number[] = [];
+  await withHarness({ maxText: 10, sleep: async (ms) => { sleeps.push(ms); } }, async (h) => {
+    const receipt = await h.bridge.deliver(delivery({ id: 'paced', title: '', body: 'x'.repeat(120) }));
+    assert.equal(receipt.status, 'sent');
+    assert.equal(h.sent.length, 12, '120 字按 10 字分 12 条');
+    assert.deepEqual(sleeps, [60_000], '第 10 条之后等一个声明窗口');
   });
 });
 

@@ -170,3 +170,63 @@ test('路由挂在 /api/<包名> 上，且只接受 POST', () => {
   assert.equal(h.route.path, `/api/${RPC_PATH}`);
   assert.deepEqual(h.route.methods, ['POST']);
 });
+
+test('热重载重叠：同路径只注册一次，旧实例清理不摘新实例的路由', async () => {
+  // 模拟宿主：同路径重复 register 抛错（与真实 connection.fetch 行为一致的那半边）。
+  const warnings: unknown[][] = [];
+  let registrations = 0;
+  let activeRoute: PanelRoute | null = null;
+  const face = {
+    register(route: PanelRoute) {
+      // 只计成功：第二次是尝试注册并被良性捕获（真实宿主对重复 path 抛错）。
+      if (registrations >= 1) throw new Error('path already registered');
+      registrations += 1;
+      activeRoute = route;
+      return () => {
+        activeRoute = null;
+      };
+    },
+  };
+  const makeCtx = (marker: string) => {
+    const cleanups: (() => void)[] = [];
+    const logger = { warn: (...args: unknown[]) => warnings.push(args) };
+    const ctx: PluginContext = {
+      logger,
+      effect: (execute: () => unknown) => {
+        const dispose = execute();
+        if (typeof dispose === 'function') cleanups.push(dispose as () => void);
+        return undefined;
+      },
+      connection: { fetch: face },
+    };
+    const runtime = { status: () => ({ marker }) } as never;
+    registerPanelRpc(ctx, { runtime, logger });
+    return { cleanups, marker };
+  };
+
+  const first = makeCtx('first');
+  const second = makeCtx('second');
+  assert.equal(registrations, 1, '同路径只该注册一次');
+  assert.ok(warnings.some((args) => String(args[0]).includes('接管现有路由')));
+
+  const route = activeRoute as PanelRoute | null;
+  assert.ok(route);
+  const fetchStatus = async (): Promise<unknown> => {
+    const response = await route.fetch(request(envelope(ENDPOINTS.STATUS)));
+    const body = (await response.json()) as { result: { value: { marker?: string } } };
+    return body.result.value.marker;
+  };
+  // 后装的实例接管 handler：请求由它服务。
+  assert.equal(await fetchStatus(), 'second');
+
+  // 重叠期旧实例先 dispose：路由必须还在，仍由新实例服务（这就是原 bug 的反面）。
+  for (const cleanup of first.cleanups) cleanup();
+  assert.notEqual(activeRoute, null, '旧实例清理不该摘掉路由');
+  assert.equal(await fetchStatus(), 'second');
+
+  // 新实例才是最后离场的：它清理后路由摘掉，兜底回 503。
+  for (const cleanup of second.cleanups) cleanup();
+  assert.equal(activeRoute, null);
+  const fallback = await route.fetch(request(envelope(ENDPOINTS.STATUS)));
+  assert.equal(fallback.status, 503);
+});

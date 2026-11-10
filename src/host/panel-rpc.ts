@@ -62,6 +62,30 @@ function payloadOf(payload: unknown): Record<string, unknown> {
   return (payload !== null && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
 }
 
+/**
+ * 进程级单例：同路径只注册一条**委托路由**，请求转给「当前活着的实例」。
+ *
+ * 热重载重叠期新实例先注册、旧实例后 dispose 时，旧实例若无条件调 off() 摘掉
+ * 的是新实例正依赖的路由（面板 404、只能重启恢复）。委托 + handler 替换之后：
+ * 旧实例释放时发现 handler 已被接手就不动路由，最后离场的实例才摘。
+ */
+interface PanelRouteSingleton {
+  handler: ((request: Request) => Response | Promise<Response>) | null;
+  /** 最近一次成功注册返回的 off：只有最后离场的实例才调它。 */
+  off: (() => void) | null;
+}
+
+const PANEL_ROUTE_SINGLETON = Symbol.for('dsh-im-wechat:panel-route');
+
+function panelRouteSingleton(): PanelRouteSingleton {
+  const globals = globalThis as unknown as Record<symbol, PanelRouteSingleton | undefined>;
+  const existing = globals[PANEL_ROUTE_SINGLETON];
+  if (existing) return existing;
+  const created: PanelRouteSingleton = { handler: null, off: null };
+  globals[PANEL_ROUTE_SINGLETON] = created;
+  return created;
+}
+
 async function handleEndpoint(
   runtime: WeixinRuntime,
   endpoint: string,
@@ -138,55 +162,87 @@ export function registerPanelRpc(
       logger.warn?.('面板 RPC 未注册：宿主未提供 connection.fetch.register');
       return;
     }
+    const state = panelRouteSingleton();
+
+    const handleRequest = async (request: Request): Promise<Response> => {
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+      const contentType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+      if (contentType !== 'application/json') {
+        return new Response('content type must be application/json', { status: 415 });
+      }
+      let envelope: RpcEnvelope | null;
+      try {
+        envelope = (await request.json()) as RpcEnvelope | null;
+      } catch {
+        return new Response('body is not JSON', { status: 400 });
+      }
+      const rpcId = typeof envelope?.rpcId === 'string' ? envelope.rpcId : 'invalid-request';
+      const call = envelope?.payload;
+      const invalid = envelope?.type !== 'client-request'
+        || typeof envelope?.rpcId !== 'string'
+        || envelope?.method !== RPC_PATH
+        || call === undefined || call === null || typeof call !== 'object'
+        || typeof call.method !== 'string';
+      if (invalid) return bad(rpcId, 'bad-request', '管理请求格式不合法');
+      try {
+        return ok(rpcId, await handleEndpoint(runtime, call.method as string, call.payload));
+      } catch (error) {
+        logger.warn?.(`面板 RPC 失败 endpoint=${String(call.method)}`, errorDetail(error));
+        const coded = typeof (error as CodedError | null)?.code === 'string';
+        // 只有自造的 coded 错误文案是给用户看的；未分类的内部错误不把
+        // 可能带本机路径的 message 漏到页面（与文件头声明一致）。
+        const code = coded ? (error as CodedError).code : 'internal';
+        return bad(rpcId, code, coded && error instanceof Error ? error.message : '面板操作失败');
+      }
+    };
+
     const route: PanelRoute = {
       path: `/api/${RPC_PATH}`,
       methods: ['POST'],
       requestBody: 'buffered',
       async fetch(request: Request): Promise<Response> {
-        if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
-        const contentType = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
-        if (contentType !== 'application/json') {
-          return new Response('content type must be application/json', { status: 415 });
-        }
-        let envelope: RpcEnvelope | null;
-        try {
-          envelope = (await request.json()) as RpcEnvelope | null;
-        } catch {
-          return new Response('body is not JSON', { status: 400 });
-        }
-        const rpcId = typeof envelope?.rpcId === 'string' ? envelope.rpcId : 'invalid-request';
-        const call = envelope?.payload;
-        const invalid = envelope?.type !== 'client-request'
-          || typeof envelope?.rpcId !== 'string'
-          || envelope?.method !== RPC_PATH
-          || call === undefined || call === null || typeof call !== 'object'
-          || typeof call.method !== 'string';
-        if (invalid) return bad(rpcId, 'bad-request', '管理请求格式不合法');
-        try {
-          return ok(rpcId, await handleEndpoint(runtime, call.method as string, call.payload));
-        } catch (error) {
-          logger.warn?.(`面板 RPC 失败 endpoint=${String(call.method)}`, errorDetail(error));
-          const code = typeof (error as CodedError | null)?.code === 'string'
-            ? (error as CodedError).code
-            : 'internal';
-          return bad(rpcId, code, error instanceof Error ? error.message : '面板操作失败');
-        }
+        const handler = state.handler;
+        if (!handler) return new Response('插件未运行', { status: 503 });
+        return handler(request);
       },
     };
+
+    const release = (): void => {
+      // handler 已被后到的实例接手：路由与 off 都不归我管，摘了就404。
+      if (state.handler !== handleRequest) return;
+      state.handler = null;
+      const off = state.off;
+      state.off = null;
+      if (typeof off === 'function') off();
+    };
+
+    const takeOver = (): void => {
+      state.handler = handleRequest;
+      try {
+        const off: unknown = face.register(route);
+        state.off = typeof off === 'function' ? (off as () => void) : null;
+      } catch (error) {
+        if (state.off) {
+          // 进程内已有本插件的同路径委托路由（热重载重叠期）：它委托给
+          // state.handler，这里只接管 handler，不再注册。
+          logger.warn?.('面板 RPC 同路径已注册，已接管现有路由', errorDetail(error));
+        } else {
+          logger.error?.('面板 RPC 注册失败', errorDetail(error));
+        }
+      }
+    };
+
     try {
       // 有 effect 就走生命周期：回调必须交回清理函数，否则卸载/重装时摘不掉旧路由。
       if (typeof scope.effect === 'function') {
         scope.effect(() => {
-          const off = face.register(route) as unknown;
-          return () => {
-            if (typeof off === 'function') (off as () => void)();
-          };
+          takeOver();
+          return release;
         }, 'dsh-im-wechat: 面板 RPC');
       } else {
-        face.register(route);
+        takeOver();
       }
     } catch (error) {
-      // 同路径已注册（插件另一份实例）不该让入站链路一起起不来。
       logger.error?.('面板 RPC 注册失败', errorDetail(error));
     }
   };

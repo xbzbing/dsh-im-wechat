@@ -12,8 +12,32 @@
 
 import { CliError, USAGE, createPorts, parseArgs, prepareImages, runCli } from './cli.ts';
 import type { CliPorts, PreparedImage } from './cli.ts';
-import { injectOptional, messageOf } from './host-context.ts';
+import { errorDetail, injectOptional, messageOf } from './host-context.ts';
 import type { PluginContext } from './host-context.ts';
+
+type CommandHandler = (invocation: CommandInvocation) => Promise<CommandOutcome> | CommandOutcome;
+
+/**
+ * 进程级单例：同名命令只注册一次，handler 可替换。
+ *
+ * 与面板 RPC 同一套热重载重叠期语义（见 panel-rpc.ts）：旧实例清理时若 handler
+ * 已被新实例接手就不动注册，最后离场的实例才注销命令。
+ */
+interface CommandSingleton {
+  handler: CommandHandler | null;
+  off: (() => void) | null;
+}
+
+const COMMAND_SINGLETON = Symbol.for('dsh-im-wechat:command');
+
+function commandSingleton(): CommandSingleton {
+  const globals = globalThis as unknown as Record<symbol, CommandSingleton | undefined>;
+  const existing = globals[COMMAND_SINGLETON];
+  if (existing) return existing;
+  const created: CommandSingleton = { handler: null, off: null };
+  globals[COMMAND_SINGLETON] = created;
+  return created;
+}
 
 /** 命令能拿到的宿主侧最小形状。 */
 export interface CommandScope extends PluginContext {
@@ -188,21 +212,57 @@ export function registerWeixinCommand(ctx: PluginContext, options: { dir: string
       return prepared;
     };
 
-    scope.effect?.(() => commands.register({
-      name: 'wechat',
-      description: '把文本或图片发到你的微信（收件人固定是扫码登录的主人）',
-      input: { hint: '正文｜status｜image <路径…>｜直接拖入图片', attachments: true },
-      recordInput: true,
-      handler: (invocation: CommandInvocation) => {
-        const attachments = invocation.attachments ?? [];
-        return runWeixinCommand(invocation, {
-          ports: createPorts({ dir: options.dir }),
-          ...(attachments.length > 0
-            ? { readAttachments: () => readAttachmentsFrom(attachments, invocation.signal) }
-            : {}),
+    const state = commandSingleton();
+    const handler: CommandHandler = (invocation) => {
+      const current = state.handler;
+      if (!current) return { kind: 'error', text: '插件未运行' };
+      return current(invocation);
+    };
+    const myHandler: CommandHandler = (invocation) => {
+      const attachments = invocation.attachments ?? [];
+      return runWeixinCommand(invocation, {
+        ports: createPorts({ dir: options.dir }),
+        ...(attachments.length > 0
+          ? { readAttachments: () => readAttachmentsFrom(attachments, invocation.signal) }
+          : {}),
+      });
+    };
+
+    const release = (): void => {
+      // handler 已被后到的实例接手：注册与 off 都不归我管。
+      if (state.handler !== myHandler) return;
+      state.handler = null;
+      const off = state.off;
+      state.off = null;
+      if (typeof off === 'function') off();
+    };
+
+    const takeOver = (): void => {
+      state.handler = myHandler;
+      try {
+        const off = commands.register({
+          name: 'wechat',
+          description: '把文本或图片发到你的微信（收件人固定是扫码登录的主人）',
+          input: { hint: '正文｜status｜image <路径…>｜直接拖入图片', attachments: true },
+          recordInput: true,
+          handler,
         });
-      },
-    }), 'dsh-im-wechat: /wechat 命令');
+        state.off = typeof off === 'function' ? off : null;
+      } catch (error) {
+        if (state.off) {
+          // 进程内已有本插件的同名命令（热重载重叠期）：它的 handler 委托给
+          // state.handler，这里只接管，不再注册。
+          base.logger?.warn?.('/wechat 同名命令已注册，已接管现有命令', errorDetail(error));
+        } else {
+          base.logger?.error?.('注册 /wechat 命令失败', errorDetail(error));
+        }
+      }
+    };
+
+    scope.effect?.(() => {
+      takeOver();
+      return release;
+    }, 'dsh-im-wechat: /wechat 命令');
   });
 }
 

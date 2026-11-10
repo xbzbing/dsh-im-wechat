@@ -181,3 +181,45 @@ test('registerWeixinCommand：没有 commands 服务时安静跳过', () => {
   const scope = { effect(execute: () => unknown) { execute(); } } as unknown as CommandScope;
   assert.doesNotThrow(() => registerWeixinCommand(scope, { dir: '/tmp/x' }));
 });
+
+test('热重载重叠：/wechat 重复注册不炸，先离场的实例不摘命令', () => {
+  const warnings: unknown[][] = [];
+  let registrations = 0;
+  let disposed = 0;
+  const face = {
+    register() {
+      // 只计成功：第二次是尝试注册并被良性捕获（真实宿主对同名命令抛错）。
+      if (registrations >= 1) throw new Error('command already registered');
+      registrations += 1;
+      return () => {
+        disposed += 1;
+      };
+    },
+  };
+  const makeCtx = () => {
+    const cleanups: (() => void)[] = [];
+    const scope = {
+      logger: { warn: (...args: unknown[]) => warnings.push(args) },
+      commands: face,
+      effect(execute: () => unknown) {
+        const dispose = execute();
+        if (typeof dispose === 'function') cleanups.push(dispose as () => void);
+      },
+    } as unknown as CommandScope;
+    registerWeixinCommand(scope, { dir: '/tmp/x' });
+    return { cleanups };
+  };
+
+  const first = makeCtx();
+  const second = makeCtx();
+  assert.equal(registrations, 1, '同名命令只该注册一次');
+  assert.equal(warnings.some((args) => String(args[0]).includes('接管')), true);
+
+  // 重叠期旧实例先清理：命令不能被摘掉（原 bug：先离场的把后到的资源清没了）。
+  for (const cleanup of first.cleanups) cleanup();
+  assert.equal(disposed, 0);
+
+  // 后到的实例才是最后离场的：它清理后命令真正注销。
+  for (const cleanup of second.cleanups) cleanup();
+  assert.equal(disposed, 1);
+});

@@ -8,6 +8,7 @@
 
 import { rm } from 'node:fs/promises';
 
+import { isAllowedApiUrl } from '../ilink/api.ts';
 import { loginStatePath } from './paths.ts';
 import { quarantineFile, readJsonIfPresent, writePrivateFile } from './files.ts';
 import type { StateLogger } from './files.ts';
@@ -52,6 +53,8 @@ export function parseLoginState(value: unknown): LoginState | null {
   if (!isNonEmptyString(record.botToken)) return null;
   if (!isNonEmptyString(record.account)) return null;
   if (!isNonEmptyString(record.baseUrl)) return null;
+  // baseUrl 是带 token 请求的目标，白名单只在这一处验：所有消费方（运行期、CLI）自动继承。
+  if (!isAllowedApiUrl(record.baseUrl.trim())) return null;
   if (typeof record.loggedInAt !== 'number' || !Number.isFinite(record.loggedInAt)) return null;
   return {
     version: LOGIN_STATE_VERSION,

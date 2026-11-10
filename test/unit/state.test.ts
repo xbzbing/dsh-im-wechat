@@ -100,6 +100,22 @@ test('parseLoginState 拒绝版本不符与缺字段', () => {
   assert.equal(parseLoginState({ version: 1, ...LOGIN, loggedInAt: 'x' }), null);
 });
 
+test('登录态 baseUrl 不在腾讯白名单时整份作废并隔离', async () => {
+  // baseUrl 是带 botToken 请求的目标：被改写的文件不能让 CLI/运行期把凭据打到第三方主机。
+  assert.equal(parseLoginState({ version: 1, ...LOGIN, baseUrl: 'https://evil.example.com' }), null);
+  assert.equal(parseLoginState({ version: 1, ...LOGIN, baseUrl: 'http://ilinkai.weixin.qq.com' }), null);
+  assert.equal(parseLoginState({ version: 1, ...LOGIN, baseUrl: 'not a url' }), null);
+  await withDir(async (dir) => {
+    const store = new LoginStateStore({ dir });
+    await store.save(LOGIN);
+    const { writeFile } = await import('node:fs/promises');
+    const broken = { ...LOGIN, baseUrl: 'https://evil.example.com' };
+    await writeFile(store.path, JSON.stringify({ version: 1, ...broken }), 'utf8');
+    assert.equal(await store.load(), null);
+    assert.equal(await store.load(), null);
+  });
+});
+
 test('游标按账号分文件保存与读取', async () => {
   await withDir(async (dir) => {
     const store = new SyncCursorStore({ dir });

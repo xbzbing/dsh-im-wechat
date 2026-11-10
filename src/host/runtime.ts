@@ -8,7 +8,7 @@
  * 这里不解析任何命令、不判断身份：入站消息转换成草稿后原样交给核心（AGENTS.md）。
  */
 
-import { DEFAULT_BASE_URL, DEFAULT_CDN_BASE_URL, createApi, isAllowedApiUrl } from './ilink/api.ts';
+import { DEFAULT_CDN_BASE_URL, createApi } from './ilink/api.ts';
 import type { ILinkApi } from './ilink/api.ts';
 import { LoginController } from './ilink/login.ts';
 import type { LoginSnapshot } from './ilink/login.ts';
@@ -492,9 +492,8 @@ export class WeixinRuntime {
 
   #connect(state: LoginState): void {
     if (this.#stopped) return;
-    // 基址是带 token 请求的目标：落盘的文件也可能被改过，用前再过一次白名单。
-    const baseUrl = isAllowedApiUrl(state.baseUrl) ? state.baseUrl : DEFAULT_BASE_URL;
-    this.#api = this.#createApi({ baseUrl, token: state.botToken });
+    // 基址白名单已在状态边界（parseLoginState）与登录写入时各验一次，这里不再复检。
+    this.#api = this.#createApi({ baseUrl: state.baseUrl, token: state.botToken });
     this.#guard.resume(state.account);
     this.#bridge = new WeixinBridge({
       account: state.account,

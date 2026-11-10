@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是 `dsh-im-wechat` 仓库的 agent 工作指南。动手前先读完本文件，再读 [docs/adr/README.md](docs/adr/README.md)。功能细节以代码与测试为准；**理由与背景以 ADR（`docs/adr/`）为准**，本文件只记操作规则与踩过的坑，不复制 ADR 与设计文档。
+本文件是 `dsh-im-wechat` 仓库的 agent 工作指南。动手前先读完本文件，再读 [docs/adr/README.md](docs/adr/README.md)。功能细节以代码与测试为准；**理由与背景以 ADR（`docs/adr/`）为准，外部协议事实以 `docs/protocol/` 为准**，本文件只记操作规则与踩过的坑，不复制 ADR 与设计文档。
 
 ## 项目定位
 
@@ -23,7 +23,9 @@
 | `src/shared/` | 跨上下文的纯函数：版本常量、二维码编码器 |
 | `test/unit/`、`test/fixtures/` | 单元测试与夹具 |
 | `scripts/` | `build.mjs`（host tsc + client esbuild）、`verify-package.mjs`（打包自洽校验）、`dev-bridge.mjs`（不开面板的真机自测） |
-| `docs/adr/` | 架构决策记录；`docs/local/` 只留本地，已 gitignore |
+| `docs/adr/` | 架构决策记录：选了哪条路、否决了什么、代价是什么 |
+| `docs/protocol/` | 外部协议事实：iLink 字段、微信客户端渲染、上游版本差异、真机实测 |
+| `docs/local/`、`docs/review/` | 只留本地，已 gitignore |
 
 依赖方向：协议类型 ← 领域与桥适配 ← 装配入口。`ilink/` 不感知超级助理，`superagent/` 不感知传输细节，两者在装配层接线。
 
@@ -31,23 +33,26 @@
 
 - TypeScript strict，`erasableSyntaxOnly`：不用 enum、namespace、参数属性；相对 import 写 `.ts` 后缀。
 - **零运行时依赖**：只用 Node 内置模块（`fetch`、`node:crypto` 等）；平台模块（`react`、`@deepseek-ai/*`）在 client 半 external。协议实现参考官方 `openclaw-weixin` 的接口定义自写，不把它或任何第三方插件代码作为依赖引入。
-- **不引用、不复制、不提及任何第三方 DSH 微信插件仓库**；协议事实以官方实现与实测为准，出处写进 ADR。
+- **不引用、不复制、不提及任何第三方 DSH 微信插件仓库**；协议事实以官方实现与实测为准，出处写进 `docs/protocol/`。
 - 宿主与核心服务一律用最小结构类型描述，不 import 宿主包与 `dsh-my-superagent` 的包。
 - 外部输入（协议帧、面板 RPC 参数、配置文件）在边界按 Schema 校验，领域内部不再做防御式判空。
 - 任何密钥、令牌、登录态不进日志、审计与面板快照；需要展示时只给「已设置」与状态。
 - 子进程一律 argv 数组、不经 shell。
 - 文件不超过约 500 行；超出先拆分再加功能。
 - **自有功能与核心互斥**：`ownFeatures = 启用 && 未接入核心 && 已登录`。接入核心时不发自己的提醒，否则同一条提醒会来两遍（ADR-0006）；新增任何「主动提醒主人」的能力都要先过这个判据。
+- **失败提醒不受开关影响**：长任务提醒的开关只关「完成」提醒；宿主 `error`、`blocked`、非用户原因的 `aborted` 一律立刻提醒，主人自己停的（`reason.kind === 'user'`）不提醒。关掉开关后仍会收到失败提醒是刻意的，不要当 bug 改；判据在 `src/host/long-tasks.ts` 与 `test/unit/long-tasks.test.ts`。
 - 面板 RPC 契约版本（`HOST_CONTRACT` / `REQUIRED_CONTRACT`）两半必须一致：加端点或改返回结构时一起递增，否则「新面板 + 旧 host」会打到不存在的端点。
 - 凭据与 `context_token` 不进日志、不进面板快照；面板只显示账号尾号（`accountTail`）。
 - 注释只写实现逻辑与不明显的约束，不写演进过程。
 
 ## 开发流程
 
-1. 关键决策先写 ADR（`docs/adr/NNNN-标题.md`，状态/背景/决策/后果四段）；新概念补进 ADR 索引。
-2. 先写失败的测试，再写实现，再重构。测试断言行为，不断言实现细节；修 bug 先写能复现的测试。
-3. 每完成几项功能，用 subagent 加载 `code-review-and-quality` 做隔离上下文的五轴评审（只读，不改文件）；评审结论全部处理，判断不修的写进 `docs/review/` 并说明理由（该目录 gitignore，不入库）。
-4. 按功能或模块分别提交。commit 用 Conventional Commits 前缀加中文：一行标题，正文只在有额外事实时写 2 到 4 行，只写最终实现。只本地提交，不推送。
+1. 关键决策先写 ADR（`docs/adr/NNNN-标题.md`，状态/背景/决策/后果四段）；新概念补进 ADR 索引。**准入判据：命中一条才写**——难逆转（选型、落盘位置、对外契约）、跨仓或跨进程契约、安全边界、有会被重新提一遍的否决方案。都不命中的单模块行为调整写进代码注释、测试与提交信息，不占 ADR 编号。
+2. 外部事实不写进 ADR：协议字段、客户端渲染、上游版本差异、真机实测放 `docs/protocol/`，变了就直接改那份；ADR 只留「选了哪条路、为什么、否决了什么、代价是什么」。
+3. 改决策要新开一篇取代旧的，两篇互相标注，索引改成「被 NNNN 修订」，旧篇正文不改；只是事实变了就改 `docs/protocol/`，不要动 ADR。
+4. 先写失败的测试，再写实现，再重构。测试断言行为，不断言实现细节；修 bug 先写能复现的测试。
+5. 每完成几项功能，用 subagent 加载 `code-review-and-quality` 做隔离上下文的五轴评审（只读，不改文件）；评审结论全部处理，判断不修的写进 `docs/review/` 并说明理由（该目录 gitignore，不入库）。
+6. 按功能或模块分别提交。commit 用 Conventional Commits 前缀加中文：一行标题，正文只在有额外事实时写 2 到 4 行，只写最终实现。只本地提交，不推送。
 
 ## 构建与验证
 

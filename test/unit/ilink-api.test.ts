@@ -224,6 +224,19 @@ test('扫码轮询解析状态字段', async () => {
   );
 });
 
+test('扫码轮询的 HTTP 错误消息不带查询串（PIN 不进日志与面板）', async () => {
+  const bad = (async () => new Response('bad gateway', { status: 502 })) as typeof globalThis.fetch;
+  const api = makeApi({ fetch: bad });
+  await assert.rejects(api.getQrStatus({ qrcode: 'q1', verifyCode: 'secret-pin' }), (error: unknown) => {
+    assert.ok(error instanceof ILinkError);
+    assert.equal(error.kind, 'http');
+    assert.match(error.message, /ilink\/bot\/get_qrcode_status/);
+    assert.equal(error.message.includes('verify_code'), false);
+    assert.equal(error.message.includes('secret-pin'), false);
+    return true;
+  });
+});
+
 test('响应必须是对象：网关返回非 JSON 对象按 api 错误拒绝', async () => {
   const scalar = (async () => new Response('<html>gateway</html>', {
     status: 200,

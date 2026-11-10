@@ -259,6 +259,10 @@ export class ILinkApi {
       else external.addEventListener('abort', onExternalAbort, { once: true });
     }
 
+    // 错误消息只用端点路径：endpoint 可能带 verify_code（PIN）等查询参数，
+    // 消息会进内存日志与面板快照，参数一概不带（AGENTS 安全红线）。
+    const label = options.endpoint.split('?')[0] ?? options.endpoint;
+
     try {
       const response = await this.#fetch(url, {
         method: options.method,
@@ -268,7 +272,7 @@ export class ILinkApi {
       });
       const text = await response.text();
       if (!response.ok) {
-        throw new ILinkError('http', `${options.endpoint} 返回 ${response.status}`, { status: response.status });
+        throw new ILinkError('http', `${label} 返回 ${response.status}`, { status: response.status });
       }
       return text;
     } catch (error) {
@@ -276,9 +280,9 @@ export class ILinkApi {
       // 外部取消原样抛回：轮询循环靠它安静退出。
       if (external?.aborted) throw error;
       if (isAbortError(error)) {
-        throw new ILinkError('timeout', `${options.endpoint} 请求超时`, { reason: 'timeout' });
+        throw new ILinkError('timeout', `${label} 请求超时`, { reason: 'timeout' });
       }
-      throw new ILinkError('network', `${options.endpoint} 网络失败：${(error as Error)?.message ?? '未知'}`, {
+      throw new ILinkError('network', `${label} 网络失败：${(error as Error)?.message ?? '未知'}`, {
         reason: classifyNetworkFailure(error),
       });
     } finally {
@@ -323,7 +327,6 @@ export class ILinkApi {
     }
   }
 
-  /** 发送一条消息（文本或已上传的媒体项）。业务失败抛 `api` 类错误并带上 `ret`。 */
   /**
    * 取 CDN 上传参数（`ilink/bot/getuploadurl`）。拿到后由 `upload.ts` 加密并 POST 到 CDN，
    * 再从响应头 `x-encrypted-param` 取回下载参数，最后发一条 `image_item` 消息（ADR-0010）。
@@ -346,6 +349,7 @@ export class ILinkApi {
     return { ...(uploadParam === undefined ? {} : { uploadParam }), ...(uploadFullUrl === undefined ? {} : { uploadFullUrl }) };
   }
 
+  /** 发送一条消息（文本或已上传的媒体项）。业务失败抛 `api` 类错误并带上 `ret`。 */
   async sendMessage(message: OutboundMessage, options: { timeoutMs?: number } = {}): Promise<void> {
     const response = await this.#postObject(
       'ilink/bot/sendmessage',

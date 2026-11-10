@@ -9,12 +9,9 @@ export const NS = 'dsh-im-wechat';
 
 export const en = {
   '微信': 'WeChat',
-  '把微信接入本机 Harness：扫码登录后，核心的交付会送到你的微信，你在微信里说的话也会回到核心。':
-    'Connect WeChat to this Harness: after scanning the QR code, deliveries from the core reach your WeChat and your replies come back to it.',
   '把微信接入本机 Harness：扫码登录后，消息与交付会在微信和核心之间同步。':
     'Connect WeChat to this Harness: after scanning the QR code, messages and deliveries sync between WeChat and the core.',
   '插件版本': 'Plugin version',
-  '状态': 'Status',
   '未登录': 'Not signed in',
   '尚未登录微信': 'WeChat is not connected',
   '扫码登录后开始接收和发送消息。': 'Sign in with a QR code to start receiving and sending messages.',
@@ -25,7 +22,6 @@ export const en = {
   '连接中断': 'Disconnected',
   '已接入超级助理': 'Bridged to My Superagent',
   '未接入超级助理': 'Not bridged',
-  '未接入超级助理（未安装核心插件）': 'Not bridged (core plugin not installed)',
   '账号': 'Account',
   '登录时间': 'Signed in at',
   '扫码登录': 'Sign in with QR code',
@@ -52,9 +48,9 @@ export const en = {
   '停用后不再收取微信消息，核心的交付也不会发到这个渠道。':
     'When disabled, WeChat messages are no longer received and deliveries are not sent here.',
   '最近错误': 'Last error',
-  '暂无': 'None',
   '加载中…': 'Loading…',
   '操作失败': 'Operation failed',
+  '状态不可用': 'Status unavailable',
   '请重启 dsh web：面板比 Host 新': 'Restart dsh web: the panel is newer than the host',
   '刷新': 'Refresh',
   '登出后需要重新扫码才能继续接收微信消息。': 'After signing out you must scan again to receive WeChat messages.',
@@ -70,16 +66,13 @@ export const en = {
   '运行概览': 'Runtime overview',
   '需要注意': 'Needs attention',
   '接入我的超级助理': 'Connect to My Superagent',
-  '关掉后本插件不向超级助理注册，改由插件自己把问题与长任务提醒发到微信。':
-    'When off, this plugin does not register with My Superagent and sends questions and long-task reminders to WeChat itself.',
-  '长任务提醒': 'Long-task reminders',
   '提醒阈值（分钟）': 'Reminder threshold (minutes)',
   '根会话的一个回合超过这个时长才发提醒；只在本插件发送提醒时生效。':
     'A root-session turn triggers a reminder only when it runs longer than this; applies when this plugin sends the reminders.',
   '分钟': 'min',
   '保存': 'Save',
   '当前阈值': 'Current threshold',
-  '阈值必须是大于 0 的分钟数': 'The threshold must be a number of minutes greater than 0',
+  '阈值需为 1 到 1440 的整数分钟': 'The threshold must be a whole number of minutes between 1 and 1440',
   '等待作答的问题': 'Questions awaiting an answer',
   '跟踪中的长任务': 'Long tasks being tracked',
   '提醒来源': 'Reminder source',

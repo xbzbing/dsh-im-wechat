@@ -14,6 +14,7 @@ import {
   isLoginActive,
   qrImageUrl,
   unwrapResult,
+  validateMinutes,
 } from '../../src/client/logic.ts';
 
 test('RPC 信封：成功取 value，失败抛带错误码的 Error', () => {
@@ -92,20 +93,67 @@ test('时间格式化与错误描述', () => {
   assert.deepEqual(describeError({ message: '', code: 'x' }), { message: '操作失败', code: 'x' });
 });
 
-test('文案：两种语言键集一致，面板里用到的文案都有翻译', () => {
+/** 面板源码里 `t('…')` / `t("…")` 引用到的文案键。 */
+function usedKeys(files: string[]): Set<string> {
+  const used = new Set<string>();
+  for (const file of files) {
+    const source = readFileSync(new URL(`../../src/client/${file}`, import.meta.url), 'utf8');
+    for (const match of source.matchAll(/\bt\(\s*(['"])([^'"]+)\1/g)) used.add(match[2]);
+  }
+  return used;
+}
+
+/** 运行期产出、同样要送进 `t()` 的文案（源码里没有字面量，只能从函数推导）。 */
+function dynamicLabels(): string[] {
+  const labels: string[] = [];
+  for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'failed']) {
+    labels.push(describeLoginPhase(phase));
+  }
+  for (const health of [{ state: 'ok' }, { state: 'degraded' }, { state: 'down' }, null]) {
+    labels.push(describeHealth(health));
+  }
+  labels.push(describeError({ message: '', code: 'x' }).message);
+  const rejected = validateMinutes('0');
+  if (!rejected.ok) labels.push(rejected.message);
+  return labels;
+}
+
+test('文案：两种语言键集一致', () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort());
-  const source = readFileSync(new URL('../../src/client/panel.ts', import.meta.url), 'utf8');
-  const used = new Set([...source.matchAll(/\bt\('([^']+)'\)/g)].map((match) => match[1]));
+});
+
+test('文案：面板用到的文案都有翻译，且没有未使用的文案', () => {
+  const used = usedKeys(['panel.ts', 'sections.ts']);
+  for (const label of dynamicLabels()) used.add(label);
   for (const label of used) {
     assert.equal(Object.hasOwn(en, label), true, `缺少文案：${label}`);
   }
-  // 状态翻译函数返回的也是送进 `t()` 的文案，同样必须有条目。
-  for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'failed']) {
-    const label = describeLoginPhase(phase);
-    assert.equal(Object.hasOwn(en, label), true, `缺少文案：${label}`);
+  for (const label of Object.keys(en)) {
+    assert.equal(used.has(label), true, `未使用的文案：${label}`);
   }
-  for (const health of [{ state: 'ok' }, { state: 'degraded' }, { state: 'down' }, null]) {
-    const label = describeHealth(health);
-    assert.equal(Object.hasOwn(en, label), true, `缺少文案：${label}`);
+});
+
+test('状态翻译与错误描述都包在 t() 内，英文界面不半中半英', () => {
+  for (const file of ['panel.ts', 'sections.ts']) {
+    const source = readFileSync(new URL(`../../src/client/${file}`, import.meta.url), 'utf8');
+    for (const match of source.matchAll(/\bdescribe(?:Health|LoginPhase|Error)\(/g)) {
+      const before = source.slice(0, match.index ?? 0).trimEnd();
+      assert.ok(before.endsWith('t('), `${file} 里 ${match[0]} 的调用点没有包在 t() 内`);
+    }
   }
+});
+
+test('阈值校验：1 到 1440 的整数分钟才通过，其余给出可翻译的报错', () => {
+  assert.deepEqual(validateMinutes('30'), { ok: true, value: 30 });
+  assert.deepEqual(validateMinutes(' 1 '), { ok: true, value: 1 });
+  assert.deepEqual(validateMinutes('1440'), { ok: true, value: 1440 });
+  for (const raw of ['', '  ', '0', '1441', '-5', '30.4', 'abc', 'Infinity', 'NaN']) {
+    const result = validateMinutes(raw);
+    assert.equal(result.ok, false, `应拒绝：${JSON.stringify(raw)}`);
+    if (!result.ok) assert.equal(typeof result.message, 'string');
+  }
+  // 报错文案是翻译键，必须进字典。
+  const rejected = validateMinutes('0');
+  assert.equal(rejected.ok, false);
+  if (!rejected.ok) assert.equal(Object.hasOwn(en, rejected.message), true, `缺少文案：${rejected.message}`);
 });

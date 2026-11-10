@@ -32,6 +32,10 @@ export const LOGIN_POLL_INTERVAL_MS = 2_000;
 /** 单次面板 RPC 的保底超时：宿主 rpc.call 自身不带超时。 */
 export const RPC_TIMEOUT_MS = 20_000;
 
+/** 长任务阈值的合法区间：与 host 半 `long-tasks.ts` 的 `normalizeLongTaskMinutes` 一致。 */
+export const MIN_LONG_TASK_MINUTES = 1;
+export const MAX_LONG_TASK_MINUTES = 24 * 60;
+
 export const ENDPOINTS = Object.freeze({
   status: 'status',
   loginStart: 'login.start',

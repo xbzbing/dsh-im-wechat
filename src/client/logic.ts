@@ -5,7 +5,7 @@
  * 生成失败时的降级，都不依赖 React。
  */
 
-import { RPC_PATH, RPC_TIMEOUT_MS } from './constants.ts';
+import { MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES, RPC_PATH, RPC_TIMEOUT_MS } from './constants.ts';
 import { encodeQr, qrSvgDataUrl } from '../shared/qr.ts';
 
 export interface CodedError extends Error {
@@ -132,4 +132,25 @@ export function isHttpsUrl(value: unknown): boolean {
 /** 扫码是否还在进行中（决定面板用 2 秒还是 15 秒轮询）。 */
 export function isLoginActive(phase: string): boolean {
   return phase === 'waiting' || phase === 'scanned' || phase === 'need-verify-code';
+}
+
+/**
+ * 长任务阈值的入参校验：1..1440 的整数分钟。
+ *
+ * 与 host 半的夹取区间一致——非整数会被宿主 round 改写，与其保存后输入框被
+ * 回读值顶掉，不如在面板就拒绝并说明。
+ */
+export function validateMinutes(raw: string): { ok: true; value: number } | { ok: false; message: string } {
+  const text = raw.trim();
+  const value = Number(text);
+  if (
+    text === ''
+    || !Number.isFinite(value)
+    || !Number.isInteger(value)
+    || value < MIN_LONG_TASK_MINUTES
+    || value > MAX_LONG_TASK_MINUTES
+  ) {
+    return { ok: false, message: `阈值需为 ${MIN_LONG_TASK_MINUTES} 到 ${MAX_LONG_TASK_MINUTES} 的整数分钟` };
+  }
+  return { ok: true, value };
 }

@@ -73,7 +73,10 @@ export async function apply(
   // `/wechat`：主人在输入框里自己发（命令不经过模型，ADR-0012）。
   registerWeixinCommand(ctx, { dir: runtime.dir });
   ctx.effect?.(() => () => {
-    void runtime.stop();
+    // stop 内有 flush/cancel 等可能失败的收尾：不 catch 的话会变成未处理 rejection。
+    void runtime.stop().catch((error: unknown) => {
+      logger.error?.('停止运行期失败', errorDetail(error));
+    });
   }, 'dsh-im-wechat: 停止运行期');
 
   await runtime.start().catch((error: unknown) => {

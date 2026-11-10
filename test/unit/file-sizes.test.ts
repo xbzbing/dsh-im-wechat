@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 import { MAX_SOURCE_LINES } from '../../src/shared/limits.ts';
 
-const SRC_DIR = fileURLToPath(new URL('../../src', import.meta.url));
+const ROOTS = ['src', 'test'].map((name) => fileURLToPath(new URL(`../../${name}`, import.meta.url)));
 
-/** 递归收集 `src/` 下的 .ts 源文件（构建产物在 lib/，不在此规则内）。 */
+/** 递归收集根目录下的 .ts 文件（构建产物在 lib/，不在此规则内）。 */
 async function sourceFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const files: string[] = [];
@@ -27,11 +27,13 @@ function countLines(text: string): number {
   return lines.length;
 }
 
-test('src 下每个源文件不超过约定的行数上限（AGENTS.md 文件规模规则）', async () => {
+test('src 与 test 下每个源文件不超过约定的行数上限（AGENTS.md 文件规模规则）', async () => {
   const over: string[] = [];
-  for (const file of await sourceFiles(SRC_DIR)) {
-    const lines = countLines(await readFile(file, 'utf8'));
-    if (lines > MAX_SOURCE_LINES) over.push(`${file.slice(SRC_DIR.length + 1)}: ${lines} 行`);
+  for (const root of ROOTS) {
+    for (const file of await sourceFiles(root)) {
+      const lines = countLines(await readFile(file, 'utf8'));
+      if (lines > MAX_SOURCE_LINES) over.push(`${file.slice(root.length + 1)}: ${lines} 行`);
+    }
   }
   assert.deepEqual(over, [], `以下文件超过 ${MAX_SOURCE_LINES} 行，先拆分再加功能：\n${over.join('\n')}`);
 });

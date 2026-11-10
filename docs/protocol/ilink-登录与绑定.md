@@ -11,7 +11,7 @@
 
 | 状态 | 含义 | 处理 |
 | --- | --- | --- |
-| `wait` | 还没扫 | 继续轮询；此时**丢掉**已暂存的 PIN |
+| `wait` | 还没扫 | 继续轮询；**保留**已暂存的 PIN（丢号会让服务端永远等不到数字，见下） |
 | `scaned` | 已扫码 | 确认 PIN 被接受 |
 | `need_verifycode` / `confirmed_but_need_verifycode` | 要输入手机上的 PIN | 等主人输入并提交，见下 |
 | `scaned_but_redirect` | 扫码后要换轮询域名 | 只对本次登录轮询生效 |

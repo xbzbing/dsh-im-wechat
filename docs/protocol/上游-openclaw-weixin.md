@@ -24,4 +24,4 @@
 ## 出处
 
 - 上游：`Tencent/openclaw-weixin` 的 `docs/release-notes-bot-realname-auth_zh_CN.md`、`docs/protocol_zh_CN.md`（3.0.0-beta-0）、`src/messaging/markdown-filter.ts`、`cdn/upload.ts`。
-- 本项目跟进这些变化的那一轮提交见 `feat(登录): 适配 openclaw-weixin 3.0.0-beta 的 PIN 与版本规则`。
+- 本项目跟进这些变化的那一轮提交见 `fix(登录): 适配 openclaw-weixin 3.0.0-beta 的 PIN 与版本规则`（`0dcb3ce`）。

@@ -58,6 +58,8 @@ export interface WeixinBridgeOptions {
   health?: () => BridgeHealth;
   /** 运行开关：停用时不收不发，并让核心把流量路由到别的桥。 */
   isEnabled?: () => boolean;
+  /** 扫码登录的微信用户：deliver 的收件人必须与它一致，否则拒发（ADR-0012 的红线）。 */
+  ownerId: () => string | undefined;
   /** 交付进入投递流程时回调（收件人）：用于收起「正在输入」（ADR-0007）。 */
   onDelivered?: (recipient: string) => void;
   /** CDN 基址（服务端下发的配置）；上传图片时用。 */
@@ -79,6 +81,7 @@ export class WeixinBridge implements BridgeProvider {
   readonly #maxText: number;
   readonly #health: (() => BridgeHealth) | undefined;
   readonly #isEnabled: (() => boolean) | undefined;
+  readonly #ownerId: () => string | undefined;
   readonly #onDelivered: ((recipient: string) => void) | undefined;
   /** 已发到第几条：`delivery.id` → 条数，用于断点续发。 */
   readonly #progress = new Map<string, number>();
@@ -100,6 +103,7 @@ export class WeixinBridge implements BridgeProvider {
     this.#maxText = options.maxText ?? MAX_TEXT_CHARS;
     this.#health = options.health;
     this.#isEnabled = options.isEnabled;
+    this.#ownerId = options.ownerId;
     this.#onDelivered = options.onDelivered;
     this.#cdnBaseUrl = options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL;
     this.#uploadFetch = options.uploadFetch;
@@ -218,12 +222,20 @@ export class WeixinBridge implements BridgeProvider {
       return { ...base, status: 'failed', errorCode: 'auth-expired', error: '尚未登录微信' };
     }
 
+    // 收件人恒为扫码登录的主人（对齐 owner-channel.isOwner）：context_token 对
+    // 任意来过消息的人都存在，挡不住发错人，这里补上最后一道闸（ADR-0012 红线）。
+    const owner = this.#ownerId();
+    const recipient = delivery.recipient;
+    if (owner === undefined || owner.toLowerCase() !== recipient.toLowerCase()) {
+      this.#logger?.warn?.(`微信投递被拒：收件人不是登录主人（${delivery.id}）`);
+      return { ...base, status: 'failed', errorCode: 'other', error: '收件人不是登录主人' };
+    }
+
     const text = composeDeliveryText(delivery);
     const parts = splitText(text, this.#maxText);
     const images = delivery.images ?? [];
     if (parts.length === 0 && images.length === 0) return { ...base, status: 'sent' };
 
-    const recipient = delivery.recipient;
     const contextToken = this.#contextTokens.get(this.account, recipient);
 
     // 图片先发：文字里通常写着「图见上」，图没到就发文字会让人以为没发。

@@ -48,6 +48,7 @@ async function harness(
     error?: Error;
     withToken?: boolean;
     noApi?: boolean;
+    noOwner?: boolean;
     onDelivered?: (recipient: string) => void;
     uploadStatus?: number;
     uploadParam?: string;
@@ -90,6 +91,7 @@ async function harness(
     contextTokens: tokens,
     guard,
     maxText: 20,
+    ownerId: () => (options.noOwner ? undefined : OWNER),
     uploadFetch,
     logger: { warn: (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); } },
     ...(options.onDelivered ? { onDelivered: options.onDelivered } : {}),
@@ -126,6 +128,27 @@ test('缺少 context_token 按 window-closed 回 failed', async () => {
     assert.equal(receipt.status, 'failed');
     assert.equal(receipt.errorCode, 'window-closed');
     assert.equal(h.sent.length, 0);
+  });
+});
+
+test('收件人不是登录主人时拒发，凭据不发给第三方', async () => {
+  await withHarness({}, async (h) => {
+    const receipt = await h.bridge.deliver(delivery({ id: 'stranger', recipient: 'stranger-9' }));
+    assert.equal(receipt.status, 'failed');
+    assert.equal(receipt.errorCode, 'other');
+    assert.match(receipt.error ?? '', /收件人不是登录主人/);
+    assert.deepEqual(h.sent, []);
+    assert.deepEqual(h.images, []);
+    assert.ok(h.warnings.some((line) => line.includes('收件人不是登录主人')), `实际日志：${h.warnings.join(' | ')}`);
+  });
+});
+
+test('登录主人未知时同样拒发，不凭空选收件人', async () => {
+  await withHarness({ noOwner: true }, async (h) => {
+    const receipt = await h.bridge.deliver(delivery({ id: 'no-owner' }));
+    assert.equal(receipt.status, 'failed');
+    assert.match(receipt.error ?? '', /收件人不是登录主人/);
+    assert.deepEqual(h.sent, []);
   });
 });
 
@@ -176,6 +199,7 @@ test('分条中途失败后重试从断点续发，不重复已发内容', async
       contextTokens: h.tokens,
       guard: h.guard,
       maxText: 20,
+      ownerId: () => OWNER,
     });
     const body = '第一段内容\n第二段内容\n第三段内容\n第四段内容';
     const first = await failing.deliver(delivery({ id: 'multi', title: '', body }));
@@ -226,6 +250,7 @@ test('能力声明：纯文本、分条上限、无交互卡、需要先有入�
     contextTokens: new ContextTokenStore({ dir: '/tmp/unused' }),
     guard: new SessionGuard(),
     maxText: 1_500,
+    ownerId: () => OWNER,
   });
   assert.equal(bridge.platform, 'weixin');
   assert.deepEqual(bridge.protocol, ['my-superagent/v1']);
@@ -246,6 +271,7 @@ test('核心能力声明决定图片下载与身份查询', () => {
     api: () => null,
     contextTokens: new ContextTokenStore({ dir: '/tmp/unused' }),
     guard: new SessionGuard(),
+    ownerId: () => OWNER,
   });
   assert.equal(bridge.imagesEnabled, false);
   assert.equal(typeof bridge.ownerLookup, 'undefined');
@@ -271,14 +297,17 @@ test('交付进入投递流程就回调 onDelivered（收起正在输入）', as
   await withHarness({ onDelivered: (recipient) => delivered.push(recipient) }, async (h) => {
     await h.bridge.deliver(delivery());
     assert.deepEqual(delivered, [OWNER]);
-    // 发送失败也算「模型出结果了」：照样回调，让输入状态收尾。
-    delivered.length = 0;
   });
-  await withHarness({ failAt: [1], error: new Error('boom') }, async (h) => {
-    // 该 harness 没挂回调，确认不挂也能跑。
-    const receipt = await h.bridge.deliver(delivery({ id: 'failing' }));
-    assert.equal(receipt.status, 'failed');
-  });
+  // 发送失败也算「模型出结果了」：照样回调，让输入状态收尾而不是挂到兜底超时。
+  delivered.length = 0;
+  await withHarness(
+    { failAt: [1], error: new Error('boom'), onDelivered: (recipient) => delivered.push(recipient) },
+    async (h) => {
+      const receipt = await h.bridge.deliver(delivery({ id: 'failing' }));
+      assert.equal(receipt.status, 'failed');
+      assert.deepEqual(delivered, [OWNER]);
+    },
+  );
 });
 
 const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]).toString('base64');

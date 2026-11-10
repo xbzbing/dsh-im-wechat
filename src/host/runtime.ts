@@ -498,6 +498,7 @@ export class WeixinRuntime {
     this.#bridge = new WeixinBridge({
       account: state.account,
       api: () => this.#api,
+      ownerId: () => this.#loginState?.userId,
       contextTokens: this.#tokenStore,
       guard: this.#guard,
       logger: this.#logger,

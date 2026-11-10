@@ -7,7 +7,7 @@
  * 客户端渲染不了的少数构造——图片、H5/H6 标题标记、包住中文的斜体标记、删除线标记，
  * 其余原样透传。
  *
- * 所以桥这里不再拍平 Markdown，而是做三件事（ADR-0009）：
+ * 所以桥这里不再拍平 Markdown，而是做三件事（ADR-0008）：
  *
  * 1. **剔掉客户端渲染不了的东西**：图片整段丢弃，`#####`/`######` 去标记留文字，
  *    包住中文的斜体去标记（中文斜体在微信里很难看），删除线去标记留文字。
@@ -36,7 +36,7 @@ export function composeDeliveryText(delivery: Delivery): string {
   const title = typeof delivery.title === 'string' ? delivery.title.trim() : '';
   const body = typeof delivery.body === 'string' ? delivery.body.trim() : '';
   // 回应主人刚发的那条消息（inReplyTo）只发正文：一问一答的正文自己就说明是什么，
-  // 加个「回复」抬头只是噪音（核心也按「回复不带标题」写标题，ADR-0030）。
+  // 加个「回复」抬头只是噪音（核心也按「回复不带标题」写标题，见核心 ADR-0030；组装规则见 ADR-0008）。
   // 正文为空时仍发标题：宁可多发一行，也不能因为丢标题而发出一条空消息。
   if (title !== '' && (delivery.inReplyTo === undefined || body === '')) sections.push(toWeChatMarkdown(title));
   if (body !== '') sections.push(toWeChatMarkdown(body));

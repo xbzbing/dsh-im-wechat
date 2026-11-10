@@ -38,6 +38,8 @@ export class BridgeBinder {
   #bridge: WeixinBridge | null = null;
   #registration: RegisteredBridge | null = null;
   #handle: BridgeHandle | null = null;
+  /** 最近一次注册失败的原因；服务与桥都在却拿不到它，说明消息正被静默丢掉。 */
+  #registrationError: string | undefined;
 
   constructor(options: { logger?: LinkLogger } = {}) {
     this.#logger = options.logger;
@@ -57,11 +59,21 @@ export class BridgeBinder {
     this.#registration = null;
     this.#handle = null;
     this.#service = null;
+    this.#registrationError = undefined;
     this.#bridge?.detachHandle();
   }
 
-  /** 把一条入站消息交给核心；桥还没注册（没有核心）时返回 null。 */
+  /**
+   * 把一条入站消息交给核心。
+   *
+   * 返回 null 只有两解：核心不在（常态，独立安装），或服务在但桥没注册上
+   * （见 `registrationError`）。注册失败时这里顺手补一次注册——热重载重叠期
+   * 旧实例退出的窗口通常在两条消息之间就过去了。
+   */
   async receive(draft: OwnerMessageDraft): Promise<AcceptResult | null> {
+    if (!this.#handle && this.#service && this.#bridge && this.#registrationError !== undefined) {
+      this.#tryRegister();
+    }
     if (!this.#handle) return null;
     return this.#handle.receive(draft);
   }
@@ -71,11 +83,17 @@ export class BridgeBinder {
     this.#registration?.dispose();
     this.#registration = null;
     this.#bridge = bridge;
+    this.#registrationError = undefined;
     this.#tryRegister();
   }
 
   get registered(): boolean {
     return this.#registration !== null;
+  }
+
+  /** 注册失败的原因；`undefined` 表示「没在失败」（要么已注册，要么核心不在）。 */
+  get registrationError(): string | undefined {
+    return this.#registrationError;
   }
 
   get id(): string | undefined {
@@ -94,6 +112,7 @@ export class BridgeBinder {
       const features = this.#service.protocol?.features ?? [];
       bridge.attachHandle(handle, features);
       this.#handle = handle;
+      this.#registrationError = undefined;
       this.#registration = {
         id: handle.id,
         features: [...features],
@@ -105,10 +124,11 @@ export class BridgeBinder {
       };
       this.#logger?.info?.(`微信桥已注册：${handle.id}`);
     } catch (error) {
-      // 同一机器人账号已有桥（account-already-bridged）等失败不该让插件崩掉。
-      this.#logger?.warn?.(
-        `微信桥注册失败：${error instanceof Error ? error.message : '未知错误'}`,
-      );
+      // 同一机器人账号已有桥（account-already-bridged）等失败不该让插件崩掉；
+      // 记下原因让运行期在入站时记账，并由 receive 触发补注册。
+      const message = error instanceof Error ? error.message : '未知错误';
+      this.#registrationError = message;
+      this.#logger?.warn?.(`微信桥注册失败（下次入站自动重试）：${message}`);
       bridge.detachHandle();
     }
   }

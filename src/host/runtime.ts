@@ -592,14 +592,21 @@ export class WeixinRuntime {
     });
     if (!draft) return;
     const result = await binder.receive(draft);
-    if (result && result.accepted === false) {
+    if (result === null) {
+      // 「核心不在」是独立安装的常态，不记账；「服务在但桥没注册上」必须记账，
+      // 否则核心已装已开时每条消息都无声消失（registrationError 是唯一线索）。
+      const failure = binder.registrationError;
+      if (failure !== undefined) this.#noteError(`微信桥注册核心失败，入站暂未交付：${failure}`);
+      return;
+    }
+    if (result.accepted === false) {
       // 拒收原因是核心的判断（不是主人、格式不合法……），桥只记账不回话。
       this.#noteError(`核心拒收入站消息：${result.reason}`);
       return;
     }
     // 核心受理了：大模型开始思考，微信那头显示「正在输入」（ADR-0007）。
     // 拒收（非主人、格式不合法）不开启——陌生人触发不了机器人状态。
-    if (result) this.#typing.start(sender);
+    this.#typing.start(sender);
   }
 
   #handlePollHealth(health: PollHealth): void {

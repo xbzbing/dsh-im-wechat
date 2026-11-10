@@ -89,14 +89,19 @@ function fakeApi(options: {
   return { createApi: impl, record };
 }
 
-function fakeSuperagent(options: { features?: string[]; rejectReason?: RejectReason } = {}) {
+function fakeSuperagent(options: { features?: string[]; rejectReason?: RejectReason; failRegister?: number } = {}) {
   const providers: BridgeProvider[] = [];
   const received: OwnerMessageDraft[] = [];
   const cleanups: (() => void)[] = [];
+  let registerAttempts = 0;
   const service = {
     protocol: { versions: ['my-superagent/v1'], features: options.features ?? ['owner-images', 'owner-lookup'] },
     bridges: {
       register(provider: BridgeProvider) {
+        registerAttempts += 1;
+        if (options.failRegister !== undefined && registerAttempts <= options.failRegister) {
+          throw new Error('account-already-bridged');
+        }
         providers.push(provider);
         return {
           id: `weixin:${provider.account}`,
@@ -527,6 +532,60 @@ test('核心拒收入站时不开启输入状态', async () => {
     await waitFor(() => superagent.received.length > 0, '入站交给核心');
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(api.record.typing.length, 0, '拒收后不该出现输入状态');
+    await runtime.stop();
+  });
+});
+
+test('桥注册持续失败时入站记账，不静默消失', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const api = fakeApi({
+      batches: [[{
+        message_id: '8001',
+        from_user_id: OWNER,
+        item_list: [{ type: 1, text_item: { text: 'hi' } }],
+      }]],
+    });
+    const superagent = fakeSuperagent({ failRegister: Number.POSITIVE_INFINITY });
+    const binder = new BridgeBinder();
+    binder.attach(superagent.scope);
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    runtime.attachBinder(binder);
+    await runtime.start();
+
+    // 核心服务在、但桥没注册上：必须在面板可见，而不是每条消息无声丢掉。
+    await waitFor(
+      () => (runtime.status().lastError?.message ?? '').includes('注册核心失败'),
+      '注册失败记账',
+    );
+    assert.equal(runtime.status().bridge.registered, false);
+    assert.equal(superagent.received.length, 0);
+    assert.equal(api.record.typing.length, 0, '没受理就不开输入状态');
+    await runtime.stop();
+  });
+});
+
+test('桥注册失败后，下次入站自动补注册并当条交付', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const api = fakeApi({
+      batches: [[{
+        message_id: '8002',
+        from_user_id: OWNER,
+        item_list: [{ type: 1, text_item: { text: 'hi' } }],
+      }]],
+    });
+    // bind 注册失败一次（attach 时桥还没绑定，不尝试），入站触发的懒重试成功。
+    const superagent = fakeSuperagent({ failRegister: 1 });
+    const binder = new BridgeBinder();
+    binder.attach(superagent.scope);
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    runtime.attachBinder(binder);
+    await runtime.start();
+
+    await waitFor(() => superagent.received.length > 0, '补注册后交付');
+    assert.equal(runtime.status().bridge.registered, true);
+    assert.equal(runtime.status().lastError, undefined, '补注册成功不该留下错误');
     await runtime.stop();
   });
 });

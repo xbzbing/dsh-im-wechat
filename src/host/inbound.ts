@@ -28,7 +28,7 @@ export interface InboundOptions {
   cdnBaseUrl?: string;
   /** 核心声明了 `owner-images` 才下载图片。 */
   imagesEnabled?: boolean;
-  /** 核心声明了 `owner-lookup` 时传入；不传则不判定，按允许处理。 */
+  /** 核心声明了 `owner-lookup` 时传入；不传或判不了则不下载，图片按纯文本处理（ADR-0004）。 */
   senderIsOwner?: (sender: string) => boolean;
   fetch?: typeof globalThis.fetch;
   /** 停机/停轮询时取消在途的图片下载。 */
@@ -94,8 +94,9 @@ export async function toOwnerMessageDraft(
 
 async function collectImages(message: WeixinMessage, options: InboundOptions): Promise<OwnerImage[]> {
   if (options.imagesEnabled !== true) return [];
-  // 不是主人就整条不下载（ADR-0004）：图片是主人内容里最敏感的部分。
-  if (options.senderIsOwner && !options.senderIsOwner(message.from_user_id ?? '')) return [];
+  // 身份判不了（未声明 owner-lookup）与判出非主人一样整条不下载（ADR-0004）：
+  // fail-open 会让任意微信用户发图就驱动本机出站下载。
+  if (!options.senderIsOwner || !options.senderIsOwner(message.from_user_id ?? '')) return [];
 
   const items = imageItems(message.item_list).slice(0, OWNER_IMAGES_MAX);
   if (items.length === 0) return [];

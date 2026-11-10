@@ -98,6 +98,7 @@ test('声明 owner-images 时下载、解密并按核心约束组装', async () 
     account: 'bot',
     cdnBaseUrl: CDN,
     imagesEnabled: true,
+    senderIsOwner: () => true,
     fetch: fetch.impl,
   });
   assert.equal(draft?.text, '');
@@ -130,10 +131,26 @@ test('最多 9 张，多出来的忽略', async () => {
     account: 'bot',
     cdnBaseUrl: CDN,
     imagesEnabled: true,
+    senderIsOwner: () => true,
     fetch: fetch.impl,
   });
   assert.equal(draft?.images?.length, 9);
   assert.equal(fetch.calls, 9);
+});
+
+test('声明了图片但没有身份判定时按纯文本处理，不下载', async () => {
+  // 声明缺席（核心未声明 owner-lookup / isOwner 不可用）不能当成「允许」：
+  // 否则任意微信用户发图即可驱动本机出站下载（ADR-0004）。
+  const fetch = imageFetch([PNG]);
+  const draft = await toOwnerMessageDraft(imageMessage(1).message, {
+    account: 'bot',
+    cdnBaseUrl: CDN,
+    imagesEnabled: true,
+    fetch: fetch.impl,
+  });
+  assert.equal(fetch.calls, 0);
+  assert.equal(draft?.text, '看这张');
+  assert.equal(draft?.images, undefined);
 });
 
 test('坏图片被丢弃，其余照常', async () => {
@@ -143,6 +160,7 @@ test('坏图片被丢弃，其余照常', async () => {
     account: 'bot',
     cdnBaseUrl: CDN,
     imagesEnabled: true,
+    senderIsOwner: () => true,
     fetch: fetch.impl,
   });
   assert.equal(draft?.images, undefined);
@@ -163,6 +181,7 @@ test('只有图没有文字时 text 为空串而不是缺字段', async () => {
     account: 'bot',
     cdnBaseUrl: CDN,
     imagesEnabled: true,
+    senderIsOwner: () => true,
     fetch: fetch.impl,
   });
   assert.equal(draft?.text, '');

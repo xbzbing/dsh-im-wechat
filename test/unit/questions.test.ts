@@ -79,7 +79,9 @@ test('题目转交互形状时保留 plan-review 意图', () => {
 
 // ---------------------------------------------------------------- broker
 
-function harness(options: { sent?: boolean; root?: boolean; recipient?: string | null } = {}) {
+function harness(
+  options: { sent?: boolean; root?: boolean; recipient?: string | null; waitMs?: number } = {},
+) {
   const sent: string[] = [];
   const broker = new QuestionBroker({
     send: async (text) => {
@@ -89,6 +91,7 @@ function harness(options: { sent?: boolean; root?: boolean; recipient?: string |
     recipient: () => (options.recipient === undefined ? 'owner-1' : options.recipient),
     isRoot: () => options.root !== false,
     now: () => 1_000,
+    ...(options.waitMs !== undefined ? { waitMs: options.waitMs } : {}),
   });
   return { broker, sent };
 }
@@ -144,7 +147,7 @@ test('主人回答后返回结构化答案，并摘掉待答', async () => {
   assert.match(sent[0], /去哪吃饭/);
 });
 
-test('待答期间：纯文本不认领，但序号/选项能认领', async () => {
+test('待答期间：单题自由输入按提示语认领，多题整段自由输入不认领', async () => {
   const { broker } = harness();
   const request: { questions: unknown; signal?: AbortSignal } = { questions: SINGLE };
   const controller = new AbortController();
@@ -152,13 +155,118 @@ test('待答期间：纯文本不认领，但序号/选项能认领', async () =
   const result = broker.handle(request, async () => new Promise(() => {}), true);
   await new Promise((resolve) => setImmediate(resolve));
 
-  // 「取消」「先别动」这类不是答案，不能被结掉。
-  assert.equal(broker.reply('取消'), false);
-  assert.equal(broker.reply('先别动'), false);
+  // 提示语写着「或直接回复文字作答」：单题自由输入必须认领，否则会落进普通消息
+  // 路径被当成新提示词提交，问题本身挂到超时。
+  assert.equal(broker.reply('都不想吃'), true);
+  assert.deepEqual(await result, { answers: [{ id: 'q1', selected: [], custom: '都不想吃' }] });
+  assert.equal(broker.snapshot().pending, 0);
+});
+
+test('多题：整段自由输入不认领（交普通消息路径），分段可解析才认领', async () => {
+  const multi = [
+    { id: 'a', question: 'A', options: [{ label: '甲' }] },
+    { id: 'b', question: 'B', options: [{ label: '乙' }] },
+  ];
+  const { broker } = harness();
+  const request: { questions: unknown; signal?: AbortSignal } = {
+    questions: multi,
+    signal: new AbortController().signal,
+  };
+  const result = broker.handle(request, async () => new Promise(() => {}), true);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(broker.reply('我自己决定'), false);
   assert.equal(broker.snapshot().pending, 1);
 
-  assert.equal(broker.reply('2'), true);
+  assert.equal(broker.reply('1；1'), true);
+  const answer = (await result) as { answers: { id: string }[] };
+  assert.deepEqual(answer.answers.map((item) => item.id), ['a', 'b']);
+});
+
+test('计划审阅：批准/继续之外的自由输入认领为修改意见', async () => {
+  const plan = [{
+    id: 'plan',
+    question: '是否批准',
+    intent: { kind: 'plan-review' },
+    options: [{ label: '批准' }, { label: '继续规划' }],
+  }];
+  const { broker } = harness();
+  const request: { questions: unknown; signal?: AbortSignal } = {
+    questions: plan,
+    signal: new AbortController().signal,
+  };
+  const result = broker.handle(request, async () => new Promise(() => {}), true);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(broker.reply('先别动第三步'), true);
+  assert.deepEqual(await result, {
+    answers: [{ id: 'plan', selected: ['继续规划'], custom: '先别动第三步' }],
+  });
+});
+
+test('微信超时只放弃微信这一路：Web 还在就交回 Web 接着等', async () => {
+  const { broker } = harness({ waitMs: 20 });
+  const request: { questions: unknown; signal?: AbortSignal } = {
+    questions: SINGLE,
+    signal: new AbortController().signal,
+  };
+  const result = broker.handle(
+    request,
+    () => new Promise((resolve) => {
+      // Web 端过一会儿才答出来：超时后 handle 必须继续等它，而不是整体 reject。
+      setTimeout(() => resolve({ answers: [{ id: 'q1', selected: ['饭'] }] }), 60);
+    }),
+    true,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(broker.snapshot().pending, 0, '超时后不再接受微信作答');
+  assert.equal(broker.reply('1'), false, '微信这路已放弃');
   assert.deepEqual(await result, { answers: [{ id: 'q1', selected: ['饭'] }] });
+});
+
+test('微信超时且 Web 不在：按超时拒绝，文案不自称已交回', async () => {
+  const { broker } = harness({ waitMs: 20 });
+  const request: { questions: unknown; signal?: AbortSignal } = {
+    questions: SINGLE,
+    signal: new AbortController().signal,
+  };
+  const result = broker.handle(
+    request,
+    async () => {
+      throw Object.assign(new Error('no provider'), { code: 'NO_PROVIDER' });
+    },
+    true,
+  );
+  await assert.rejects(result, (error: unknown) => {
+    assert.match(String((error as Error).message), /等待微信作答超时/);
+    assert.equal(String((error as Error).message).includes('已交回'), false);
+    return true;
+  });
+});
+
+test('多条待答时最后一条提醒优先被认领', async () => {
+  const { broker } = harness();
+  const first = broker.handle(
+    { questions: [{ id: 'a', question: 'A', options: [{ label: '甲' }] }], signal: new AbortController().signal },
+    async () => new Promise(() => {}),
+    true,
+  );
+  const second = broker.handle(
+    { questions: [{ id: 'b', question: 'B', options: [{ label: '乙' }] }], signal: new AbortController().signal },
+    async () => new Promise(() => {}),
+    true,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(broker.snapshot().pending, 2);
+
+  // 主人在微信里看到的是最后一条提醒：回「1」应落在它身上，而不是最老的那条。
+  assert.equal(broker.reply('1'), true);
+  assert.equal(broker.snapshot().pending, 1, '认领并结掉了一条');
+  broker.cancelAll('测试收尾');
+  const firstOutcome = await first.then((value) => ({ value }), (error) => ({ error }));
+  const secondOutcome = await second.then((value) => ({ value }), (error) => ({ error }));
+  assert.ok('error' in firstOutcome, '先到的没被认领，被取消交回');
+  assert.ok('value' in secondOutcome, '后到的（主人刚看到的那条）被认领');
 });
 
 test('cancelAll 会 abort 本地信号，Web 端的投递随之收缩', async () => {

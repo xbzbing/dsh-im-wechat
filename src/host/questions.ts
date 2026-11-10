@@ -174,18 +174,29 @@ export class QuestionBroker {
       (value) => ({ kind: 'im', value }),
       (error: unknown) => ({ kind: 'im-error', error }),
     );
+    const timeout = deferred<{ kind: 'wechat-timeout' }>();
 
-    // 超时只放弃微信这一路：abort union 会把 Web 端正等的同一条提问一起取消。
+    // 超时只放弃微信这一路：不动 union signal，Web 端还等着，交回给它继续等。
     const timer = setTimeout(() => {
       this.#pending.delete(pendingId);
-      answer.reject(abortReason('等待微信作答超时，已交回 Web 端'));
+      timeout.resolve({ kind: 'wechat-timeout' });
     }, this.#waitMs);
+    timer.unref?.();
 
     try {
-      let outcome = await Promise.race([webSettled, im, aborted.promise.then(() => ({ kind: 'aborted' as const }))]);
+      let outcome = await Promise.race([
+        webSettled,
+        im,
+        aborted.promise.then(() => ({ kind: 'aborted' as const })),
+        timeout.promise,
+      ]);
       if (outcome.kind === 'none') {
-        // Web 不在：只等主人作答或请求取消。
-        outcome = await Promise.race([im, aborted.promise.then(() => ({ kind: 'aborted' as const }))]);
+        // Web 不在：只等主人作答、请求取消或超时。
+        outcome = await Promise.race([
+          im,
+          aborted.promise.then(() => ({ kind: 'aborted' as const })),
+          timeout.promise,
+        ]);
       }
       if (outcome.kind === 'im') {
         local.abort(abortReason('已在微信作答'));
@@ -194,6 +205,17 @@ export class QuestionBroker {
       }
       if (outcome.kind === 'web') return outcome.value;
       if (outcome.kind === 'web-error' || outcome.kind === 'im-error') throw outcome.error;
+      if (outcome.kind === 'wechat-timeout') {
+        // 微信这路到点放弃：Web 还在就真正交回，由它接着等作答。
+        const webOutcome = await Promise.race([
+          webSettled,
+          aborted.promise.then(() => ({ kind: 'aborted' as const })),
+        ]);
+        if (webOutcome.kind === 'web') return webOutcome.value;
+        if (webOutcome.kind === 'web-error') throw webOutcome.error;
+        if (webOutcome.kind === 'none') throw abortReason('等待微信作答超时');
+        // 请求被取消：走下面统一的取消原因。
+      }
       // 带上取消方的原因：停机、切换接入方式、宿主自己取消，各自有可读的话。
       const reason = request.signal?.reason as unknown;
       throw reason instanceof Error ? reason : abortReason('提问已取消');
@@ -207,12 +229,13 @@ export class QuestionBroker {
   /**
    * 入站文本尝试当作作答；返回 true 表示这条消息已被消化（不再进普通消息路径）。
    *
-   * 只匹配最早的一条待答问题：主人一次只可能在回答一个问题。
+   * 多条待答时认**最后一条**：主人在微信里看到的是最近发出的那条提醒。
    */
   reply(text: string): boolean {
-    for (const pending of this.#pending.values()) {
-      // 只有能落到选项/序号/批准词上的文本才算作答；否则「取消」「先别动」这类
-      // 普通消息会被误当成答案，把问题结掉（answerFromText 对单题总会给 custom）。
+    const pendingList = [...this.#pending.values()].reverse();
+    for (const pending of pendingList) {
+      // 单题（含计划审阅）认自由输入——提示语与 answerFromText 都这么承诺；
+      // 多题只认分段可解析的作答，整段自由输入交给普通消息路径（前一轮评审裁决）。
       if (!looksLikeAnswer(pending.questions, text)) continue;
       const answer = answerFromText(pending.questions, text);
       if (!answer) continue;
@@ -267,30 +290,22 @@ export class QuestionBroker {
 }
 
 /**
- * 文本是否「像」一个答案：命中选项文字、序号、多选分隔，或计划审阅的批准/继续词。
+ * 文本是否「像」一个答案。
  *
- * 只用来决定要不要认领；真正的解析仍交给 `answerFromText`。
+ * 只用来决定要不要认领；真正的解析仍交给 `answerFromText`。单题（含计划审阅）
+ * 认任意非空文本——提示语写着「或其他文字即作为修改意见」「或直接回复文字作答」，
+ * answerFromText 也把自由输入落成 custom；多题要求分段都落到选项/序号上，
+ * 整段自由输入不认领，交给普通消息路径。
  */
 export function looksLikeAnswer(questions: readonly AskQuestion[], text: string): boolean {
   const reply = text.trim();
   if (reply === '' || questions.length === 0) return false;
-
-  const plan = questions.length === 1 ? questions[0] : null;
-  if (plan?.intent?.kind === 'plan-review') {
-    const options = plan.options ?? [];
-    const approve = plan.intent.approve ?? options[0]?.label ?? '批准';
-    const keep = options.find((option) => option.label !== approve)?.label ?? '继续规划';
-    if (reply.toLowerCase() === approve.toLowerCase() || reply.toLowerCase() === keep.toLowerCase()) return true;
-    return /^(1|2|批准|通过|同意|可以|继续规划|approve|yes|y|ok|keep planning)$/i.test(reply);
-  }
+  if (questions.length === 1) return true;
 
   const segments = reply.split(/[；;。\n]+/).map((segment) => segment.trim()).filter(Boolean);
-  if (questions.length > 1) {
-    // 多题：分段数对上，且每段都能落到选项/序号上才算作答。
-    if (segments.length !== questions.length) return false;
-    return segments.every((segment, index) => resolvesToOption(questions[index], segment));
-  }
-  return resolvesToOption(questions[0], reply);
+  // 多题：分段数对上，且每段都能落到选项/序号上才算作答。
+  if (segments.length !== questions.length) return false;
+  return segments.every((segment, index) => resolvesToOption(questions[index], segment));
 }
 
 function resolvesToOption(question: AskQuestion, reply: string): boolean {

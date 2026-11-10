@@ -78,6 +78,19 @@ test('图片整段丢弃（客户端不渲染）', () => {
   assert.equal(toWeChatMarkdown('![只有图](https://example.com/a.png)'), '');
 });
 
+test('图片降级覆盖 alt 带方括号与 URL 带一层括号', () => {
+  // 这两类不匹配时会把原始标记整个留在正文里，比不处理还难看。
+  assert.equal(toWeChatMarkdown('看图 ![a[b]](https://x/y) 完'), '看图 完');
+  assert.equal(toWeChatMarkdown('![x](https://e/a(b)) 结尾'), '结尾');
+});
+
+test('输入里自带的 NUL 占位符不会被错位替换', () => {
+  // 占位符形如 NUL+序号+NUL：输入里的同形串必须先清掉，否则会吞内容或把代码段复制一份。
+  const NUL = String.fromCharCode(0);
+  assert.equal(toWeChatMarkdown(`\`x\` 与 ${NUL}0${NUL}`), '`x` 与 0');
+  assert.equal(toWeChatMarkdown(`前${NUL}0${NUL}后`), '前0后');
+});
+
 test('删除线去标记留文字（客户端不渲染）', () => {
   assert.equal(toWeChatMarkdown('~~旧结论~~ 新结论'), '旧结论 新结论');
 });
@@ -168,6 +181,27 @@ test('计划审阅按批准 / 修改意见两种作答呈现', () => {
   assert.match(text, /计划等待审阅/);
   assert.match(text, /1\. 建仓库/);
   assert.match(text, /回复「批准」开始执行/);
+});
+
+test('交互段也走降级：客户端渲染不了的标记不露出', () => {
+  const text = composeDeliveryText(
+    delivery({
+      title: '',
+      body: '',
+      interaction: {
+        questions: [{
+          id: 'plan',
+          question: '计划是否批准',
+          detail: '带 ~~删除线~~ 与 ![图](https://x/y.png)',
+          intent: 'plan-review',
+          options: [{ label: '批准' }],
+        }],
+      },
+    }),
+  );
+  assert.equal(text.includes('~~'), false, '删除线标记不能原样露出');
+  assert.equal(text.includes('!['), false, '图片标记不能原样露出');
+  assert.match(text, /带 删除线 与/);
 });
 
 test('分条：优先在换行处断开，不劈开 emoji', () => {

@@ -42,7 +42,8 @@ export function composeDeliveryText(delivery: Delivery): string {
   if (body !== '') sections.push(toWeChatMarkdown(body));
   if (delivery.interaction) {
     const interaction = renderInteraction(delivery.interaction);
-    if (interaction !== '') sections.push(interaction);
+    // 交互段与标题/正文走同一套降级：detail/选项文案里的原始标记同样不能露出。
+    if (interaction !== '') sections.push(toWeChatMarkdown(interaction));
   }
   return sections
     .join('\n\n')
@@ -61,7 +62,10 @@ export function toWeChatMarkdown(markdown: string): string {
   const guarded: string[] = [];
   const hold = (text: string) => `\u0000${guarded.push(text) - 1}\u0000`;
 
-  const body = markdown
+  // 输入里的 NUL 先清掉：占位符是 NUL+序号+NUL，输入自带同形串会被 restore
+  // 当成占位符，越界变空串（吞内容）或命中则错位复制。
+  const source = markdown.split(String.fromCharCode(0)).join('');
+  const body = source
     .replace(/\r\n?/g, '\n')
     // 代码：围栏块与行内代码先摘成占位符，里面的标记不参与下面的规则。
     .replace(/```[^\n]*\n[\s\S]*?```/g, (match) => hold(match))
@@ -73,7 +77,8 @@ export function toWeChatMarkdown(markdown: string): string {
     .replace(/\*\*[^*\n]+\*\*/g, (match) => hold(match))
     .replace(/__[^_\n]+__/g, (match) => hold(match))
     // 图片：客户端不渲染，官方实现同样整段丢弃。
-    .replace(/[ \t]*!\[[^\]]*\]\([^)]*\)/g, '')
+    // alt 允许一层方括号、URL 允许一层圆括号：不匹配会把原始标记整个留在正文里。
+    .replace(/[ \t]*!\[(?:[^\[\]]|\[[^\]]*\])*\]\((?:[^()]|\([^()]*\))*\)/g, '')
     // H5/H6：客户端不渲染这两级标记，去掉井号留文字。
     .replace(/^#{5,6}[ \t]+(.*)$/gm, '$1')
     // 删除线：客户端不渲染，去掉波浪线留文字。

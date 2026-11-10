@@ -319,7 +319,7 @@ export class WeixinRuntime {
     }
     await this.#tokenStore.hydrate(this.#loginState.account);
     this.#connect(this.#loginState);
-    this.#syncOwnFeatures();
+    this.#syncOwnFeatures('插件已启动，提问交回 Web 端');
   }
 
   /** 停机：收敛登录状态机、停轮询、通知服务端、解绑桥。 */
@@ -382,13 +382,13 @@ export class WeixinRuntime {
   /**
    * 自有功能的开合跟着启停/登录/接入开关走。
    *
-   * 关掉时把在等的问题交回：`open` 时说明是「切换到接入超级助理」，让工具调用拿到
-   * 可读的原因而不是挂在那里（Web 那边本来也在等同一份请求）。
+   * 关掉时把在等的问题交回，`reason` 由调用点给出真实原因（登出、停用、切出接入），
+   * 让工具调用拿到可读的话而不是挂在那里（Web 那边本来也在等同一份请求）。
    */
-  #syncOwnFeatures(): void {
+  #syncOwnFeatures(reason: string): void {
     const active = this.#ownFeaturesActive();
     this.#longTasks.configure(active);
-    if (!active) this.#questions.cancelAll('已切换为接入我的超级助理，提问交回 Web 端');
+    if (!active) this.#questions.cancelAll(reason);
   }
 
   /** 开始扫码登录；返回初始快照（含二维码内容）。 */
@@ -421,7 +421,7 @@ export class WeixinRuntime {
     this.#bridge = null;
     this.#binder?.bind(null);
     this.#loginState = null;
-    this.#syncOwnFeatures();
+    this.#syncOwnFeatures('已登出微信，提问交回 Web 端');
     this.#health = { state: 'down', code: 'auth-expired', reason: '已登出' };
     await this.#loginStore.clear();
     if (account) await this.#tokenStore.clearAccount(account);
@@ -435,7 +435,7 @@ export class WeixinRuntime {
     if (!enabled) this.#typing.stopAll();
     await this.#localConfig.save({ superagent: enabled });
     this.#binder?.bind(enabled ? this.#bridge : null);
-    this.#syncOwnFeatures();
+    this.#syncOwnFeatures('已切换为接入我的超级助理，提问交回 Web 端');
     return this.status();
   }
 
@@ -477,7 +477,7 @@ export class WeixinRuntime {
       await this.#stopPolling();
       this.#typing.stopAll();
     }
-    this.#syncOwnFeatures();
+    this.#syncOwnFeatures(enabled ? '插件已启用，提问交回 Web 端' : '插件已停用，提问交回 Web 端');
     return this.status();
   }
 
@@ -510,7 +510,7 @@ export class WeixinRuntime {
     });
     this.#binder?.bind(this.#superagent ? this.#bridge : null);
     this.#startPolling();
-    this.#syncOwnFeatures();
+    this.#syncOwnFeatures('已切换为接入我的超级助理，提问交回 Web 端');
   }
 
   #startPolling(): void {

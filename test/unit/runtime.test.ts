@@ -536,6 +536,33 @@ test('核心拒收入站时不开启输入状态', async () => {
   });
 });
 
+test('登出时在等的提问按真实原因交回，不套用接入切换的文案', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const tokens = new ContextTokenStore({ dir });
+    tokens.set(ACCOUNT, OWNER, 'ctx-owner');
+    await tokens.flush();
+    const api = fakeApi();
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    await runtime.start();
+    await runtime.setSuperagent(false);
+
+    const result = runtime.handleQuestion(
+      { questions: [{ id: 'q1', question: '去哪', options: [{ label: '面' }] }] },
+      () => new Promise(() => {}),
+    );
+    await waitFor(() => runtime.status().pendingQuestions > 0, '提问被接管');
+    // 先挂好结局观察，避免取消发生在 logout 的 await 点之间被判未处理 rejection。
+    const settled = result.then((value) => ({ value }), (error) => ({ error }));
+
+    await runtime.logout();
+    const outcome = await settled;
+    assert.ok('error' in outcome, '提问被取消交回');
+    assert.match(String((outcome as { error: unknown }).error), /已登出微信/);
+    await runtime.stop();
+  });
+});
+
 test('桥注册持续失败时入站记账，不静默消失', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);

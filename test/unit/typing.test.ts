@@ -11,13 +11,16 @@ interface TypingCall {
 }
 
 /** 假客户端：getconfig 回固定 ticket，sendtyping 只记账。 */
-function fakeApi(options: { ticket?: string; failConfig?: boolean; failTyping?: boolean } = {}) {
+function fakeApi(
+  options: { ticket?: string; emptyTicket?: boolean; failConfig?: boolean; failTyping?: boolean } = {},
+) {
   const configCalls: { userId: string; contextToken: string }[] = [];
   const typingCalls: TypingCall[] = [];
   const api = {
     async getConfig(params: { userId: string; contextToken: string }) {
       configCalls.push(params);
       if (options.failConfig) throw new Error('网络断了');
+      if (options.emptyTicket) return { ret: 0 };
       return { ret: 0, typing_ticket: options.ticket ?? 'tt-1' };
     },
     async sendTyping(params: TypingCall) {
@@ -97,6 +100,28 @@ test('取不到 ticket（getconfig 失败）时不发状态，退避期内不重
   indicator.start('owner-1');
   await waitFor(() => configCalls.length >= 2, '退避后重试');
   assert.equal(typingCalls.length, 0);
+  indicator.stop('owner-1');
+});
+
+test('getconfig 成功但没有 ticket：按退避重试，不按 24 小时缓存', async () => {
+  const { api, configCalls, typingCalls } = fakeApi({ emptyTicket: true });
+  const { indicator, state, errors } = makeTyping({ api });
+
+  indicator.start('owner-1');
+  await waitFor(() => configCalls.length >= 1, '第一次取 ticket');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(typingCalls.length, 0, '空 ticket 不发状态');
+  assert.equal(errors.some((line) => line.includes('空 ticket')), true, '要留日志，不能无声失声');
+
+  // 退避（2s）内不重复请求。
+  indicator.start('owner-1');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(configCalls.length, 1);
+
+  // 退避过后重试——而不是被当成成功缓存 24 小时。
+  state.now += 3_000;
+  indicator.start('owner-1');
+  await waitFor(() => configCalls.length >= 2, '退避后重试');
   indicator.stop('owner-1');
 });
 

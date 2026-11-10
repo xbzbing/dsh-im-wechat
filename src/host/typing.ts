@@ -197,6 +197,14 @@ export class TypingIndicator {
       const response = await api.getConfig({ userId, contextToken });
       if (response.ret === 0) {
         const ticket = response.typing_ticket ?? '';
+        if (ticket === '') {
+          // 成功但没拿到票：按失败退避重试，不能按 24 小时缓存——否则输入状态
+          // 会静默失声一整天，排障也无从下手。
+          const delay = Math.min(entry ? entry.delayMs * 2 : RETRY_MIN_MS, RETRY_MAX_MS);
+          this.#tickets.set(key, { ticket: '', nextFetchAt: now + delay, delayMs: delay });
+          this.#logger?.warn?.('输入状态取到空 ticket，按退避稍后重试');
+          return '';
+        }
         this.#tickets.set(key, { ticket, nextFetchAt: now + TICKET_TTL_MS, delayMs: RETRY_MIN_MS });
         return ticket;
       }

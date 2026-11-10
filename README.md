@@ -2,7 +2,7 @@
 
 把微信（WeChat，腾讯 iLink 协议）接入 DeepSeek Harness 的插件。**两种用法：独立安装**（不装核心插件，微信直接驱动 DSH 会话）**或接入我的超级助理**（作为 `dsh-my-superagent` 的 IM 桥）。
 
-> **状态：功能可用。** 协议客户端、独立模式直连会话、桥适配、图片入站与 Web 面板均已实现并通过单测；真机验收清单见 [AGENTS.md](AGENTS.md)。设计决策见 [docs/adr/](docs/adr/README.md)。
+> **状态：功能可用。** 协议客户端、独立模式直连会话、桥适配、图片入站与 Web 面板均已实现并通过单测；真机验收清单在本地 `docs/local/20261107-验收清单.md`（不入库，仅开发机可见）。设计决策见 [docs/adr/](docs/adr/README.md)。
 
 ## 两种部署方式
 

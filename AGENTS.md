@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-微信 IM 桥插件：把微信接入 DeepSeek Harness，作为 `dsh-my-superagent` 的 IM 桥（协议 `my-superagent/v1`，经 `bridges.register` 注册），把交付渲染成微信消息送达主人，把主人的消息与作答回交核心。微信侧走腾讯 iLink 协议，**只以腾讯官方 `openclaw-weixin` 的接口与协议定义为参考、自写零依赖客户端**（ADR-0001）。插件为两半式结构：host 半跑在 DSH Host 进程内，client 半是 Web 设置面板；框架与构建门禁与 `dsh-im-infoflow` 同构。
+微信 IM 桥插件：把微信接入 DeepSeek Harness，作为 `dsh-my-superagent` 的 IM 桥（协议 `my-superagent/v1`，经 `bridges.register` 注册），把交付渲染成微信消息送达主人，把主人的消息与作答回交核心；**独立安装**（不装核心）时直接驱动 DSH 会话（ADR-0009），与接入核心互斥（两种用法见 README）。微信侧走腾讯 iLink 协议，**只以腾讯官方 `openclaw-weixin` 的接口与协议定义为参考、自写零依赖客户端**（ADR-0001）。插件为两半式结构：host 半跑在 DSH Host 进程内，client 半是 Web 设置面板；框架与构建门禁与 `dsh-im-infoflow` 同构。
 
 ## 代码结构
 
@@ -16,12 +16,12 @@
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`link`（延后注册的 `BridgeBinder`） |
 | `src/host/questions.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、作答匹配、长任务提醒、根会话识别 |
 | `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`；目录 `0700`、文件 `0600`、原子写 |
-| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`owner-channel.ts` 主人收发通道（收件人解析、主人判定、发送失败记账）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`owner-channel.ts` 主人收发通道（收件人解析、主人判定、发送失败记账）、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `bin/dsh-wechat-send.mjs` | 出站命令入口，只把参数交给 `lib/src/host/cli.js`（ADR-0012） |
 | `src/host/command.ts` | 斜杠命令 `/wechat`：人用入口，复用 `cli.ts` 的解析与发送端口（ADR-0012） |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |
-| `src/shared/` | 跨上下文的纯函数：版本常量、二维码编码器 |
-| `test/unit/`、`test/fixtures/` | 单元测试与夹具 |
+| `src/shared/` | 跨上下文的纯函数：版本常量、二维码编码器、`question-text.ts` 提示语渲染（两条提问路径共用） |
+| `test/unit/` | 单元测试（每测独立临时目录） |
 | `scripts/` | `build.mjs`（host tsc + client esbuild）、`verify-package.mjs`（打包自洽校验）、`dev-bridge.mjs`（不开面板的真机自测） |
 | `docs/adr/` | 架构决策记录：选了哪条路、否决了什么、代价是什么 |
 | `docs/protocol/` | 外部协议事实：iLink 字段、微信客户端渲染、上游版本差异、真机实测 |
@@ -39,8 +39,8 @@
 - 任何密钥、令牌、登录态不进日志、审计与面板快照；需要展示时只给「已设置」与状态。
 - 子进程一律 argv 数组、不经 shell。
 - 文件不超过约 500 行；超出先拆分再加功能。
-- **自有功能与核心互斥**：`ownFeatures = 启用 && 未接入核心 && 已登录`。接入核心时不发自己的提醒，否则同一条提醒会来两遍（ADR-0006）；新增任何「主动提醒主人」的能力都要先过这个判据。
-- **失败提醒不受开关影响**：长任务提醒的开关只关「完成」提醒；宿主 `error`、`blocked`、非用户原因的 `aborted` 一律立刻提醒，主人自己停的（`reason.kind === 'user'`）不提醒。关掉开关后仍会收到失败提醒是刻意的，不要当 bug 改；判据在 `src/host/long-tasks.ts` 与 `test/unit/long-tasks.test.ts`。
+- **自有功能与核心互斥**：`ownFeatures = 启用 && 未接入核心 && 已登录 && 未停机`（与 `runtime.ts` 的 `#ownFeaturesActive` 四项一致）。接入核心时不发自己的提醒，否则同一条提醒会来两遍（ADR-0006）；新增任何「主动提醒主人」的能力都要先过这个判据。
+- **失败提醒不受开关影响**：长任务提醒的开关只关「完成」提醒；宿主 `error`、`blocked`、非用户原因的 `aborted` 一律立刻提醒，主人自己停的（`reason.reason.kind === 'user'`）不提醒。关掉开关后仍会收到失败提醒是刻意的，不要当 bug 改；判据在 `src/host/long-tasks.ts` 与 `test/unit/long-tasks.test.ts`。注意该不变量在**提醒器层**成立（直连测试覆盖）；集成层里开关与事件门同源，插件停用或接入核心时整段不进提醒——两种表述指向同一现状，别把提醒器层的不变量当集成层 bug 查。
 - 面板 RPC 契约版本（`HOST_CONTRACT` / `REQUIRED_CONTRACT`）两半必须一致：加端点或改返回结构时一起递增，否则「新面板 + 旧 host」会打到不存在的端点。
 - 凭据与 `context_token` 不进日志、不进面板快照；面板只显示账号尾号（`accountTail`）。
 - 注释只写实现逻辑与不明显的约束，不写演进过程。
@@ -52,7 +52,7 @@
 3. 改决策要新开一篇取代旧的，两篇互相标注，索引改成「被 NNNN 修订」，旧篇正文不改；只是事实变了就改 `docs/protocol/`，不要动 ADR。
 4. 先写失败的测试，再写实现，再重构。测试断言行为，不断言实现细节；修 bug 先写能复现的测试。
 5. 每完成几项功能，用 subagent 加载 `code-review-and-quality` 做隔离上下文的五轴评审（只读，不改文件）；评审结论全部处理，判断不修的写进 `docs/review/` 并说明理由（该目录 gitignore，不入库）。
-6. 按功能或模块分别提交。commit 用 Conventional Commits 前缀加中文：一行标题，正文只在有额外事实时写 2 到 4 行，只写最终实现。只本地提交，不推送。
+6. 按功能或模块分别提交。commit 用 Conventional Commits 前缀加中文：一行标题，正文只在有额外事实时写 2 到 4 行，只写最终实现。scope 用英文模块名或省略（`fix(login): …`、`fix: …`），不写中文 scope。只本地提交，不推送。
 
 ## 构建与验证
 

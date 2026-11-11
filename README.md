@@ -16,7 +16,7 @@
 | 问题提醒、长任务提醒 | 插件自己发 | 核心发 |
 | 在微信里回复问题作答 | 支持 | 支持（经核心） |
 | 命令解析、主人判定 | 插件不做，也不解析 | 由核心做 |
-| 图片作为附件入站 | 不支持（只收发文字） | 核心声明 `owner-images` 时支持 |
+| 图片作为附件入站 | 不支持（只收发文字） | 核心声明 `owner-images` 且判明是主人才支持 |
 
 ## 定位
 
@@ -24,7 +24,7 @@
 - 两半式插件：host 半（Node，协议、会话直连与桥）+ client 半（Web 设置面板）。
 - 接入核心时只做桥：不解析命令、不判断身份，消息与作答回交核心（[ADR-0003](docs/adr/0003-一期只做桥不做独立直聊.md)）。
 - 不装核心时走独立模式：主人发的文字直接提交到绑定的 DSH 会话，回答发回微信，回合在跑时可选插话或排队（[ADR-0009](docs/adr/0009-独立模式的直连会话.md)）。两种模式互斥，接入核心后独立模式整段沉默。
-- 图片只做入站，且要核心声明 `owner-images` 才下载（[ADR-0004](docs/adr/0004-图片入站与下载安全.md)）；独立模式只收发文字。
+- 图片只做入站，且要核心声明 `owner-images`、并经 `owner-lookup` 判明发送者是主人才下载（声明缺席一律按纯文本，[ADR-0004](docs/adr/0004-图片入站与下载安全.md)）；独立模式只收发文字。
 
 ## 安装
 
@@ -49,8 +49,8 @@ dsh plugin --profile web remove dsh-im-wechat
 - **绑定 PIN**：微信要求绑定 PIN 时，面板提示输入手机显示的数字；`verifyPin: true` 可在服务端强制之前提前验证这条链路（[ADR-0014](docs/adr/0014-跟随openclaw-weixin-3.0.0-beta的绑定兼容.md)）。
 - **Markdown 原样透传**：微信客户端原生渲染 Markdown，表格、代码块、标题、列表、链接都按原样显示；图片、`#####`/`######`、中文斜体与删除线的标记会被剔除（[ADR-0008](docs/adr/0008-微信原生Markdown与出站文本过滤.md)）。单条超过 1800 字按段分条（`maxText` 可配）。
 - **独立模式直连会话**：面板里从宿主的工作区列表选一个工作区；首条消息在那里建会话并复用，回答发回微信；回合正在跑时按开关决定插话还是排队；可随时「重置绑定」换会话（[ADR-0009](docs/adr/0009-独立模式的直连会话.md)）。
-- **问题提醒**：题目与选项写成文字发到微信，回复序号或文字就能作答；微信与 Web 竞答，谁先答用谁，另一边自动收起。
-- **长任务提醒**：超过阈值（默认 30 分钟，面板可改）的回合结束时，推送标题、耗时与最后结论。
+- **问题提醒**：题目与选项写成文字发到微信，回复序号或文字就能作答；微信与 Web 竞答，谁先答用谁，另一边自动收起；30 分钟没人答自动交回 Web 端。
+- **长任务提醒**：超过阈值（默认 30 分钟，面板可改）的回合结束时，推送标题、耗时与最后结论。**失败立刻提醒**：报错、被拦、非主人中止的回合不看阈值、立刻推送（主人自己停的不发）（[ADR-0011](docs/adr/0011-失败立刻提醒.md)）。
 - **只打扰该打扰的人**：只提醒主人和根会话，子代理的提问与回合不打扰。
 - **不重复提醒**：接入我的超级助理后插件自动让位，问题与长任务提醒交给核心（[ADR-0006](docs/adr/0006-问题提醒与长任务提醒归谁发.md)）。
 - **正在输入**：消息交给会话后、首段回答送达前，微信那头显示「正在输入」；真机行为不符预期时可用 `typingIndicator: false` 关掉（[ADR-0007](docs/adr/0007-输入状态.md)）。
@@ -63,8 +63,9 @@ dsh plugin --profile web remove dsh-im-wechat
 
 - 主人在微信里发消息 → 插件交给核心，命令解析、主人判定都由核心做；核心受理后到首段交付送达前显示「正在输入」。
 - 核心的交付 → 插件按 Markdown 透传发到微信，超过 1800 字分条。
+- 主人太久没开口时 `context_token` 会过期（窗口声明为 24 小时，实测 18 小时龄仍可发送），交付先挂起、等主人下次发消息再送达；桥已向核心声明这个窗口，核心会跳过硬发（[ADR-0013](docs/adr/0013-声明推送窗口.md)，数值由 [ADR-0015](docs/adr/0015-推送窗口改为24小时.md) 修订为 24 小时）。
 - 没有交互卡：核心的问题与选项由插件写成文字，主人回复序号或文字即可作答。
-- 主人在微信里发的图片会作为附件交给核心（需要核心声明 `owner-images`）。
+- 主人在微信里发的图片会作为附件交给核心（需要核心声明 `owner-images` 且判明是主人，否则按纯文本）。
 - 面板上的两个开关：**接入微信（收消息）** 控制插件是否工作；**接入我的超级助理** 决定消息与提醒归谁——打开时由核心处理，关闭后插件自己发问题提醒（与 Web 竞答）和长任务提醒。
 
 ### 独立模式
@@ -120,11 +121,15 @@ profile 的 `cordis.patch.yml` 里按 loader id 叠加配置：
 ```yaml
 - id: dsh-im-wechat
   config:
-    longTaskThresholdMinutes: 45   # 长任务提醒阈值（分钟），默认 30，范围 1–1440
-    maxText: 1800                  # 单条消息字符上限，默认 1800
-    typingIndicator: true          # 「正在输入」状态，默认开（ADR-0007）
-    verifyPin: false               # 取码时强制服务端出 PIN，仅用于提前验证（ADR-0014）
+    enabled: true                     # 静态默认「接入微信（收消息）」，面板值优先
+    superagent: true                  # 静态默认「接入我的超级助理」，面板值优先
+    longTaskThresholdMinutes: 45      # 长任务提醒阈值（分钟），默认 30，范围 1–1440
+    maxText: 1800                     # 单条消息字符上限，默认 1800
+    typingIndicator: true             # 「正在输入」状态，默认开（ADR-0007）
+    verifyPin: false                  # 取码时强制服务端出 PIN，仅用于提前验证（ADR-0014）
 ```
+
+其余键（`dataDir`、`baseUrl`、`cdnBaseUrl`、`botAgent`、`directWorkspaceId`、`directBusyMode`）见 `src/host/config.ts`。
 
 面板上改的设置（接入微信、接入我的超级助理、长任务阈值、独立模式的工作区与提交方式）落在
 `$DSH_HOME/dsh-im-wechat/config.json`（`0600`）；独立模式的会话绑定在 `direct.json`（同目录）。两者都**优先于** profile 配置，卸载重装后沿用。
@@ -148,10 +153,11 @@ node scripts/dev-bridge.mjs run
 - `src/host/direct.ts`、`src/host/state/direct-binding.ts` — 独立模式的直连会话与绑定
 - `src/host/state/` — 登录态、长轮询游标、`context_token` 与会话绑定的本机持久化
 - `src/host/superagent/` — `my-superagent/v1` 桥适配与 Markdown 呈现
-- `src/host/runtime.ts`、`src/host/panel-rpc.ts` — 运行期装配与面板 RPC
+- `src/host/runtime.ts`、`src/host/runtime-status.ts`、`src/host/inbound-pipeline.ts`、`src/host/panel-rpc.ts` — 运行期装配、状态视图、入站流水线与面板 RPC
+- `src/host/questions.ts`、`long-tasks.ts`、`typing.ts`、`answer-text.ts`、`host-agents.ts` — 自有问题提醒、长任务提醒、输入状态与根会话识别
 - `src/host/cli.ts`、`bin/dsh-wechat-send.mjs` — 出站快捷命令（ADR-0012）
 - `src/client/` — Web 设置面板
-- `src/shared/` — 跨上下文的纯函数（版本、二维码编码器）
+- `src/shared/` — 跨上下文的纯函数（版本、二维码编码器、提问提示语、文件行数上限）
 - `src/host/command.ts` — 斜杠命令 `/wechat`（人用；与 CLI 共用发送实现）
 - `docs/adr/` — 架构决策记录
 

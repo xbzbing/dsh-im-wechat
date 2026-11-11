@@ -19,7 +19,8 @@ import { ContextTokenStore } from './state/context-tokens.ts';
 import { LoginStateStore, accountTail } from './state/login-state.ts';
 import type { LoginState } from './state/login-state.ts';
 import { resolveDataDir } from './state/paths.ts';
-import { CHANNEL_VERSION, PLUGIN_VERSION } from '../shared/version.ts';
+import { CHANNEL_VERSION } from '../shared/version.ts';
+import { BotAgentStore, resolveBotAgent } from './bot-agent.ts';
 
 /** 单次最多发几张：与交付扫描的上限同量级，避免一次刷屏。 */
 export const CLI_MAX_IMAGES = 10;
@@ -192,13 +193,16 @@ export function createPorts(options: { dir: string; fetch?: typeof globalThis.fe
     return loaded;
   };
 
+  // UA 只在首次发请求前解析一次：命令读插件启动时落盘的有效值，两边发同一个标识。
+  let botAgent: string | undefined;
   const api = async () => {
     const { state } = await auth();
+    botAgent ??= resolveBotAgent(await new BotAgentStore({ dir }).load());
     return createApi({
       baseUrl: state.baseUrl,
       token: state.botToken,
       channelVersion: CHANNEL_VERSION,
-      botAgent: `dsh-im-wechat/${PLUGIN_VERSION}`,
+      botAgent,
       ...(options.fetch ? { fetch: options.fetch } : {}),
     });
   };

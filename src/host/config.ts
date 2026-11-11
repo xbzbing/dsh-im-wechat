@@ -18,7 +18,6 @@ import { readJsonIfPresent, writePrivateFile } from './state/files.ts';
 import type { StateLogger } from './state/files.ts';
 import { resolveDataDir } from './state/paths.ts';
 import { normalizeLongTaskMinutes } from './long-tasks.ts';
-import { PLUGIN_VERSION } from '../shared/version.ts';
 
 export interface PluginConfig {
   /** 静态默认开关：是否接入微信（收发）。 */
@@ -112,11 +111,6 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
 /** 解析数据目录：配置优先，其次 `$DSH_HOME/dsh-im-wechat`。 */
 export function resolveConfigDir(config: PluginConfig): string {
   return config.dataDir ?? resolveDataDir();
-}
-
-/** 默认 `bot_agent`：`产品名/版本`，符合协议的 UA 形态。 */
-export function defaultBotAgent(): string {
-  return `dsh-im-wechat/${PLUGIN_VERSION}`;
 }
 
 export interface StoredConfig {

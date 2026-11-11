@@ -40,12 +40,12 @@ import { SyncCursorStore } from './state/sync-cursor.ts';
 import {
   DEFAULT_DIRECT_BUSY_MODE,
   LocalConfigStore,
-  defaultBotAgent,
   normalizeBusyMode,
   normalizePluginConfig,
   resolveConfigDir,
 } from './config.ts';
 import type { BusyMode, PluginConfig } from './config.ts';
+import { BotAgentStore, resolveBotAgent } from './bot-agent.ts';
 import { CHANNEL_VERSION, PLUGIN_VERSION } from '../shared/version.ts';
 
 const MAX_ERRORS = 5;
@@ -56,11 +56,13 @@ export class WeixinRuntime {
   readonly #logger: RuntimeLogger;
   readonly #now: () => number;
   readonly #fetch: typeof globalThis.fetch | undefined;
-  readonly #createApi: (options: { baseUrl: string; token?: string }) => ILinkApi;
+  readonly #createApi: (options: { baseUrl: string; token?: string; botAgent: string }) => ILinkApi;
   readonly #loginStore: LoginStateStore;
   readonly #cursorStore: SyncCursorStore;
   readonly #tokenStore: ContextTokenStore;
   readonly #localConfig: LocalConfigStore;
+  readonly #botAgent: string;
+  readonly #botAgentStore: BotAgentStore;
   readonly #guard: SessionGuard;
   readonly #loginController: LoginController;
   readonly #owner: OwnerChannel;
@@ -93,12 +95,13 @@ export class WeixinRuntime {
     this.#logger = deps.logger ?? {};
     this.#now = deps.now ?? Date.now;
     this.#fetch = deps.fetch;
-    const agent = this.#config.botAgent ?? defaultBotAgent();
+    this.#botAgent = resolveBotAgent(this.#config.botAgent);
+    this.#botAgentStore = new BotAgentStore({ dir: this.#dir, logger: this.#logger });
     this.#createApi = deps.createApi ?? ((options) => createApi({
       baseUrl: options.baseUrl,
       ...(options.token !== undefined ? { token: options.token } : {}),
       channelVersion: CHANNEL_VERSION,
-      botAgent: agent,
+      botAgent: options.botAgent,
       ...(this.#fetch ? { fetch: this.#fetch } : {}),
     }));
     this.#loginStore = new LoginStateStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
@@ -155,7 +158,7 @@ export class WeixinRuntime {
       ...(this.#config.maxText !== undefined ? { maxText: this.#config.maxText } : {}),
     });
     this.#loginController = new LoginController({
-      apiFactory: (baseUrl) => this.#createApi({ baseUrl }),
+      apiFactory: (baseUrl) => this.#createApi({ baseUrl, botAgent: this.#botAgent }),
       store: this.#loginStore,
       localTokenList: () => (this.#loginState ? [this.#loginState.botToken] : []),
       logger: this.#logger,
@@ -262,6 +265,8 @@ export class WeixinRuntime {
   async start(): Promise<void> {
     if (this.#started) return;
     this.#started = true;
+    // 有效 UA 落盘给同机的 dsh-wechat-send：命令读不到宿主 profile 里的插件配置。
+    await this.#botAgentStore.save(this.#botAgent);
     const stored = await this.#localConfig.load();
     this.#enabled = stored.enabled ?? this.#config.enabled ?? true;
     this.#superagent = stored.superagent ?? this.#config.superagent ?? true;
@@ -452,7 +457,7 @@ export class WeixinRuntime {
   #connect(state: LoginState): void {
     if (this.#stopped) return;
     // 基址白名单已在状态边界（parseLoginState）与登录写入时各验一次，这里不再复检。
-    this.#api = this.#createApi({ baseUrl: state.baseUrl, token: state.botToken });
+    this.#api = this.#createApi({ baseUrl: state.baseUrl, token: state.botToken, botAgent: this.#botAgent });
     this.#guard.resume(state.account);
     this.#bridge = new WeixinBridge({
       account: state.account,

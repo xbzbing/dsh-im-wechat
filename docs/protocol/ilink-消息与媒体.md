@@ -9,6 +9,13 @@
 - `ret=-2 prepare failed` 不专指 token 过期：单条正文过长（官方仓库实测 5000 字符可发、7337 字符被拒）同样返回这一句，别用它区分「窗口关了」与「消息太长」。
 - 消息条目在 `item_list` 里，`type = 2` 是图片。
 
+## 请求壳与 `bot_agent`
+
+- 每个请求都带 `base_info: { channel_version, bot_agent }`，长轮询、发消息、上传、`getconfig`、`sendtyping` 一视同仁。
+- `bot_agent` 是 UA 形态的观测标识：**不参与鉴权，也不控制消息路由**（官方 README 原文）。同一实例下所有 agent 共享一个值，按来源区分做不到。
+- 规范：一个或多个 `Name/Version` token 空格分隔，每个可跟 ` (comment)`；仅 ASCII，总长 ≤256 字节；不合规片段在客户端清洗时静默丢弃，清洗后为空回退产品默认（官方回退 `OpenClaw`）。
+- 本插件的默认值 `dsh-im-wechat/<插件版本>`，可用插件配置 `botAgent` 覆盖；有效值在启动时落盘 `bot-agent.json`，`dsh-wechat-send` 读同一份，保证两处发出的 UA 一致（命令是独立进程，读不到宿主 profile 的插件配置）。
+
 ## 入站图片
 
 - 只给**密文引用**，没有字节：`image_item.media` 带 `encrypt_query_param`、`aes_key`、可选的 `full_url`。

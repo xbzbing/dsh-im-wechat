@@ -274,9 +274,9 @@ test('能力声明：纯文本、分条上限、无交互卡、需要先有入�
   assert.equal(bridge.capabilities.detail, false);
   assert.equal(bridge.capabilities.nativeCommands, false);
   assert.equal(bridge.capabilities.outbound.requiresPriorInbound, true);
-  // 声明窗口让核心在窗口外跳过本桥、把流量让给下一座，而不是每分钟空转（ADR-0013）。
+  // 声明窗口让核心在窗口外跳过本桥、把流量让给下一座，而不是每分钟空转（ADR-0013、0015）。
   assert.equal(bridge.capabilities.outbound.windowMs, TOKEN_WINDOW_MS);
-  assert.equal(bridge.capabilities.outbound.windowMs, 6 * 60 * 60_000);
+  assert.equal(bridge.capabilities.outbound.windowMs, 24 * 60 * 60_000);
 });
 
 test('核心能力声明决定图片下载与身份查询', () => {

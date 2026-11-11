@@ -33,12 +33,14 @@ import { MAX_TEXT_CHARS, composeDeliveryText, splitText } from './render.ts';
 export const WEIXIN_PLATFORM = 'weixin';
 
 /**
- * context_token 的声明有效期：6 小时（ADR-0013）。
+ * context_token 的声明有效期：24 小时（ADR-0015）。
  *
- * 声明过长会把注定被拒的交付排给本桥，声明过短会让还能发的窗口轮到别的桥；
- * 核心据此在窗口外跳过本桥。真实边界由 `#logWindowClosed` 记录的 token 年龄收紧。
+ * 腾讯没有公开这个值，只能取公开口径与本机实测的交集：第三方渠道一致写 24 小时，
+ * 本机 14.4 小时与 18.0 小时的 token 都发送成功（ADR-0015 的实测表）。
+ * 声明过长会把注定被拒的交付排给本桥，过短则把还能发的窗口让给别的桥；
+ * 核心据此在窗口外跳过本桥，真实边界仍由 `#logWindowClosed` 记录的 token 年龄收紧。
  */
-export const TOKEN_WINDOW_MS = 6 * 60 * 60_000;
+export const TOKEN_WINDOW_MS = 24 * 60 * 60_000;
 
 export interface BridgeLogger {
   info?(...args: unknown[]): unknown;

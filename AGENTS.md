@@ -70,6 +70,13 @@ npm run check      # 提交前门禁：typecheck + test + verify
 - 插件 info 日志只进 Cordis 内存缓冲，终端看不到；排障写测试复现或后续在面板看最近错误。
 - 本项目的 OpenViking 记忆写入项目 peer `viking://user/xubingzhen/peers/github.com-xbzbing-dsh-im-wechat/`（由仓库 origin 自动派生），不写用户级记忆。
 
+## 发布
+
+- 发布只由 `.github/workflows/release.yml` 在 master 上做（ADR-0020）：**不要手工打 tag，也不要在本地 `npm publish`**。改版本号 + 写 `docs/releases/v<版本>.md`，一起提交推上 master 即可。
+- npm 走可信发布（OIDC），仓库里不放 `NPM_TOKEN`。门禁 job 会执行依赖代码，所以它只有 `contents: read`；`id-token: write` 与 `contents: write` 只在发布 job 上——`test/unit/release.test.ts` 会拦下把这两样挪回门禁 job 的改动。
+- 版本号带 `-` 是预发布：只打 tag + 建 GitHub 预发布，不发 npm。
+- 门禁固定 node 24。node 22 的 `node --test` 会把依赖 `AbortSignal.timeout`（定时器 unref）的直连用例判成 `cancelledByParent`，在 22 上跑本地全量会看到 9 条假失败，不是产品问题。
+
 ## 安全红线
 
 - 登录态与 token 只落本机状态文件，权限收紧；不进日志、不进面板快照、不随包发布。

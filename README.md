@@ -29,7 +29,10 @@
 ## 安装
 
 ```bash
-# 安装插件本体（两种用法都先做这一步）
+# 从 npm 装正式版（推荐）
+dsh plugin --profile web add dsh-im-wechat@0.1.0
+
+# 或装本地仓库的当前源码
 dsh plugin --profile web add file:/Users/ankh/workspace/private/dsh-plugins/dsh-im-wechat
 
 # host 半改动后重装生效：先 remove，等十几秒再 add
@@ -150,6 +153,23 @@ node scripts/dev-bridge.mjs run
 
 # 提前验证绑定 PIN：先 export DSH_WECHAT_VERIFY_PIN（值为 1），再执行上面的 login
 ```
+
+## 发布
+
+发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 在 master 上执行（[ADR-0020](docs/adr/0020-发布走CI与npm可信发布.md)）：门禁 → 打 tag → `npm publish`（可信发布，OIDC，不存 `NPM_TOKEN`）→ GitHub Release（附同一个 tgz）。**不要手工打 tag，也不要在本地 `npm publish`**。
+
+```bash
+# 1. 版本号：package.json 与 package-lock.json 两处一起改
+#    带 - 的是预发布（0.2.0-rc.1）：只打 tag + 建 GitHub 预发布，不发 npm
+npm version <v> --no-git-tag-version
+
+# 2. 正文：稳定版与预发布都要写，和版本号一起提交
+$EDITOR docs/releases/v<v>.md
+git add package.json package-lock.json docs/releases/v<v>.md
+git commit -m "chore: release v<v>"
+```
+
+正文骨架见 [`.github/RELEASE_TEMPLATE.md`](.github/RELEASE_TEMPLATE.md)。中途失败直接重跑 `gh workflow run release.yml`，已完成的步骤会跳过。
 
 ## 目录
 

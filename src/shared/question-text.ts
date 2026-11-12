@@ -12,6 +12,13 @@ import type { Interaction, InteractionQuestion } from '../host/superagent/protoc
 
 export type { Interaction, InteractionQuestion };
 
+const CIRCLED_NUMBERS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+
+// 多题时题目用圆圈序号、选项用纯数字：两层都是「1.」时主人分不清在给哪一层回复。
+// 超过 20 题退回纯数字；宿主一次提问远到不了这个数。
+function questionMarker(index: number): string {
+  return CIRCLED_NUMBERS[index] ?? `${index + 1}.`;
+}
 
 export function renderInteraction(interaction: Interaction): string {
   const { questions } = interaction;
@@ -33,8 +40,11 @@ export function renderInteraction(interaction: Interaction): string {
 
   const lines: string[] = ['需要你回答的问题', ''];
   questions.forEach((question, index) => {
+    // 分隔线让主人在微信里一眼看出上一题的选项到哪结束；只在题与题之间加。
+    if (index > 0) lines.push('---', '');
     const title = question.header ? `${question.header}：${question.question}` : question.question;
-    lines.push(`${questions.length > 1 ? `${index + 1}. ` : ''}${title}${question.multiSelect ? '（可多选）' : ''}`);
+    const marker = questions.length > 1 ? `${questionMarker(index)} ` : '';
+    lines.push(`${marker}${title}${question.multiSelect ? '（可多选）' : ''}`);
     if (question.detail) lines.push('', question.detail);
     if (question.options?.length) {
       lines.push('');

@@ -154,16 +154,31 @@ test('没有交互卡：单题把选项写成带序号的文字', () => {
   assert.match(text, /回复序号选择/);
 });
 
-test('多题提示按题目顺序分行作答', () => {
+test('多题用圆圈序号区分题目，题与题之间加分隔线，选项仍用纯数字', () => {
   const text = renderInteraction({
     questions: [
-      { id: 'a', question: '第一个', options: [{ label: '甲' }] },
-      { id: 'b', question: '第二个', multiSelect: true, options: [{ label: '乙' }] },
+      { id: 'a', question: '第一个', options: [{ label: '甲' }, { label: '乙' }] },
+      { id: 'b', question: '第二个', multiSelect: true, options: [{ label: '丙' }] },
     ],
   });
-  assert.match(text, /^1\. 第一个$/m);
-  assert.match(text, /^2\. 第二个（可多选）$/m);
+  assert.match(text, /^① 第一个$/m);
+  assert.match(text, /^② 第二个（可多选）$/m);
+  assert.match(text, /^1\. 甲$/m);
+  assert.match(text, /^2\. 乙$/m);
+  assert.match(text, /^1\. 丙$/m);
+  assert.doesNotMatch(text, /^1\. 第一个$/m);
+  // 只在题与题之间分隔，末尾不再多一条。
+  assert.equal(text.match(/^---$/gm)?.length, 1);
   assert.match(text, /按题目顺序分行/);
+});
+
+test('单题不加题号与分隔线', () => {
+  const text = renderInteraction({
+    questions: [{ id: 'a', question: '只有一个', options: [{ label: '甲' }] }],
+  });
+  assert.match(text, /^只有一个$/m);
+  assert.equal(text.includes('①'), false);
+  assert.equal(text.match(/^---$/gm), null);
 });
 
 test('计划审阅按批准 / 修改意见两种作答呈现', () => {

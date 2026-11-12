@@ -252,8 +252,11 @@ jobs:
             CHANNEL=(--latest)
           fi
           # 正式版正文同时入库 docs/releases/：重跑时用文件内容覆盖页面，手工改网页会被覆盖。
+          # 页面已存在时补传一次附件（--clobber）：上一轮可能建了页面却没挂上 tgz，
+          # 而「从 Release 装」是 README 给用户的官方安装路径之一，缺附件等于半成品。
           if gh release view "v$V" >/dev/null 2>&1; then
             gh release edit "v$V" --title "v$V" --notes-file release-notes.md "${CHANNEL[@]}"
+            gh release upload "v$V" "dsh-im-wechat-$V.tgz" --clobber
           else
             gh release create "v$V" "dsh-im-wechat-$V.tgz" \
               --title "v$V" --notes-file release-notes.md --verify-tag "${CHANNEL[@]}"

@@ -68,6 +68,14 @@ test('发布前先过门禁并自检产物，正文不入库就不发', () => {
   assert.ok(notesIndex > 0 && notesIndex < publishIndex, '正文校验要排在 npm publish 之前');
 });
 
+test('Release 一定带 tgz 附件：页面已存在时补传', () => {
+  // 「从 Release 装」是 README 的官方安装路径之一，附件缺了等于半成品。
+  assert.match(release, /gh release create "v\$V" "dsh-im-wechat-\$V\.tgz"/);
+  assert.match(release, /gh release upload "v\$V" "dsh-im-wechat-\$V\.tgz" --clobber/);
+  // 预发布也要附件：npm 发不了的时候它就是唯一的安装来源。
+  assert.match(release, /CHANNEL=\(--prerelease\)/);
+});
+
 test('每一步先看状态，重跑能接着走', () => {
   for (const marker of ['tag=done', 'gh=done', 'npm=done', 'npm=skipped']) {
     assert.match(release, new RegExp(marker), `缺少幂等标记 ${marker}`);

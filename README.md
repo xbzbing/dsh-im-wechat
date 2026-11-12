@@ -29,10 +29,13 @@
 ## 安装
 
 ```bash
-# 从 npm 装正式版（推荐）
+# 1) 从 npm 装正式版（推荐）
 dsh plugin --profile web add dsh-im-wechat@0.1.0
 
-# 或装本地仓库的当前源码：先构建，再装
+# 2) 或装 GitHub Release 上的 tgz：不用构建，产物由 CI 打好
+dsh plugin --profile web add https://github.com/xbzbing/dsh-im-wechat/releases/download/v0.1.0/dsh-im-wechat-0.1.0.tgz
+
+# 3) 或装本地仓库的当前源码：先构建，再装
 cd /Users/ankh/workspace/private/dsh-plugins/dsh-im-wechat
 npm install && npm run build          # lib/ 不入库，必须先构建
 dsh plugin --profile web add file:/Users/ankh/workspace/private/dsh-plugins/dsh-im-wechat
@@ -41,6 +44,7 @@ dsh plugin --profile web add file:/Users/ankh/workspace/private/dsh-plugins/dsh-
 dsh plugin --profile web remove dsh-im-wechat
 ```
 
+- **官方产物有两条，都带 `lib/`**：npm 上的版本，和 GitHub Release 上同名同版本的 `<包名>-<版本>.tgz` 附件。两者都由 CI 在门禁之后打包（[ADR-0020](docs/adr/0020-发布走CI与npm可信发布.md)），装哪一种都不需要本地构建。
 - **本地源码安装要先构建**：`lib/` 是构建产物、不入库，`prepack` 只在 `npm pack` / `npm publish` 时跑。`file:` 安装是把目录按 `files` 清单复制进 profile，**不会**帮你构建，也不读软链接——没有 `lib/` 时装出来的包没有入口，插件加载报 `Cannot find module .../lib/index.js`。
 - `file:` 复制的是安装那一刻的产物：改完源码要 `npm run build` 再卸载重装，仓库里的 `lib/` 变了不会自动同步到已装的 profile。
 - **独立安装**：只装本插件即可，不需要 `dsh-my-superagent`。面板会显示「未接入超级助理」，插件按独立模式工作。

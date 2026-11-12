@@ -12,7 +12,7 @@ import { ACCOUNT, LOGIN, OWNER, fakeApi, fakeSuperagent, waitFor, withDir } from
 test('没有登录态时停在未登录，不起轮询', async () => {
   await withDir(async (dir) => {
     const api = fakeApi();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     await runtime.start();
     const status = runtime.status();
     assert.equal(status.loggedIn, false);
@@ -26,7 +26,7 @@ test('有登录态时连接并发起轮询，登录令牌只从状态文件来',
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);
     const api = fakeApi();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     await runtime.start();
     await waitFor(() => api.record.getUpdatesCalls > 0, '轮询启动');
     assert.equal(runtime.status().loggedIn, true);
@@ -41,7 +41,7 @@ test('扫码确认后落盘登录态并接上桥', async () => {
     const api = fakeApi();
     const superagent = fakeSuperagent();
     const binder = new BridgeBinder();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachBinder(binder);
     binder.attach(superagent.scope);
     await runtime.start();
@@ -75,7 +75,7 @@ test('入站消息转成草稿交给核心，主人判定由核心的能力声�
     const superagent = fakeSuperagent();
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachBinder(binder);
     await runtime.start();
 
@@ -96,7 +96,7 @@ test('核心不在时不注册桥，入站不报错也不回话', async () => {
     const api = fakeApi({
       batches: [[{ message_id: '1', from_user_id: OWNER, item_list: [{ type: 1, text_item: { text: 'hi' } }] }]],
     });
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     await runtime.start();
     await waitFor(() => api.record.getUpdatesCalls > 0, '轮询启动');
     const status = runtime.status();
@@ -110,7 +110,7 @@ test('停用开关会停轮询并持久化，重启后沿用', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);
     const api = fakeApi();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     await runtime.start();
     await waitFor(() => api.record.getUpdatesCalls > 0, '轮询启动');
 
@@ -124,7 +124,7 @@ test('停用开关会停轮询并持久化，重启后沿用', async () => {
     const persisted = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')) as { enabled?: boolean };
     assert.equal(persisted.enabled, false);
 
-    const restarted = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    const restarted = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
     await restarted.start();
     assert.equal(restarted.status().enabled, false);
     await restarted.stop();
@@ -139,7 +139,7 @@ test('stop() 会取消进行中的扫码登录，确认后不再连回', async (
     const superagent = fakeSuperagent();
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachBinder(binder);
     await runtime.start();
     await runtime.startLogin();
@@ -158,7 +158,7 @@ test('关掉「接入我的超级助理」会注销桥，并让自有功能生�
     const superagent = fakeSuperagent();
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
     runtime.attachBinder(binder);
     await runtime.start();
     await waitFor(() => runtime.status().bridge.registered, '桥注册');
@@ -184,7 +184,7 @@ test('关掉「接入我的超级助理」会注销桥，并让自有功能生�
 test('两项面板开关互不覆盖（合并保存）', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
     await runtime.start();
     await runtime.setEnabled(false);
     await runtime.setSuperagent(false);
@@ -201,7 +201,7 @@ test('登出清掉登录态与桥注册', async () => {
     const superagent = fakeSuperagent();
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
     runtime.attachBinder(binder);
     await runtime.start();
     await waitFor(() => runtime.status().bridge.registered, '桥注册');
@@ -216,7 +216,7 @@ test('登出清掉登录态与桥注册', async () => {
 
 test('长任务阈值默认 30 分钟，面板改的值落盘并在重启后沿用', async () => {
   await withDir(async (dir) => {
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
     await runtime.start();
     assert.equal(runtime.status().longTaskThresholdMinutes, 30);
 
@@ -227,7 +227,7 @@ test('长任务阈值默认 30 分钟，面板改的值落盘并在重启后沿�
     };
     assert.equal(persisted.longTaskThresholdMinutes, 45);
 
-    const restarted = new WeixinRuntime({ config: { dataDir: dir }, createApi: fakeApi().createApi });
+    const restarted = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
     await restarted.start();
     assert.equal(restarted.status().longTaskThresholdMinutes, 45);
     await restarted.stop();
@@ -304,7 +304,7 @@ test('面板改阈值后判定立即用新值：调低会提醒，调高不再�
     await tokens.flush();
 
     const api = fakeApi();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     await runtime.start();
     await runtime.setSuperagent(false);
     const idle = async () => { await new Promise((resolve) => setTimeout(resolve, 10)); };
@@ -346,7 +346,7 @@ test('核心受理入站后显示正在输入，交付进入投递就取消', as
     const superagent = fakeSuperagent();
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachBinder(binder);
     await runtime.start();
 
@@ -384,7 +384,7 @@ test('核心拒收入站时不开启输入状态', async () => {
     const superagent = fakeSuperagent({ rejectReason: 'not-owner' });
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachBinder(binder);
     await runtime.start();
 
@@ -402,7 +402,7 @@ test('登出时在等的提问按真实原因交回，不套用接入切换的�
     tokens.set(ACCOUNT, OWNER, 'ctx-owner');
     await tokens.flush();
     const api = fakeApi();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     await runtime.start();
     await runtime.setSuperagent(false);
 
@@ -435,7 +435,7 @@ test('桥注册持续失败时入站记账，不静默消失', async () => {
     const superagent = fakeSuperagent({ failRegister: Number.POSITIVE_INFINITY });
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachBinder(binder);
     await runtime.start();
 
@@ -465,7 +465,7 @@ test('桥注册失败后，下次入站自动补注册并当条交付', async ()
     const superagent = fakeSuperagent({ failRegister: 1 });
     const binder = new BridgeBinder();
     binder.attach(superagent.scope);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachBinder(binder);
     await runtime.start();
 

@@ -55,12 +55,12 @@ function fakeSession() {
   };
 }
 
-test('独立模式：插件在数据目录自动建「微信会话」工作区，并作为默认工作区', async () => {
+test('独立模式：插件在工作区目录自动建「微信会话」，并作为默认工作区', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);
     const api = fakeApi();
     const registry = fakeRegistry();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(registry);
     await runtime.start();
 
@@ -88,7 +88,7 @@ test('独立模式：首条消息在默认的「微信会话」工作区建会�
     });
     const registry = fakeRegistry();
     const session = fakeSession();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(registry);
     runtime.attachSessionController(session.controller);
     await runtime.start();
@@ -104,7 +104,7 @@ test('独立模式：清空工作区选择后回到默认的「微信会话」',
     await new LoginStateStore({ dir }).save(LOGIN);
     const api = fakeApi();
     const registry = fakeRegistry();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(registry);
     await runtime.start();
     await waitFor(() => runtime.status().direct.workspaceId === 'ws-1', '默认工作区生效');
@@ -121,7 +121,7 @@ test('独立模式：自动建工作区失败时记账，并退回宿主默认�
     const api = fakeApi();
     const registry = fakeRegistry();
     registry.setFailing(true);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(registry);
     await runtime.start();
 
@@ -136,7 +136,7 @@ test('独立模式：面板保存默认工作区时落成空值，重建后仍�
     await new LoginStateStore({ dir }).save(LOGIN);
     const api = fakeApi();
     const registry = fakeRegistry();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(registry);
     await runtime.start();
     await waitFor(() => runtime.status().direct.workspaceId === 'ws-1', '默认工作区生效');
@@ -154,7 +154,7 @@ test('独立模式：工作区服务重新接入后重新登记默认工作区',
     await new LoginStateStore({ dir }).save(LOGIN);
     const api = fakeApi();
     const first = fakeRegistry();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(first);
     await runtime.start();
     await waitFor(() => runtime.status().direct.workspaceId === 'ws-1', '默认工作区生效');
@@ -209,7 +209,7 @@ test('独立模式：一批消息共用一个默认工作区，不重复登记',
     });
     const registry = fakeRegistry();
     const session = fakeSession();
-    const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(registry);
     runtime.attachSessionController(session.controller);
     await runtime.start();
@@ -227,7 +227,7 @@ test('独立模式：建工作区恢复成功后清掉之前那条失败记录',
     const api = fakeApi();
     const registry = fakeRegistry();
     registry.setFailing(true);
-    const runtime = new WeixinRuntime({ config: { dataDir: dir }, createApi: api.createApi });
+    const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     runtime.attachWorkspaceRegistry(registry);
     await runtime.start();
     await waitFor(() => (runtime.status().lastError?.message ?? '').includes('自动创建工作区'), '失败记账');

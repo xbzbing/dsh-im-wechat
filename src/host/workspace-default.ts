@@ -1,6 +1,8 @@
 /**
- * 独立模式的默认工作区（ADR-0018）：插件数据目录（`$DSH_HOME/dsh-im-wechat`）下的
- * 「微信会话」。
+ * 独立模式的默认工作区（ADR-0018）：`$DSH_HOME/dsh-im-wechat` 下的「微信会话」。
+ *
+ * 这个目录只当会话 cwd，**不是**插件状态目录（ADR-0021）：状态里有 `botToken`，
+ * 会话里的文件工具能读 cwd，两者分开才不会把凭据暴露给会话。
  *
  * 宿主 `workspaceRegistry.create(path, title)` 对同一路径幂等，标题只在首次创建时生效；
  * 会话按 `workspaceId` 建，宿主据此把 cwd 定到该目录。建不出来（老宿主没有 `create`、
@@ -20,8 +22,8 @@ export const WORKSPACE_ERROR_PREFIX = '自动创建工作区失败';
 const DEFAULT_ENSURE_TIMEOUT_MS = 5_000;
 
 export interface DefaultWorkspaceOptions {
-  /** 工作区目录，同时是插件数据目录。 */
-  dir: string;
+  /** 工作区目录：会话的 cwd，与插件状态目录分开（ADR-0021）。 */
+  path: string;
   /** 取宿主工作区服务；服务晚到或缺失时返回 null。 */
   registry: () => WorkspaceRegistry | null;
   /** 失败进面板的「最近错误」。 */
@@ -71,9 +73,9 @@ export class DefaultWorkspace {
     const task = (async () => {
       try {
         // 工作区路径必须是已存在的绝对目录。
-        await ensurePrivateDir(this.#options.dir);
+        await ensurePrivateDir(this.#options.path);
         const workspace = await withTimeout(
-          create.call(registry, this.#options.dir, DEFAULT_WORKSPACE_TITLE),
+          create.call(registry, this.#options.path, DEFAULT_WORKSPACE_TITLE),
           timeoutMs,
           `等宿主创建工作区超过 ${timeoutMs}ms`,
         );

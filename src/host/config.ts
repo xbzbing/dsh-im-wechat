@@ -5,7 +5,7 @@
  * - **静态配置**来自 profile 的 patch（`enabled`、`dataDir`、`maxText`、长任务阈值等），
  *   改了要重启；
  * - **运行设置**是面板上的「接入微信」「接入我的超级助理」与长任务阈值，落在
- *   `$DSH_HOME/dsh-im-wechat/config.json`，与登录态同一个目录，卸载重装后沿用
+ *   `$DSH_HOME/.dsh-im-wechat/config.json`，与登录态同一个目录，卸载重装后沿用
  *   （与如流桥的开关语义一致）。面板值优先于静态配置。
  *
  * 外部输入（宿主给的配置对象、磁盘上的 JSON）在这里收窄成确定形状，领域内部
@@ -24,7 +24,7 @@ export interface PluginConfig {
   enabled?: boolean;
   /** 静态默认开关：是否接入「我的超级助理」。 */
   superagent?: boolean;
-  /** 覆盖数据目录（默认 `$DSH_HOME/dsh-im-wechat`）。 */
+  /** 覆盖状态目录（默认 `$DSH_HOME/.dsh-im-wechat`）；不影响默认工作区目录（ADR-0021）。 */
   dataDir?: string;
   /** 覆盖 API 域名。 */
   baseUrl?: string;
@@ -108,9 +108,10 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   return config;
 }
 
-/** 解析数据目录：配置优先，其次 `$DSH_HOME/dsh-im-wechat`。 */
+/** 解析状态目录：配置优先，其次 `$DSH_HOME/.dsh-im-wechat`。 */
 export function resolveConfigDir(config: PluginConfig): string {
-  // 这个目录同时是默认工作区（ADR-0018）：宿主的工作区 API 只收绝对路径。
+  // 只放状态（登录态、面板设置、绑定）。默认工作区是另一个目录（ADR-0021），
+  // 相对路径在 `dataDir` 上仍然按当前目录解析成绝对路径。
   return config.dataDir === undefined ? resolveDataDir() : resolve(config.dataDir);
 }
 

@@ -116,6 +116,8 @@ export interface RuntimeDeps {
   createApi?: (options: { baseUrl: string; token?: string }) => ILinkApi;
   /** 测试注入：等宿主建默认工作区的上限（默认 5 秒）。 */
   workspaceTimeoutMs?: number;
+  /** 测试注入：默认工作区目录（默认 `$DSH_HOME/dsh-im-wechat`，与状态目录分开）。 */
+  workspaceDir?: string;
 }
 
 /** 面板的工作区候选；宿主没有这个服务时 available=false，面板显示原因。 */

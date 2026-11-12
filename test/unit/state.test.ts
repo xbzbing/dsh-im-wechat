@@ -12,7 +12,7 @@ import {
 } from '../../src/host/state/login-state.ts';
 import { SyncCursorStore } from '../../src/host/state/sync-cursor.ts';
 import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
-import { resolveDataDir, safeSegment } from '../../src/host/state/paths.ts';
+import { STATE_DIR_NAME, WORKSPACE_DIR_NAME, resolveDataDir, resolveWorkspaceDir, safeSegment } from '../../src/host/state/paths.ts';
 
 async function withDir(run: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-state-'));
@@ -31,10 +31,19 @@ const LOGIN = {
   loggedInAt: 1_760_000_000_000,
 };
 
-test('数据目录跟随 DSH_HOME，缺省落到 ~/.dsh', () => {
-  assert.equal(resolveDataDir({ DSH_HOME: '/srv/dsh' }, '/home/u'), '/srv/dsh/dsh-im-wechat');
-  assert.equal(resolveDataDir({}, '/home/u'), '/home/u/.dsh/dsh-im-wechat');
-  assert.equal(resolveDataDir({ DSH_HOME: '  ' }, '/home/u'), '/home/u/.dsh/dsh-im-wechat');
+test('数据目录跟随 DSH_HOME，缺省落到 ~/.dsh，目录名带前导点', () => {
+  assert.equal(resolveDataDir({ DSH_HOME: '/srv/dsh' }, '/home/u'), '/srv/dsh/.dsh-im-wechat');
+  assert.equal(resolveDataDir({}, '/home/u'), '/home/u/.dsh/.dsh-im-wechat');
+  assert.equal(resolveDataDir({ DSH_HOME: '  ' }, '/home/u'), '/home/u/.dsh/.dsh-im-wechat');
+});
+
+test('状态目录与默认工作区是两个目录：前者带点放凭据，后者是会话 cwd', () => {
+  assert.equal(STATE_DIR_NAME, '.dsh-im-wechat');
+  assert.equal(WORKSPACE_DIR_NAME, 'dsh-im-wechat');
+  assert.equal(resolveWorkspaceDir({ DSH_HOME: '/srv/dsh' }, '/home/u'), '/srv/dsh/dsh-im-wechat');
+  assert.equal(resolveWorkspaceDir({}, '/home/u'), '/home/u/.dsh/dsh-im-wechat');
+  // 两个目录不能重合：重合就等于把 botToken 放进会话 cwd（ADR-0018 的旧代价）。
+  assert.notEqual(resolveDataDir({}, '/home/u'), resolveWorkspaceDir({}, '/home/u'));
 });
 
 test('账号 id 拼进文件名前被收窄', () => {

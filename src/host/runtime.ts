@@ -40,6 +40,7 @@ import { LoginStateStore, accountTail } from './state/login-state.ts';
 import type { LoginState } from './state/login-state.ts';
 import { DirectBindingStore } from './state/direct-binding.ts';
 import { SyncCursorStore } from './state/sync-cursor.ts';
+import { resolveWorkspaceDir } from './state/paths.ts';
 import {
   DEFAULT_DIRECT_BUSY_MODE,
   LocalConfigStore,
@@ -175,7 +176,8 @@ export class WeixinRuntime {
       onConfirmed: (state) => this.#handleConfirmed(state),
     });
     this.#defaultWorkspace = new DefaultWorkspace({
-      dir: this.#dir,
+      // 工作区与状态目录分开（ADR-0021）：会话 cwd 里不能有 login.json。
+      path: deps.workspaceDir ?? resolveWorkspaceDir(),
       registry: () => this.#workspaceRegistry,
       noteError: (message) => this.#noteError(message),
       // 恢复成功后把旧的失败横幅清掉，否则一次瞬时失败会挂到下次扫码。

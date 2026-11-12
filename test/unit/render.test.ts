@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  MAX_TEXT_BYTES,
   composeDeliveryText,
   renderInteraction,
   splitText,
@@ -219,21 +220,67 @@ test('交互段也走降级：客户端渲染不了的标记不露出', () => {
   assert.match(text, /带 删除线 与/);
 });
 
-test('分条：优先在换行处断开，不劈开 emoji', () => {
+test('分条：优先在换行处断开，不劈开 emoji（按码点度量）', () => {
   const line = '这是一行文字\n';
   const text = line.repeat(40).trimEnd();
-  const parts = splitText(text, 12);
+  const parts = splitText(text, 12, () => 1);
   assert.ok(parts.length > 1);
   for (const part of parts) {
     assert.ok(Array.from(part).length <= 12);
   }
   const emoji = '😀'.repeat(30);
-  const emojiParts = splitText(emoji, 10);
+  const emojiParts = splitText(emoji, 10, () => 1);
   assert.equal(emojiParts.join(''), emoji);
   for (const part of emojiParts) assert.equal(Array.from(part).length, 10);
 });
 
+test('按字节切分：984 字的中文回答拆成两条，每条不超过 MAX_TEXT_BYTES', () => {
+  const text = '中'.repeat(984);
+  const parts = splitText(text);
+  assert.equal(parts.length, 2);
+  for (const part of parts) assert.ok(Buffer.byteLength(part, 'utf8') <= MAX_TEXT_BYTES);
+  assert.equal(parts.join(''), text);
+});
+
+test('按字节切分优先在换行处断开，长行不从中间开始', () => {
+  const line = '中'.repeat(300);
+  const text = [line, line, line, line].join('\n');
+  const parts = splitText(text);
+  assert.ok(parts.length > 1);
+  for (const part of parts) {
+    assert.ok(Buffer.byteLength(part, 'utf8') <= MAX_TEXT_BYTES);
+    assert.ok(part.startsWith('中'), '切点落在换行上');
+  }
+  assert.equal(parts.join('\n'), text);
+});
+
+test('按字节切分不劈开 emoji', () => {
+  const text = '😀'.repeat(600);
+  const parts = splitText(text);
+  assert.equal(parts.join(''), text);
+  assert.ok(parts.every((part) => !part.includes('\uFFFD')));
+});
+
+test('边界：单个码点超限时仍单独成片，不丢内容也不死循环', () => {
+  assert.deepEqual(splitText('😀😀', 2), ['😀', '😀']);
+});
+
+test('边界：上限必须为正数', () => {
+  assert.throws(() => splitText('x', 0), RangeError);
+});
+
+test('边界：纯换行输入被跳过，不产出空片', () => {
+  assert.deepEqual(splitText('\n'.repeat(4), 3), []);
+});
+
+test('边界：正好等于上限时不切分，多一个字才拆', () => {
+  const text = '中'.repeat(500);
+  assert.equal(Buffer.byteLength(text, 'utf8'), MAX_TEXT_BYTES);
+  assert.deepEqual(splitText(text), [text]);
+  assert.equal(splitText(`${text}中`).length, 2);
+});
+
 test('短文本不分条，空文本给出空数组', () => {
-  assert.deepEqual(splitText('短', 1800), ['短']);
-  assert.deepEqual(splitText('', 1800), []);
+  assert.deepEqual(splitText('短'), ['短']);
+  assert.deepEqual(splitText(''), []);
 });

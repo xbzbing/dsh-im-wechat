@@ -28,7 +28,7 @@ import type {
   Delivery,
   Receipt,
 } from './protocol.ts';
-import { MAX_TEXT_CHARS, composeDeliveryText, splitText } from './render.ts';
+import { MAX_TEXT_BYTES, composeDeliveryText, splitText } from './render.ts';
 
 export const WEIXIN_PLATFORM = 'weixin';
 
@@ -128,7 +128,7 @@ export class WeixinBridge implements BridgeProvider {
     this.#contextTokens = options.contextTokens;
     this.#guard = options.guard;
     this.#logger = options.logger;
-    this.#maxText = options.maxText ?? MAX_TEXT_CHARS;
+    this.#maxText = options.maxText ?? MAX_TEXT_BYTES;
     this.#health = options.health;
     this.#isEnabled = options.isEnabled;
     this.#ownerId = options.ownerId;
@@ -139,7 +139,7 @@ export class WeixinBridge implements BridgeProvider {
     this.capabilities = {
       // 微信客户端原生渲染 Markdown（表格、代码块、标题都支持），见 ADR-0008。
       markdown: 'full',
-      maxText: { max: this.#maxText, unit: 'char' },
+      maxText: { max: this.#maxText, unit: 'utf8-byte' },
       detail: false,
       nativeCommands: false,
       // 每分钟最多 10 条的连发限制：待真机实测（M5），先按保守值声明，核心据此做发送节奏。

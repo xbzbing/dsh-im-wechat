@@ -20,7 +20,7 @@ import { messageOf } from './host-context.ts';
 import { textContent, withImageHint } from './prompt-parts.ts';
 import type { PromptPart } from './prompt-parts.ts';
 import type { DirectBinding, DirectBindingStore } from './state/direct-binding.ts';
-import { MAX_TEXT_CHARS, splitText, toWeChatMarkdown } from './superagent/render.ts';
+import { MAX_TEXT_BYTES, splitText, toWeChatMarkdown } from './superagent/render.ts';
 
 /** 提交方式：与 DSH 的 `InputSubmitMode` 同一套取值。 */
 export type BusyMode = 'queue' | 'steer';
@@ -106,7 +106,7 @@ export class DirectChat {
     this.#ownerLabel = options.ownerLabel;
     this.#logger = options.logger;
     this.#now = options.now ?? Date.now;
-    this.#maxText = options.maxText ?? MAX_TEXT_CHARS;
+    this.#maxText = options.maxText ?? MAX_TEXT_BYTES;
     this.#submitTimeoutMs = options.submitTimeoutMs ?? DEFAULT_SUBMIT_TIMEOUT_MS;
   }
 

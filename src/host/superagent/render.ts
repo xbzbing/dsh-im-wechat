@@ -24,8 +24,13 @@ import { renderInteraction } from '../../shared/question-text.ts';
 export { renderInteraction } from '../../shared/question-text.ts';
 import type { Delivery } from './protocol.ts';
 
-/** 桥上声明的单条字符上限。 */
-export const MAX_TEXT_CHARS = 1_800;
+/**
+ * 微信单条文本的实际可显示上限（UTF-8 字节）。
+ *
+ * 实测：572 字的中文完整显示，984 字的只显示前几条（客户端折叠，不是发送失败）。
+ * 中文一字 3 字节，取 500 中文字 ≈ 1500 字节，984 字正好拆两条、每条都能完整显示。
+ */
+export const MAX_TEXT_BYTES = 1_500;
 
 /** 中文（含日韩汉字与假名）：这些字符包在斜体里微信渲染难看，官方实现同样去标记。 */
 const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
@@ -102,31 +107,51 @@ function restore(text: string, guarded: readonly string[]): string {
   return text.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => guarded[Number(index)] ?? '');
 }
 
+export function utf8Bytes(point: string): number {
+  const code = point.codePointAt(0) ?? 0;
+  if (code < 0x80) return 1;
+  if (code < 0x800) return 2;
+  if (code < 0x10000) return 3;
+  return 4;
+}
+
 /**
- * 按字符（码点）切分，优先在换行处断开。
+ * 按 `measure` 计的宽度切分，优先在换行处断开。
  *
- * 用码点而不是 UTF-16 长度：emoji 被劈成两半会变成乱码。
+ * 生产调用按 UTF-8 字节计：微信按字节截断，中文一字 3 字节，按码点算会让 984 字
+ * 超限、客户端只显示前几条。切点落在码点边界上，emoji 不会被劈开。
+ * 测试可按码点传入 `() => 1`。
  */
-export function splitText(text: string, maxChars: number = MAX_TEXT_CHARS): string[] {
-  if (maxChars <= 0) throw new RangeError('maxChars 必须为正数');
+export function splitText(
+  text: string,
+  limit: number = MAX_TEXT_BYTES,
+  measure: (point: string) => number = utf8Bytes,
+): string[] {
+  if (limit <= 0) throw new RangeError('limit 必须为正数');
   const points = Array.from(text);
-  if (points.length <= maxChars) return text === '' ? [] : [text];
+  if (points.length === 0) return [];
+  const prefix: number[] = [0];
+  for (const point of points) prefix.push(prefix[prefix.length - 1]! + measure(point));
+  if (prefix[prefix.length - 1]! <= limit) return [text];
 
   const chunks: string[] = [];
-  let rest = points;
-  while (rest.length > maxChars) {
-    let cut = maxChars;
-    // 在容量的一半到上限之间找最近的换行，避免把一句话劈开。
-    for (let index = maxChars; index > Math.floor(maxChars / 2); index -= 1) {
-      if (rest[index - 1] === '\n') {
-        cut = index;
+  let start = 0;
+  while (start < points.length) {
+    let end = start;
+    while (end < points.length && prefix[end + 1]! - prefix[start]! <= limit) end += 1;
+    // 单个码点就超限时仍发出去，避免死循环。
+    if (end === start) end = start + 1;
+    // 在已经装下的区间里找最后一个换行（至少用掉一半容量），避免把一句话劈开。
+    let cut = end;
+    for (let probe = end; probe > start; probe -= 1) {
+      if (points[probe - 1] === '\n' && prefix[probe]! - prefix[start]! >= Math.floor(limit / 2)) {
+        cut = probe;
         break;
       }
     }
-    chunks.push(rest.slice(0, cut).join('').trimEnd());
-    rest = rest.slice(cut);
-    while (rest.length > 0 && rest[0] === '\n') rest = rest.slice(1);
+    chunks.push(points.slice(start, cut).join('').trimEnd());
+    start = cut;
+    while (start < points.length && points[start] === '\n') start += 1;
   }
-  if (rest.length > 0) chunks.push(rest.join(''));
   return chunks.filter((chunk) => chunk !== '');
 }

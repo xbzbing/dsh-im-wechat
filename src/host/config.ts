@@ -30,7 +30,7 @@ export interface PluginConfig {
   baseUrl?: string;
   /** 覆盖 CDN 基址。 */
   cdnBaseUrl?: string;
-  /** 单条消息字符上限。 */
+  /** 单条消息上限，按 UTF-8 字节计（约 500 个中文字；默认 1500）。 */
   maxText?: number;
   /** `base_info.bot_agent`。 */
   botAgent?: string;
@@ -50,7 +50,8 @@ export interface PluginConfig {
 }
 
 const MIN_MAX_TEXT = 200;
-const MAX_MAX_TEXT = 4_000;
+// 上限必须小于客户端折叠阈值：4000 字节约 1333 中文字，会落回「984 字只显示前几条」的区间。
+const MAX_MAX_TEXT = 2_048;
 
 function asString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;

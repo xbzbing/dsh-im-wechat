@@ -32,13 +32,17 @@
 # 从 npm 装正式版（推荐）
 dsh plugin --profile web add dsh-im-wechat@0.1.0
 
-# 或装本地仓库的当前源码
+# 或装本地仓库的当前源码：先构建，再装
+cd /Users/ankh/workspace/private/dsh-plugins/dsh-im-wechat
+npm install && npm run build          # lib/ 不入库，必须先构建
 dsh plugin --profile web add file:/Users/ankh/workspace/private/dsh-plugins/dsh-im-wechat
 
 # host 半改动后重装生效：先 remove，等十几秒再 add
 dsh plugin --profile web remove dsh-im-wechat
 ```
 
+- **本地源码安装要先构建**：`lib/` 是构建产物、不入库，`prepack` 只在 `npm pack` / `npm publish` 时跑。`file:` 安装是把目录按 `files` 清单复制进 profile，**不会**帮你构建，也不读软链接——没有 `lib/` 时装出来的包没有入口，插件加载报 `Cannot find module .../lib/index.js`。
+- `file:` 复制的是安装那一刻的产物：改完源码要 `npm run build` 再卸载重装，仓库里的 `lib/` 变了不会自动同步到已装的 profile。
 - **独立安装**：只装本插件即可，不需要 `dsh-my-superagent`。面板会显示「未接入超级助理」，插件按独立模式工作。
 - **接入我的超级助理**：先装好 `dsh-my-superagent`，再装本插件，然后在「微信」面板打开 **接入我的超级助理**。核心接管消息、命令、会话与提醒，独立模式那一组设置自动折叠、不生效。
 

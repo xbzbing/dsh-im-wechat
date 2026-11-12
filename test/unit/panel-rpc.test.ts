@@ -50,6 +50,7 @@ function harness(): Harness {
       return { contract: 3, direct: { bound: false, workspaceId: patch.workspaceId ?? '', busyMode: patch.busyMode ?? 'queue', running: false, available: true } };
     },
     workspaces: () => ({ items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true }),
+    workspacesView: async () => ({ items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true }),
   };
   let route: PanelRoute | null = null;
   const ctx: PluginContext = {

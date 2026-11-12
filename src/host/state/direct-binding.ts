@@ -15,7 +15,7 @@ import type { StateLogger } from './files.ts';
 
 export interface DirectBinding {
   sessionId: string;
-  /** 建会话时用的工作区 id（空表示宿主默认位置）。 */
+  /** 建会话时用的工作区 id（空表示默认工作区建不出来，用了宿主默认位置）。 */
   workspaceId: string;
   /** 绑定时间，仅用于排障。 */
   boundAt: number;

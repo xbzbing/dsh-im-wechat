@@ -95,7 +95,7 @@ async function handleEndpoint(
     case ENDPOINTS.STATUS:
       return runtime.status();
     case ENDPOINTS.WORKSPACES_LIST:
-      return runtime.workspaces();
+      return await runtime.workspacesView();
     case ENDPOINTS.LOGIN_START:
       await runtime.startLogin();
       return runtime.status().login;

@@ -6,10 +6,11 @@
  * - 独立模式：插件自己把消息提交给绑定的会话，再把这一轮的回复发回微信。接入核心后
  *   这条链路整体沉默（ADR-0006 的同一套判据：`ownFeaturesActive`），不会两边都回话。
  *
- * 会话选择只有一条规则：**第一次发消息时按配置的工作区新建，之后一直用它**。
- * 工作区是绝对路径（与 dsh-im-infoflow 的独立模式一致），空表示宿主默认位置；绑定
- * 落在 `direct.json`，重启沿用。文字与图片都交给会话：图片由本插件按 ADR-0004 的
- * 边界下载解密，再作为附件 part 交给宿主（ADR-0017）。
+ * 会话选择只有一条规则：**第一次发消息时按所选工作区新建，之后一直用它**。
+ * 工作区由 `workspaceId` 决定（默认是自动创建的「微信会话」，ADR-0018；为空只在
+ * 默认工作区建不出来时出现，表示宿主默认位置），绑定落在 `direct.json`，重启沿用。
+ * 文字与图片都交给会话：图片由本插件按 ADR-0004 的边界下载解密，再作为附件 part
+ * 交给宿主（ADR-0017）。
  */
 
 import { randomUUID } from 'node:crypto';
@@ -47,7 +48,7 @@ export interface DirectChatOptions {
   /** 取宿主会话控制器；没有注入时返回 null（组合里没有 sessionController）。 */
   controller: () => DirectController | null;
   store: DirectBindingStore;
-  /** 配置：会话要加入的工作区 id，空表示宿主默认位置。 */
+  /** 会话要加入的工作区 id；空表示默认工作区建不出来，退回宿主默认位置。 */
   workspaceId: () => string;
   /** 配置：回合在跑时再来一条消息的提交方式。 */
   busyMode: () => BusyMode;

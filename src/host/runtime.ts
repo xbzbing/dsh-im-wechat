@@ -19,7 +19,8 @@ import { SessionGuard } from './ilink/session-guard.ts';
 import { messageOf } from './host-context.ts';
 import { OwnerChannel } from './owner-channel.ts';
 import { InboundPipeline } from './inbound-pipeline.ts';
-import { HOST_CONTRACT, listWorkspaces } from './runtime-status.ts';
+import { buildStatus, listWorkspaces } from './runtime-status.ts';
+import { DefaultWorkspace, WORKSPACE_ERROR_PREFIX } from './workspace-default.ts';
 import type { RuntimeDeps, RuntimeLogger, RuntimeStatus, WorkspaceCatalog, WorkspaceRegistry } from './runtime-status.ts';
 import { TypingIndicator } from './typing.ts';
 import { QuestionBroker } from './questions.ts';
@@ -87,6 +88,7 @@ export class WeixinRuntime {
   #workspaceRegistry: WorkspaceRegistry | null = null;
   #directWorkspaceId = '';
   #directBusyMode: BusyMode = DEFAULT_DIRECT_BUSY_MODE;
+  readonly #defaultWorkspace: DefaultWorkspace;
   #stopped = false;
 
   constructor(deps: RuntimeDeps = {}) {
@@ -148,7 +150,7 @@ export class WeixinRuntime {
     this.#direct = new DirectChat({
       controller: () => this.#sessionController,
       store: this.#directStore,
-      workspaceId: () => this.#directWorkspaceId,
+      workspaceId: () => (this.#directWorkspaceId.trim() !== '' ? this.#directWorkspaceId : this.#defaultWorkspace.id),
       busyMode: () => this.#directBusyMode,
       send: (text) => this.#owner.send(text),
       isOwner: (sender) => this.#owner.isOwner(sender),
@@ -165,6 +167,17 @@ export class WeixinRuntime {
       now: this.#now,
       verifyPin: this.#config.verifyPin === true,
       onConfirmed: (state) => this.#handleConfirmed(state),
+    });
+    this.#defaultWorkspace = new DefaultWorkspace({
+      dir: this.#dir,
+      registry: () => this.#workspaceRegistry,
+      noteError: (message) => this.#noteError(message),
+      clearError: () => {
+        // 恢复成功后把旧的失败横幅清掉，否则一次瞬时失败会挂到下次扫码。
+        this.#errors = this.#errors.filter((item) => !item.message.startsWith(WORKSPACE_ERROR_PREFIX));
+      },
+      logger: this.#logger,
+      ...(deps.workspaceTimeoutMs !== undefined ? { timeoutMs: deps.workspaceTimeoutMs } : {}),
     });
     this.#pipeline = new InboundPipeline({
       enabled: () => this.#enabled,
@@ -190,10 +203,14 @@ export class WeixinRuntime {
       directAvailable: () => this.#direct.status().available,
       typingStart: (sender) => this.#typing.start(sender),
       typingStop: (sender) => this.#typing.stop(sender),
-      submitDirect: (sender, content) => this.#direct.submit(sender, content).catch((error: unknown) => {
-        this.#logger.warn?.('独立模式处理失败', messageOf(error));
-        return 'failed' as const;
-      }),
+      submitDirect: async (sender, content) => {
+        // 默认工作区没建好就建会话，会落到宿主默认位置：先确保它在这里。
+        await this.#defaultWorkspace.ensure();
+        return this.#direct.submit(sender, content).catch((error: unknown) => {
+          this.#logger.warn?.('独立模式处理失败', messageOf(error));
+          return 'failed' as const;
+        });
+      },
       setHealth: (health) => {
         this.#health = health;
       },
@@ -203,10 +220,6 @@ export class WeixinRuntime {
 
   get dir(): string {
     return this.#dir;
-  }
-
-  get bridge(): WeixinBridge | null {
-    return this.#bridge;
   }
 
   /** `agents` 服务接入（index.ts 的子 fiber）：根会话集合随服务就绪与 agent 生命周期刷新。 */
@@ -226,10 +239,14 @@ export class WeixinRuntime {
   /** `workspaceRegistry` 服务接入：面板用官方工作区列表选会话要加入哪个工作区。 */
   attachWorkspaceRegistry(registry: WorkspaceRegistry | null): void {
     this.#workspaceRegistry = registry;
+    // 服务换了（重建/解挂）就不能再沿用旧 id；服务一到就把默认工作区建出来。
+    this.#defaultWorkspace.reset();
+    if (registry) void this.#defaultWorkspace.ensure();
   }
 
-  /** 面板的工作区候选；宿主没有这个服务时 available=false，面板显示原因。 */
-  workspaces(): WorkspaceCatalog {
+  /** 面板的工作区候选：先等默认工作区建好，否则第一次打开下拉看不到「微信会话」。 */
+  async workspacesView(): Promise<WorkspaceCatalog> {
+    await this.#defaultWorkspace.ensure();
     return listWorkspaces(this.#workspaceRegistry);
   }
 
@@ -307,31 +324,23 @@ export class WeixinRuntime {
   }
 
   status(): RuntimeStatus {
-    const bridge = this.#bridge;
-    const login = this.#loginState;
-    const lastError = this.#errors[this.#errors.length - 1];
-    return {
-      contract: HOST_CONTRACT,
+    return buildStatus({
       version: PLUGIN_VERSION,
       enabled: this.#enabled,
       superagent: this.#superagent,
       ownFeatures: this.#ownFeaturesActive(),
-      ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
       pendingQuestions: this.#questions.snapshot().pending,
       trackingTasks: this.#longTasks.tracking,
       direct: this.#direct.status(),
       longTaskThresholdMinutes: this.#longTasks.thresholdMinutes,
-      loggedIn: login !== null,
-      ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
-      login: this.#loginController.snapshot(),
-      health: bridge?.health() ?? this.#health,
-      bridge: {
-        registered: this.#binder?.registered ?? false,
-        ...(this.#binder?.id ? { id: this.#binder.id } : {}),
-        features: [...(this.#binder?.features ?? [])],
-      },
-      ...(lastError ? { lastError } : {}),
-    };
+      login: this.#loginState,
+      loginSnapshot: this.#loginController.snapshot(),
+      health: this.#bridge?.health() ?? this.#health,
+      bridge: this.#binder
+        ? { registered: this.#binder.registered, ...(this.#binder.id ? { id: this.#binder.id } : {}), features: this.#binder.features }
+        : null,
+      errors: this.#errors,
+    });
   }
 
   /**
@@ -417,17 +426,23 @@ export class WeixinRuntime {
     const workspaceId = typeof patch.workspaceId === 'string' ? patch.workspaceId.trim() : undefined;
     // 工作区是外部输入：宿主能列出来就必须是其中的一个，避免绑定一个不存在的 id。
     if (workspaceId !== undefined && workspaceId !== '') {
-      const catalog = this.workspaces();
+      const catalog = listWorkspaces(this.#workspaceRegistry);
       if (catalog.available && !catalog.items.some((item) => item.id === workspaceId)) {
         throw Object.assign(new Error('所选工作区已不存在，请重新选择'), { code: 'invalid-config' });
       }
     }
     const busyMode = normalizeBusyMode(patch.busyMode);
-    if (workspaceId !== undefined) this.#directWorkspaceId = workspaceId;
+    // 选中的就是自动创建的默认工作区时落成空值：宿主重建工作区换了 id 也仍跟随默认。
+    const chosen = workspaceId !== undefined
+      && this.#defaultWorkspace.id !== ''
+      && workspaceId === this.#defaultWorkspace.id
+      ? ''
+      : workspaceId;
+    if (chosen !== undefined) this.#directWorkspaceId = chosen;
     if (busyMode !== undefined) this.#directBusyMode = busyMode;
     if (patch.reset === true) await this.#direct.reset();
     await this.#localConfig.save({
-      ...(workspaceId !== undefined ? { directWorkspaceId: workspaceId } : {}),
+      ...(chosen !== undefined ? { directWorkspaceId: chosen } : {}),
       ...(busyMode !== undefined ? { directBusyMode: busyMode } : {}),
     });
     return this.status();

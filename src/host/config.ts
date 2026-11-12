@@ -12,7 +12,7 @@
  * 不再做防御式判空（AGENTS.md）。
  */
 
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { readJsonIfPresent, writePrivateFile } from './state/files.ts';
 import type { StateLogger } from './state/files.ts';
@@ -43,7 +43,7 @@ export interface PluginConfig {
    * 默认关闭；关闭它不能阻止服务端自行要求 PIN。
    */
   verifyPin?: boolean;
-  /** 独立模式（未接入超级助理）建会话的工作区 id；空表示宿主默认位置（ADR-0009）。 */
+  /** 独立模式建会话的工作区 id；空表示自动创建的默认工作区「微信会话」（ADR-0018）。 */
   directWorkspaceId?: string;
   /** 独立模式里回合正在跑时又来一条消息的提交方式：排队（默认）或插话（ADR-0009）。 */
   directBusyMode?: BusyMode;
@@ -110,7 +110,8 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
 
 /** 解析数据目录：配置优先，其次 `$DSH_HOME/dsh-im-wechat`。 */
 export function resolveConfigDir(config: PluginConfig): string {
-  return config.dataDir ?? resolveDataDir();
+  // 这个目录同时是默认工作区（ADR-0018）：宿主的工作区 API 只收绝对路径。
+  return config.dataDir === undefined ? resolveDataDir() : resolve(config.dataDir);
 }
 
 export interface StoredConfig {
@@ -120,7 +121,7 @@ export interface StoredConfig {
   superagent?: boolean;
   /** 面板上改的长任务阈值（分钟）；缺省用静态配置或默认值。 */
   longTaskThresholdMinutes?: number;
-  /** 面板上改的独立模式工作区 id；空串表示宿主默认位置。 */
+  /** 面板上改的独立模式工作区 id；空串表示默认的「微信会话」工作区。 */
   directWorkspaceId?: string;
   /** 面板上改的独立模式提交方式。 */
   directBusyMode?: BusyMode;

@@ -5,6 +5,8 @@
  * 「状态长什么样」集中在这一份，面板契约（`HOST_CONTRACT`）也在这里定版。
  */
 
+import { accountTail } from './state/login-state.ts';
+import type { LoginState } from './state/login-state.ts';
 import type { ILinkApi } from './ilink/api.ts';
 import type { LoginSnapshot } from './ilink/login.ts';
 import type { BridgeHealth } from './superagent/protocol.ts';
@@ -16,6 +18,8 @@ export const HOST_CONTRACT = 3;
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {
   list(): readonly { id?: unknown; title?: unknown; path?: unknown }[];
+  /** 建或复用一个工作区（同一路径幂等）；老宿主没有这个方法时只读列表。 */
+  create?(path: string, title?: string): Promise<{ id?: unknown }>;
 }
 
 export interface RuntimeLogger {
@@ -59,6 +63,50 @@ export interface RuntimeStatus {
   lastError?: { at: number; message: string };
 }
 
+/** `status()` 的输入：装配层把自己持有的可变状态收成视图要的形状。 */
+export interface StatusInput {
+  version: string;
+  enabled: boolean;
+  superagent: boolean;
+  ownFeatures: boolean;
+  pendingQuestions: number;
+  trackingTasks: number;
+  direct: RuntimeStatus['direct'];
+  longTaskThresholdMinutes: number;
+  login: LoginState | null;
+  loginSnapshot: LoginSnapshot;
+  health: BridgeHealth;
+  /** 已注册的桥；核心不在时为空。 */
+  bridge: { registered: boolean; id?: string; features: readonly string[] } | null;
+  errors: readonly { at: number; message: string }[];
+}
+
+/** 装配状态 → 面板契约里的状态视图（字段合并逻辑集中在这里，配一层好测）。 */
+export function buildStatus(input: StatusInput): RuntimeStatus {
+  const { login } = input;
+  const lastError = input.errors[input.errors.length - 1];
+  return {
+    contract: HOST_CONTRACT,
+    version: input.version,
+    enabled: input.enabled,
+    superagent: input.superagent,
+    ownFeatures: input.ownFeatures,
+    ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
+    pendingQuestions: input.pendingQuestions,
+    trackingTasks: input.trackingTasks,
+    direct: input.direct,
+    longTaskThresholdMinutes: input.longTaskThresholdMinutes,
+    loggedIn: login !== null,
+    ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
+    login: input.loginSnapshot,
+    health: input.health,
+    ...(input.bridge
+      ? { bridge: { ...input.bridge, features: [...input.bridge.features] } }
+      : { bridge: { registered: false, features: [] } }),
+    ...(lastError ? { lastError } : {}),
+  };
+}
+
 export interface RuntimeDeps {
   config?: unknown;
   logger?: RuntimeLogger;
@@ -66,6 +114,8 @@ export interface RuntimeDeps {
   now?: () => number;
   /** 测试注入：造协议客户端。 */
   createApi?: (options: { baseUrl: string; token?: string }) => ILinkApi;
+  /** 测试注入：等宿主建默认工作区的上限（默认 5 秒）。 */
+  workspaceTimeoutMs?: number;
 }
 
 /** 面板的工作区候选；宿主没有这个服务时 available=false，面板显示原因。 */

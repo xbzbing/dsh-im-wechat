@@ -16,11 +16,11 @@
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`link`（延后注册的 `BridgeBinder`） |
 | `src/host/questions.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、作答匹配、长任务提醒、根会话识别 |
 | `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`；目录 `0700`、文件 `0600`、原子写 |
-| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`owner-channel.ts` 主人收发通道（收件人解析、主人判定、发送失败记账）、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`inbound.ts` 入站转换、`owner-channel.ts` 主人收发通道（收件人解析、主人判定、发送失败记账）、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`prompt-parts.ts` 提交给会话的文字/图片 part（ADR-0017）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `bin/dsh-wechat-send.mjs` | 出站命令入口，只把参数交给 `lib/src/host/cli.js`（ADR-0012） |
 | `src/host/command.ts` | 斜杠命令 `/wechat`：人用入口，复用 `cli.ts` 的解析与发送端口（ADR-0012） |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |
-| `src/shared/` | 跨上下文的纯函数：版本常量、二维码编码器、`question-text.ts` 提示语渲染（两条提问路径共用） |
+| `src/shared/` | 跨上下文的纯函数与纯类型：版本常量、二维码编码器、`media.ts` 图片类型、`question-text.ts` 提示语渲染（两条提问路径共用） |
 | `test/unit/` | 单元测试（每测独立临时目录） |
 | `scripts/` | `build.mjs`（host tsc + client esbuild）、`verify-package.mjs`（打包自洽校验）、`dev-bridge.mjs`（不开面板的真机自测） |
 | `docs/adr/` | 架构决策记录：选了哪条路、否决了什么、代价是什么 |

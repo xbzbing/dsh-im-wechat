@@ -94,9 +94,10 @@ export const en = {
   '关闭时新消息排队等待当前回合结束；打开后插入正在运行的回合。':
     'Off: new messages queue until the current turn ends. On: they are inserted into the running turn.',
   '工作区': 'Workspace',
-  '首次消息在该工作区新建会话并持续复用；留空使用宿主的默认位置。':
-    'The first message creates a session in this workspace and reuses it afterwards; leave empty for the host default location.',
-  '不指定（宿主默认位置）': 'Not specified (host default)',
+  '首次消息在该工作区新建会话并持续复用；默认使用自动创建的「微信会话」。':
+    'The first message creates a session in this workspace and reuses it afterwards; the auto-created “WeChat session” is the default.',
+  '默认（微信会话）': 'Default (WeChat session)',
+  '未选择': 'Not selected',
   '当前会话': 'Current session',
   '运行中': 'running',
   '重置绑定': 'Reset binding',

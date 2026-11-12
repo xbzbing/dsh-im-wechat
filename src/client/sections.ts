@@ -7,9 +7,9 @@
  */
 
 import { ENDPOINTS } from './constants.ts';
-import { describeHealth, describeLoginPhase, formatTime, validateMinutes } from './logic.ts';
+import { describeHealth, describeLoginPhase, formatTime, validateMinutes, workspaceOptions } from './logic.ts';
 import { h } from './platform.ts';
-import { Button, IconCopy, IconLink, Input, StateDot, Switch } from './ui.ts';
+import { Button, IconCopy, IconLink, Input, MenuPicker, StateDot, Switch } from './ui.ts';
 
 type T = (text: string) => string;
 type RpcCall = (endpoint: string, payload?: any) => Promise<any>;
@@ -307,18 +307,16 @@ export function DirectSection(props: {
             h('div', { className: 'wx-setting-copy' },
               h('span', { className: 'wx-setting-title' }, t('工作区')),
               h('span', { className: 'wx-setting-description' },
-                t('首次消息在该工作区新建会话并持续复用；留空使用宿主的默认位置。'))),
+                t('首次消息在该工作区新建会话并持续复用；默认使用自动创建的「微信会话」。'))),
             h('div', { className: 'wx-threshold-control' },
-              h('select', {
-                className: 'wx-select',
+              h(MenuPicker, {
+                label: t('工作区'),
                 value: workspaceId,
-                'aria-label': t('工作区'),
+                items: workspaceOptions(workspaces, workspaceId, t('默认（微信会话）')),
+                placeholder: t('未选择'),
                 disabled: directLocked || !workspacesReady,
-                onChange: (event: any) => onWorkspaceChange(String(event.target.value)),
-              }, [
-                h('option', { value: '' }, t('不指定（宿主默认位置）')),
-                ...workspaces.map((workspace) => h('option', { value: workspace.id }, `${workspace.title} — ${workspace.path}`)),
-              ]),
+                onChange: (next: string) => onWorkspaceChange(next),
+              }),
               h(Button, {
                 variant: 'outline',
                 size: 'sm',

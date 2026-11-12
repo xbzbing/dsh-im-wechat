@@ -13,8 +13,10 @@ import {
   isHttpsUrl,
   isLoginActive,
   qrImageUrl,
+  placeMenu,
   unwrapResult,
   validateMinutes,
+  workspaceOptions,
 } from '../../src/client/logic.ts';
 
 test('RPC 信封：成功取 value，失败抛带错误码的 Error', () => {
@@ -84,6 +86,51 @@ test('二维码链接只接受 https（防 javascript: 注入）', () => {
   assert.equal(isHttpsUrl('http://weixin.qq.com/x'), false);
   assert.equal(isHttpsUrl(''), false);
   assert.equal(isHttpsUrl(null), false);
+});
+
+test('下拉定位：正常情况落在触发器下方，宽度不足用最小宽度', () => {
+  const placed = placeMenu({ top: 100, left: 40, bottom: 130, width: 180 }, { width: 1000, height: 800 },
+    { minWidth: 240, maxHeight: 320, gap: 4, padding: 12 });
+  assert.deepEqual(placed, { top: 134, left: 40, width: 240, maxHeight: 320 });
+});
+
+test('下拉定位：右侧放不下时向左夹回视口内', () => {
+  const placed = placeMenu({ top: 100, left: 900, bottom: 130, width: 300 }, { width: 1000, height: 800 },
+    { minWidth: 240, maxHeight: 320, gap: 4, padding: 12 });
+  assert.equal(placed.left, 688);
+  assert.equal(placed.width, 300);
+});
+
+test('下拉定位：下方空间不够时向上翻转，并按空间压缩高度', () => {
+  const placed = placeMenu({ top: 500, left: 40, bottom: 530, width: 240 }, { width: 1000, height: 560 },
+    { minWidth: 240, maxHeight: 320, gap: 4, padding: 12 });
+  assert.equal(placed.maxHeight, 320);
+  assert.equal(placed.top, 176);
+});
+
+test('下拉定位：上下都不够时压到视口内，顶边不越界', () => {
+  const placed = placeMenu({ top: 4, left: 4, bottom: 34, width: 240 }, { width: 400, height: 120 },
+    { minWidth: 240, maxHeight: 320, gap: 4, padding: 12 });
+  assert.equal(placed.top, 12);
+  assert.equal(placed.maxHeight, 96);
+  assert.equal(placed.top + placed.maxHeight <= 120 - 12, true);
+});
+
+test('工作区下拉：把宿主快照转成选项，缺省时补一条默认项', () => {
+  assert.deepEqual(workspaceOptions([
+    { id: 'ws-1', title: '微信会话', path: '/Users/a/.dsh/dsh-im-wechat' },
+    { id: 'ws-2', title: '  项目  ', path: '/repo' },
+    { id: 'ws-1', title: '重复', path: '/x' },
+    { title: '没有 id' },
+  ], 'ws-1', '默认（微信会话）'), [
+    { value: 'ws-1', label: '微信会话', hint: '/Users/a/.dsh/dsh-im-wechat' },
+    { value: 'ws-2', label: '项目', hint: '/repo' },
+  ]);
+  assert.deepEqual(workspaceOptions([], '', '默认（微信会话）'), [{ value: '', label: '默认（微信会话）' }]);
+  assert.deepEqual(workspaceOptions([{ id: 'ws-1', title: '微信会话', path: '' }], '', '默认（微信会话）'), [
+    { value: '', label: '默认（微信会话）' },
+    { value: 'ws-1', label: '微信会话' },
+  ]);
 });
 
 test('时间格式化与错误描述', () => {

@@ -115,13 +115,21 @@ export const STYLES = `
 .wx-setting-row > input[type="checkbox"] { flex: none; }
 .wx-threshold-control { display: flex; align-items: center; gap: 6px; }
 .wx-minutes { width: 68px; }
-.wx-select { min-width: 0; width: 100%; height: 30px; padding: 0 8px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 12px; }
+/* 工作区下拉：触发器沿用原来 select 的尺寸，浮层见文件末尾的 .wx-menu。 */
+.wx-picker { display: flex; flex: 1 1 auto; min-width: 0; }
+.wx-picker-trigger { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 30px; padding: 0 6px 0 10px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.wx-picker-trigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.wx-picker-trigger:focus-visible { outline: none; border-color: var(--dsw-alias-state-business-primary); box-shadow: 0 0 0 3px rgba(32, 106, 238, .13); }
+.wx-picker-trigger:disabled { opacity: .5; cursor: not-allowed; }
+.wx-picker-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wx-picker-value-empty { color: var(--dsw-alias-label-tertiary); }
+.wx-picker-chevron { flex: none; color: var(--dsw-alias-label-caption); }
 /* 标题 + 控件上下排的字段块：标题与说明在上，控件独占下一行。 */
 .wx-field-block { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; border-top: .5px solid var(--dsw-alias-border-l2); }
 .wx-field-block .wx-threshold-control { width: 100%; }
-.wx-field-block .wx-select { flex: 1 1 auto; min-width: 0; max-width: 420px; }
+.wx-field-block .wx-picker { flex: 1 1 auto; min-width: 0; max-width: 420px; }
 /* 控件行里除下拉以外的控件不参与收缩，否则窄面板会把「保存」挤成两行（宿主 Button 可能包一层）。 */
-.wx-field-block .wx-threshold-control > *:not(.wx-select) { flex: none; white-space: nowrap; }
+.wx-field-block .wx-threshold-control > *:not(.wx-picker) { flex: none; white-space: nowrap; }
 /* 可折叠卡片的头部：右侧是状态说明 + 展开/收起。 */
 .wx-head-collapsible { align-items: center; flex-wrap: wrap; row-gap: 8px; }
 /* 标题块至少占 220px：窄面板里状态与「展开」按钮换到下一行，标题不被挤成一字一行。 */
@@ -133,7 +141,17 @@ export const STYLES = `
 /* 折叠箭头：收起时指右、展开时指下，纯 CSS 三角，不依赖图标包。 */
 .wx-chevron { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; transform: rotate(-90deg); transition: transform .15s; }
 .wx-chevron-open { transform: rotate(0deg); }
-.wx-select:disabled { opacity: .5; }
+.wx-menu-body { display: flex; flex-direction: column; gap: 2px; }
+.wx-menu { position: fixed; z-index: 1200; display: flex; flex-direction: column; gap: 2px; padding: 4px; overflow-y: auto; overscroll-behavior: contain; outline: none; border: .5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-lg, 10px); background: var(--dsw-alias-bg-layer-1, #fff); box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgba(0, 0, 0, .16)); color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family, inherit); }
+.wx-menu, .wx-menu * { box-sizing: border-box; }
+.wx-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: none; border-radius: 6px; background: none; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.wx-menu-item:hover:not(:disabled), .wx-menu-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover); outline: none; }
+.wx-menu-item:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
+.wx-menu-item-copy { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wx-menu-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wx-menu-item-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 15px; }
+.wx-menu-check { flex: 0 0 14px; display: grid; place-items: center; color: var(--dsw-alias-label-primary); }
+.wx-menu-check svg { width: 14px; height: 14px; }
 .wx-panel-muted { opacity: .72; }
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .wx-draft-hint { margin: 0 0 -2px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }

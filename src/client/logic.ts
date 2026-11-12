@@ -154,3 +154,83 @@ export function validateMinutes(raw: string): { ok: true; value: number } | { ok
   }
   return { ok: true, value };
 }
+
+/** 下拉菜单的一行：值、主标题与可选的说明（工作区路径）。 */
+export interface WorkspaceOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
+/**
+ * 把宿主的工作区快照转成下拉选项。
+ *
+ * 去重、丢掉没有 id 的项；标题缺失时退回 id（宿主的默认工作区一定有标题，这里只是
+ * 兜底）。`value` 为空（默认工作区还没建好）时在最前面补一条兜底项，免得下拉空白。
+ */
+export function workspaceOptions(
+  workspaces: readonly { id?: unknown; title?: unknown; path?: unknown }[],
+  value: string,
+  fallbackLabel: string,
+): WorkspaceOption[] {
+  const items: WorkspaceOption[] = [];
+  const seen = new Set<string>();
+  for (const entry of workspaces) {
+    const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+    if (id === '' || seen.has(id)) continue;
+    seen.add(id);
+    const title = typeof entry.title === 'string' && entry.title.trim() !== '' ? entry.title.trim() : id;
+    const path = typeof entry.path === 'string' ? entry.path.trim() : '';
+    items.push({ value: id, label: title, ...(path !== '' ? { hint: path } : {}) });
+  }
+  if (value === '') items.unshift({ value: '', label: fallbackLabel });
+  return items;
+}
+
+/** 下拉浮层的落点：视口内固定定位的 top/left/width/maxHeight。 */
+export interface MenuPlacement {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+}
+
+/** 触发器与视口的矩形（只取定位用到的边）。 */
+export interface MenuAnchorRect {
+  top: number;
+  left: number;
+  bottom: number;
+  width: number;
+}
+
+export interface MenuPlacementOptions {
+  minWidth: number;
+  maxHeight: number;
+  gap: number;
+  padding: number;
+}
+
+/**
+ * 算下拉浮层的位置：默认贴在触发器下方，下方空间不够就向上翻，左右夹回视口内。
+ *
+ * 纯数学，放在这里是为了能直接单测（组件里只负责取 rect 与 setState）。
+ */
+export function placeMenu(rect: MenuAnchorRect, viewport: { width: number; height: number }, options: MenuPlacementOptions): MenuPlacement {
+  const width = Math.max(rect.width, options.minWidth);
+  const left = Math.max(options.padding, Math.min(rect.left, viewport.width - width - options.padding));
+  const below = viewport.height - rect.bottom - options.gap - options.padding;
+  const above = rect.top - options.gap - options.padding;
+  // 下方连一半都放不下、上方更宽裕时向上翻（和原生 select 的行为一致）。
+  const openUp = below < options.maxHeight / 2 && above > below;
+  const space = openUp ? above : below;
+  // 上下都不够时先保证不超出视口：视口内可用高度是硬上限。
+  const available = Math.max(24, viewport.height - options.padding * 2);
+  const maxHeight = Math.round(Math.min(options.maxHeight, available, Math.max(120, space)));
+  const top = openUp ? rect.top - maxHeight - options.gap : rect.bottom + options.gap;
+  return {
+    top: Math.round(Math.max(options.padding, Math.min(top, viewport.height - maxHeight - options.padding))),
+    left: Math.round(left),
+    width: Math.round(width),
+    maxHeight,
+  };
+}

@@ -13,6 +13,9 @@ import {
   isHttpsUrl,
   isLoginActive,
   qrImageUrl,
+  MENU_SURFACE_CLASS,
+  MENU_Z_INDEX,
+  menuSurfaceStyle,
   placeMenu,
   unwrapResult,
   validateMinutes,
@@ -114,6 +117,33 @@ test('下拉定位：上下都不够时压到视口内，顶边不越界', () =>
   assert.equal(placed.top, 12);
   assert.equal(placed.maxHeight, 96);
   assert.equal(placed.top + placed.maxHeight <= 120 - 12, true);
+});
+
+test('下拉浮层用固定定位，落点写进内联样式', () => {
+  const placed = placeMenu({ top: 100, left: 40, bottom: 130, width: 180 }, { width: 1000, height: 800 },
+    { minWidth: 240, maxHeight: 320, gap: 4, padding: 12 });
+  assert.deepEqual(menuSurfaceStyle(placed), {
+    position: 'fixed',
+    zIndex: MENU_Z_INDEX,
+    top: 134,
+    left: 40,
+    width: 240,
+    maxHeight: 320,
+  });
+});
+
+test('下拉浮层没有落点时先藏起来，不闪一个 0,0 的框', () => {
+  assert.deepEqual(menuSurfaceStyle(null), { position: 'fixed', top: 0, left: 0, visibility: 'hidden' });
+});
+
+test('下拉浮层的类名在样式表里存在，并且挂在 MenuSurface 上', () => {
+  const css = readFileSync(new URL('../../src/client/styles.ts', import.meta.url), 'utf8');
+  const rule = css.match(new RegExp(`\\.${MENU_SURFACE_CLASS}\\s*\\{([^}]*)\\}`));
+  assert.ok(rule, `styles.ts 里没有 .${MENU_SURFACE_CLASS} 规则`);
+  assert.match(rule[1] ?? '', /position:\s*fixed/);
+  assert.match(rule[1] ?? '', new RegExp(`z-index:\\s*${MENU_Z_INDEX}`));
+  const ui = readFileSync(new URL('../../src/client/ui.ts', import.meta.url), 'utf8');
+  assert.match(ui, /className:\s*MENU_SURFACE_CLASS/, 'ui.ts 没把类名交给 MenuSurface，浮层会没有材质与层级');
 });
 
 test('工作区下拉：把宿主快照转成选项，缺省时补一条默认项', () => {

@@ -234,3 +234,27 @@ export function placeMenu(rect: MenuAnchorRect, viewport: { width: number; heigh
     maxHeight,
   };
 }
+
+/** 浮层表面的类名：样式表里的 `.wx-menu` 负责材质、圆角、滚动与层级。 */
+export const MENU_SURFACE_CLASS = 'wx-menu';
+
+/** 浮层层级：压过设置页的滚动容器与宿主弹窗遮罩，低于命令面板。 */
+export const MENU_Z_INDEX = 1200;
+
+/**
+ * 把落点拼成浮层的固定定位样式。
+ *
+ * `position` 写进内联样式而不是只靠类名：漏挂类名时浮层会退回静态流，看起来
+ * 就是「点了没反应」。拿不到落点（首帧、测试环境）时先藏起来。
+ */
+export function menuSurfaceStyle(placement: MenuPlacement | null): Record<string, number | string> {
+  if (!placement) return { position: 'fixed', top: 0, left: 0, visibility: 'hidden' };
+  return {
+    position: 'fixed',
+    zIndex: MENU_Z_INDEX,
+    top: placement.top,
+    left: placement.left,
+    width: placement.width,
+    maxHeight: placement.maxHeight,
+  };
+}

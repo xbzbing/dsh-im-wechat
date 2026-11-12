@@ -5,7 +5,7 @@
  * 朴素实现——插件是可选能力，白屏比少几个圆角严重得多。
  */
 
-import { placeMenu } from './logic.ts';
+import { MENU_SURFACE_CLASS, menuSurfaceStyle, placeMenu } from './logic.ts';
 import { h, optionalRequire, useCallback, useEffect, useRef, useState } from './platform.ts';
 
 const UI = (optionalRequire('@deepseek-ai/dsh-client-ui-primitives') ?? {}) as Record<string, any>;
@@ -72,14 +72,13 @@ export async function copyText(text: string): Promise<boolean> {
  * 浮层用 portal + `position: fixed`：设置页外层可滚动，绝对定位会被祖先的 overflow
  * 裁掉。菜单不自己收：选中后由调用方 `onChange`，组件随即关闭。
  */
-const MENU_HIDDEN_STYLE = { position: 'fixed', top: 0, left: 0, visibility: 'hidden' } as const;
 const MENU_PLACEMENT = { minWidth: 240, maxHeight: 320, gap: 4, padding: 12 } as const;
 
 const ReactDOM = optionalRequire('react-dom');
 const portal = typeof ReactDOM?.createPortal === 'function' ? ReactDOM.createPortal : null;
 
 /** 浮层里的选项列表：外层 MenuSurface 给材质，内层 div 收键盘与焦点。 */
-export function OptionMenu({ label, items, value, disabled, onSelect, onKeyDown, menuRef, style }: any) {
+export function OptionMenu({ label, items, value, disabled, onSelect, onKeyDown, menuRef, placement }: any) {
   const entries = (items ?? []).map((item: any) => h('button', {
     key: item.value,
     type: 'button',
@@ -98,10 +97,11 @@ export function OptionMenu({ label, items, value, disabled, onSelect, onKeyDown,
   return h(MenuSurface, {
     'data-dsh-wx-menu': '',
     'data-dsh-wx-menu-root': '',
+    className: MENU_SURFACE_CLASS,
     role: 'menu',
     'aria-label': label,
     // 首帧还拿不到触发器的 rect 时先藏着：MenuSurface 要真实尺寸才铺得开材质。
-    style: style ?? MENU_HIDDEN_STYLE,
+    style: menuSurfaceStyle(placement ?? null),
   }, h('div', { ref: menuRef, className: 'wx-menu-body', role: 'presentation', onKeyDown }, entries));
 }
 
@@ -250,7 +250,7 @@ export function MenuPicker({ label, value, items, disabled, placeholder, onChang
     disabled,
     menuRef,
     onKeyDown: onMenuKeyDown,
-    style: position ?? MENU_HIDDEN_STYLE,
+    placement: position,
     onSelect: (next: string) => {
       setOpen(false);
       // 选完把焦点还给触发器，键盘用户不会落回 body。

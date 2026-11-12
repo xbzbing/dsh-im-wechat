@@ -1,0 +1,44 @@
+name: ci
+
+# 只读门禁：push 到 master、PR、手动触发都跑这一份。
+# 发布（打 tag、发 npm、建 Release）在 release.yml 里，两个 workflow 刻意分开，
+# 这个文件不持有任何写权限。
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支上新的推送直接作废上一轮：门禁只关心最新提交。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check
+    # 固定镜像而不是 ubuntu-latest：滚动标签换版时会连带换掉 git/npm 基线。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          # engines 写的是 22.19+，但 node 22 的 --test 运行器会把依赖
+          # AbortSignal.timeout（定时器 unref）的直连用例判成 cancelledByParent，
+          # 门禁固定 24；引擎下限仍然对使用者有效。
+          node-version: '24.x'
+          cache: npm
+
+      # package-lock.json 入库，零运行时依赖：npm ci 只装类型与打包工具。
+      - name: Install
+        run: npm ci
+
+      # typecheck + 单测 + 打包自洽（产物可由源码确定性重建、files 白名单、
+      # bin 的 shebang 与真实打包清单）。
+      - name: Check
+        run: npm run check

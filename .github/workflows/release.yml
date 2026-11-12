@@ -1,0 +1,268 @@
+name: release
+
+# 版本发布由 master 上一笔改到 package.json 的提交驱动（ADR-0020）：
+# 先跑门禁，再给发布提交打 tag，然后 npm publish（可信发布，OIDC），最后建 GitHub Release
+# 并把同一个 tgz 挂上去。带 `-` 的版本视为预发布：只打 tag + 建 GitHub 预发布，不发 npm。
+#
+# 每一步都先看状态，所以中途失败可以直接重跑：已有的 tag 会核对版本号而不是跳过，
+# npm 上已存在的版本、已存在的 Release 都只补剩下那几步。
+#
+# 两个 job 是有意的：gate 会装开发依赖并执行它们的代码（npm ci 的脚本、tsc、esbuild、
+# 测试），所以它不该拿到能推 tag 或签 OIDC 身份的凭据——那里的供应链一旦被污染，
+# 就能用合法来源证明发布一个包。gate 只读、把 tgz 交给 artifact；release 不跑任何
+# 依赖代码，只打 tag、发布那个 tgz、写 Release。
+on:
+  push:
+    branches: [master]
+    paths: [package.json]
+  workflow_dispatch:
+
+# 整个 workflow 的默认权限；release 只为自己放宽。
+permissions:
+  contents: read
+
+# 一次只发一个版本，也绝不中途取消（npm publish 与 tag、Release 不是事务关系）。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # 手动从别的分支触发不许发布：tag 与 Release 必须描述 master 上的提交。
+    if: github.ref == 'refs/heads/master'
+    steps:
+      # 不保留凭据：这个 job 不推送，token 没有理由躺在 .git/config 里陪着依赖代码跑。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      # 先看这个版本已经走到哪一步，再决定要不要花时间跑门禁。
+      - id: state
+        name: Release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          V=$(node -p "require('./package.json').version")
+          # 版本号会决定 tag 名与发布命令，只经 env 传给后续步骤，不拼进脚本里。
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::package.json version '$V' is not a release version"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          case "$V" in
+            *-*) PRE=true ;;
+            *)   PRE=false ;;
+          esac
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          # 随 artifact 交给 release job：那个 job 没有 checkout，不该再猜一遍版本。
+          printf 'V=%s\nPRERELEASE=%s\n' "$V" "$PRE" > release-state.env
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # 已有 tag 时按「tag 指向的提交里的 version」判断，而不是比 SHA：
+          # 之后 master 上动了 package.json 但没升版本的提交也要能重跑并补完剩下的步骤。
+          if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/v$V" >/dev/null 2>&1; then
+            echo "tag=done" >> "$GITHUB_OUTPUT"
+            # 浅克隆没有 tag，只取这一个；显式 refspec 不会建本地 tag，
+            # 所以从 FETCH_HEAD 读文件（`:path` 会把 annotated tag 剥到提交）。
+            if TV=$(git fetch --quiet --depth=1 "$REMOTE" "refs/tags/v$V" \
+                && git show FETCH_HEAD:package.json \
+                | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))') \
+              && [ -n "$TV" ]; then
+              if [ "$TV" != "$V" ]; then
+                echo "::error::tag v$V points at a commit whose package.json version is '$TV', not '$V'"
+                exit 1
+              fi
+            else
+              echo "::error::could not read package.json from tag v$V — refusing to guess whether it was released"
+              exit 1
+            fi
+          fi
+          gh release view "v$V" >/dev/null 2>&1 && echo "gh=done" >> "$GITHUB_OUTPUT" || true
+          # npm 只参与正式版：预发布从不发布，这里也直接标成跳过。
+          if [ "${V#*-}" = "$V" ]; then
+            npm view "dsh-im-wechat@$V" version >/dev/null 2>&1 && echo "npm=done" >> "$GITHUB_OUTPUT" || true
+          else
+            echo "npm=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 发布正文来自 docs/releases/v<版本>.md，随发版提交一起入库、一起评审。
+      # 缺文件必须在不可逆的 npm publish 之前失败。
+      - id: notes
+        name: Release notes
+        env:
+          V: ${{ steps.state.outputs.version }}
+        run: |
+          set -euo pipefail
+          FILE="docs/releases/v$V.md"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::$FILE is missing — write it from .github/RELEASE_TEMPLATE.md and commit it with the version bump"
+            exit 1
+          fi
+          cp "$FILE" release-notes.md
+          echo "file=release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Gate
+        if: steps.state.outputs.npm != 'done' || steps.state.outputs.tag != 'done' || steps.state.outputs.gh != 'done'
+        env:
+          V: ${{ steps.state.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm ci
+          # 门禁里已经重建过 lib/，打包仍显式再跑一次：产物不依赖测试的副作用。
+          npm run check
+          npm pack
+          mkdir -p pkg && tar -xzf "dsh-im-wechat-$V.tgz" -C pkg
+          node scripts/assert-pack.mjs pkg/package
+
+      # tgz 跨 job 走 artifact：发布那个 job 既不用 checkout 源码，也不用装依赖。
+      # 总是上传：重跑时门禁会被跳过，release 仍需要版本与正文来决定还剩什么没做。
+      # overwrite：同一轮重跑会重传同名 artifact，默认的 false 会撞名失败。
+      - name: Hand the tarball to the release job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-tarball
+          overwrite: true
+          path: |
+            release-state.env
+            release-notes.md
+            dsh-im-wechat-*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: github.ref == 'refs/heads/master'
+    # 发布路径需要的两样能力，只在这里声明：这个 job 不跑依赖代码。
+    permissions:
+      contents: write   # 推 tag、建 / 改 Release
+      id-token: write   # npm 的可信发布（OIDC）
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: release-tarball
+
+      # 只为拿 node 与 npm：这个 job 没有 checkout，也没有 lockfile 可缓存。
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24.x'
+
+      # 可信发布要 npm 11.5.1 以上才会拿 OIDC 换临时令牌；runner 自带的版本更旧就升一次。
+      - name: npm CLI for OIDC
+        run: |
+          set -euo pipefail
+          if printf '11.5.1\n%s\n' "$(npm --version)" | sort -V -C; then
+            npm --version
+          else
+            npm install -g npm@latest --no-fund --no-audit
+            npm --version
+          fi
+
+      # 门禁已经确认过的事实在这里重新取一遍，所以这个 job 不需要源码：
+      # 哪个版本、是不是预发布、还剩哪些步骤。
+      - id: state
+        name: Release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # 没有 checkout 时 gh 只从 GH_REPO 解析仓库（不在 git 目录里它不读 GITHUB_REPOSITORY）。
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . ./release-state.env
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::release state carries no release version ('$V')"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          # 与 gate 里的判定同源：两个 job 之间 tag 被建出来或被挪走都在这里兜住
+          # （gate → release 的 TOCTOU 窗口）。
+          if git ls-remote --exit-code --tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/v$V" >/dev/null 2>&1; then
+            echo "tag=done" >> "$GITHUB_OUTPUT"
+            # 没有 checkout，只能走 API 在 tag 的 ref 上读这个文件；读不到就失败，不猜。
+            if TV=$(gh api "repos/${GITHUB_REPOSITORY}/contents/package.json?ref=v$V" --jq .content \
+                | base64 --decode \
+                | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))') \
+              && [ -n "$TV" ]; then
+              if [ "$TV" != "$V" ]; then
+                echo "::error::tag v$V points at a commit whose package.json version is '$TV', not '$V'"
+                exit 1
+              fi
+            else
+              echo "::error::could not read package.json from tag v$V — refusing to guess whether it was released"
+              exit 1
+            fi
+          fi
+          gh release view "v$V" >/dev/null 2>&1 && echo "gh=done" >> "$GITHUB_OUTPUT" || true
+          if [ "${V#*-}" = "$V" ]; then
+            npm view "dsh-im-wechat@$V" version >/dev/null 2>&1 && echo "npm=done" >> "$GITHUB_OUTPUT" || true
+          else
+            echo "npm=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag
+        if: steps.state.outputs.tag != 'done'
+        env:
+          V: ${{ steps.state.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init --quiet tagname
+          cd tagname
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --quiet --depth=1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${GITHUB_SHA}"
+          git tag -a "v$V" -m "v$V" FETCH_HEAD
+          # token 只出现在这一次 push 的 URL 里，不落盘。
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/v$V"
+
+      # 可信发布（OIDC）：不配 NPM_TOKEN，npm 用 Actions 的 OIDC 身份换一次性发布令牌，
+      # 并自动附上来源证明（provenance）。npmjs.com 那边要把这个仓库的这个 workflow
+      # 配成该包的可信发布者（ADR-0020）。
+      - name: Publish to npm
+        if: steps.state.outputs.prerelease != 'true' && steps.state.outputs.npm != 'done'
+        env:
+          V: ${{ steps.state.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm publish "dsh-im-wechat-$V.tgz" --provenance --access public
+
+      - name: GitHub Release
+        if: steps.state.outputs.gh != 'done'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # 没有 checkout：gh 只从 GH_REPO 解析仓库。
+          GH_REPO: ${{ github.repository }}
+          V: ${{ steps.state.outputs.version }}
+          PRERELEASE: ${{ steps.state.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = "true" ]; then
+            CHANNEL=(--prerelease)
+          else
+            CHANNEL=(--latest)
+          fi
+          # 正式版正文同时入库 docs/releases/：重跑时用文件内容覆盖页面，手工改网页会被覆盖。
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release edit "v$V" --title "v$V" --notes-file release-notes.md "${CHANNEL[@]}"
+          else
+            gh release create "v$V" "dsh-im-wechat-$V.tgz" \
+              --title "v$V" --notes-file release-notes.md --verify-tag "${CHANNEL[@]}"
+          fi
+
+  # 从非 master 手动触发时不发布任何东西；没有这一段，这一轮会两个 job 都跳过、静默变绿。
+  notice:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: github.ref != 'refs/heads/master'
+    steps:
+      - run: echo "::notice::release runs on master only; ref ${GITHUB_REF} triggered no release action"

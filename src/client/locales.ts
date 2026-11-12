@@ -88,8 +88,8 @@ export const en = {
   '展开': 'Expand',
   '接入超级助理后，会话与模型由核心决定；关闭上方开关即可启用独立模式。':
     'With My Superagent connected, the core decides the session and model. Turn the switch above off to enable standalone mode.',
-  '未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，回答发回微信。':
-    'Without My Superagent, this plugin talks to the session directly: the first message creates a session in the chosen workspace, and answers come back to WeChat.',
+  '未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，文字与图片交给会话，回答发回微信。':
+    'Without My Superagent, this plugin talks to the session directly: the first message creates a session in the chosen workspace, text and images go to the session, and answers come back to WeChat.',
   '回合内插话': 'Steer within a running turn',
   '关闭时新消息排队等待当前回合结束；打开后插入正在运行的回合。':
     'Off: new messages queue until the current turn ends. On: they are inserted into the running turn.',

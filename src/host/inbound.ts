@@ -1,9 +1,9 @@
 /**
- * 入站转换：iLink 消息 → `OwnerMessageDraft`。
+ * 入站转换：iLink 消息 → `OwnerMessageDraft`，以及图片下载的统一入口。
  *
- * 桥在这里**只做搬运**：文本原样交出去，命令匹配、主人判定都由核心做（AGENTS.md
- * 「安全红线」）。唯一有立场的地方是图片——下载有边界（ADR-0004），所以要先问
- * 核心「这条消息的发送者是不是主人」。
+ * 桥在这里**只做搬运**：文本原样交出去，命令匹配由核心做（AGENTS.md「安全红线」）。
+ * 唯一有立场的地方是图片——下载有边界（ADR-0004）：核心模式要核心声明 `owner-images`
+ * 并判明发送者是主人，独立模式没有核心可声明，用登录态判明的主人（ADR-0017）。
  */
 
 import { DEFAULT_CDN_BASE_URL } from './ilink/api.ts';
@@ -22,20 +22,26 @@ export interface InboundLogger {
   warn?(...args: unknown[]): unknown;
 }
 
-export interface InboundOptions {
+/** 下载入站图片的选项：调用方用 `senderIsOwner` 声明「这条消息的图可以下载」。 */
+export interface ImageDownloadOptions {
+  cdnBaseUrl?: string;
+  fetch?: typeof globalThis.fetch;
+  /** 停机/停轮询时取消在途的下载。 */
+  signal?: AbortSignal;
+  logger?: InboundLogger;
+  maxImageBytes?: number;
+  /** 主人才下载：核心模式由 `owner-lookup` 判，独立模式由登录态判（ADR-0004、ADR-0017）。 */
+  senderIsOwner: (sender: string) => boolean;
+}
+
+export interface InboundOptions extends Omit<ImageDownloadOptions, 'senderIsOwner'> {
   /** 机器人账号，参与消息身份的构造。 */
   account: string;
-  cdnBaseUrl?: string;
   /** 核心声明了 `owner-images` 才下载图片。 */
   imagesEnabled?: boolean;
   /** 核心声明了 `owner-lookup` 时传入；不传或判不了则不下载，图片按纯文本处理（ADR-0004）。 */
   senderIsOwner?: (sender: string) => boolean;
-  fetch?: typeof globalThis.fetch;
-  /** 停机/停轮询时取消在途的图片下载。 */
-  signal?: AbortSignal;
-  logger?: InboundLogger;
   now?: () => number;
-  maxImageBytes?: number;
 }
 
 const EXTENSION: Record<OwnerImage['mediaType'], string> = {
@@ -93,17 +99,37 @@ export async function toOwnerMessageDraft(
 }
 
 async function collectImages(message: WeixinMessage, options: InboundOptions): Promise<OwnerImage[]> {
-  if (options.imagesEnabled !== true) return [];
-  // 身份判不了（未声明 owner-lookup）与判出非主人一样整条不下载（ADR-0004）：
+  const { senderIsOwner } = options;
+  if (options.imagesEnabled !== true || !senderIsOwner) return [];
+  // 核心声明缺席（或判不了身份）与判出非主人一样整条不下载（ADR-0004）：
   // fail-open 会让任意微信用户发图就驱动本机出站下载。
-  if (!options.senderIsOwner || !options.senderIsOwner(message.from_user_id ?? '')) return [];
+  return downloadOwnerImages(message, { ...options, senderIsOwner });
+}
 
-  const items = imageItems(message.item_list).slice(0, OWNER_IMAGES_MAX);
-  if (items.length === 0) return [];
+/**
+ * 下载主人这条消息里的图片，组装成核心草稿用的 `OwnerImage`（独立模式再由
+ * `prompt-parts` 转成会话的 prompt part）。
+ *
+ * 准入只有一道闸：`senderIsOwner`。核心模式在调用前还要过 `owner-images` 声明
+ * （`collectImages`），独立模式没有核心可声明，主人身份由登录态给定（ADR-0017）。
+ * 不是通用下载器：任何新调用点都得先能证明「发送者是主人」。
+ */
+export async function downloadOwnerImages(
+  message: WeixinMessage,
+  options: ImageDownloadOptions,
+): Promise<OwnerImage[]> {
+  if (!options.senderIsOwner(message.from_user_id ?? '')) return [];
+
+  const items = imageItems(message.item_list);
+  if (items.length > OWNER_IMAGES_MAX) {
+    options.logger?.warn?.(`一条消息带 ${items.length} 张图，只取前 ${OWNER_IMAGES_MAX} 张`);
+  }
+  const selected = items.slice(0, OWNER_IMAGES_MAX);
+  if (selected.length === 0) return [];
 
   // 并发下载：串行 9 张每张 15s 上限会把长轮询卡死 135 秒；并发后整条消息
   // 的图片阶段最多耗时一张的超时。顺序按 index 对齐，失败的项跳过不挪位。
-  const results = await Promise.all(items.map(async ({ item, itemId }, index) => {
+  const results = await Promise.all(selected.map(async ({ item, itemId }, index) => {
     const result = await downloadImage(item, {
       cdnBaseUrl: options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
       ...(options.fetch ? { fetch: options.fetch } : {}),

@@ -8,24 +8,21 @@
  *
  * 会话选择只有一条规则：**第一次发消息时按配置的工作区新建，之后一直用它**。
  * 工作区是绝对路径（与 dsh-im-infoflow 的独立模式一致），空表示宿主默认位置；绑定
- * 落在 `direct.json`，重启沿用。这一段只做文字，不做图片（ADR-0004 的入站图片要核心
- * 声明 `owner-images` 才下载）。
+ * 落在 `direct.json`，重启沿用。文字与图片都交给会话：图片由本插件按 ADR-0004 的
+ * 边界下载解密，再作为附件 part 交给宿主（ADR-0017）。
  */
 
 import { randomUUID } from 'node:crypto';
 
 import { textFromAssistantMessage } from './long-tasks.ts';
 import { messageOf } from './host-context.ts';
+import { textContent, withImageHint } from './prompt-parts.ts';
+import type { PromptPart } from './prompt-parts.ts';
 import type { DirectBinding, DirectBindingStore } from './state/direct-binding.ts';
 import { MAX_TEXT_CHARS, splitText, toWeChatMarkdown } from './superagent/render.ts';
 
 /** 提交方式：与 DSH 的 `InputSubmitMode` 同一套取值。 */
 export type BusyMode = 'queue' | 'steer';
-
-export interface PromptPart {
-  readonly type: 'text';
-  readonly text: string;
-}
 
 /** 宿主 `sessionController` 里本模块用到的那几个方法（结构类型，不 import 宿主包）。 */
 export interface DirectController {
@@ -63,7 +60,10 @@ export interface DirectChatOptions {
   logger?: DirectLogger;
   now?: () => number;
   maxText?: number;
-  /** 提交超时：宿主拒收（窗口关闭等）时不要挂在长轮询里。 */
+  /**
+   * 提交超时：只保证「受理前不再排队」——宿主开始处理后的解码/归一化不会再中断，
+   * 所以这不是整条消息的硬上限（宿主只在自己的受理点前看这个 signal）。
+   */
   submitTimeoutMs?: number;
 }
 
@@ -72,6 +72,9 @@ export type SubmitResult = 'ignored' | 'unavailable' | 'queued' | 'steered' | 'f
 const DEFAULT_SUBMIT_TIMEOUT_MS = 30_000;
 const QUEUE_NOTICE = '已交给会话，这一轮结束后把回答发给你。';
 const STEER_NOTICE = '已插进正在跑的这一轮，本轮回答仍由原回合送回。';
+const IMAGE_DROPPED_NOTICE = '图片没有发出去（当前会话的模型可能不支持看图），已按文字发送。';
+const IMAGE_DROPPED_SUFFIX = '（图片没有发出去，已按文字发送）';
+const IMAGE_ONLY_REJECTED = '图片没有发出去：当前会话的模型可能不支持看图，换个模型或改用文字再发一次。';
 
 export class DirectChat {
   readonly #controller: () => DirectController | null;
@@ -126,10 +129,14 @@ export class DirectChat {
     await this.#store.clear();
   }
 
-  /** 入站消息：只有主人、且宿主提供会话控制器时才接手。 */
-  async submit(sender: string, text: string): Promise<SubmitResult> {
-    const body = text.trim();
-    if (body === '') return 'ignored';
+  /**
+   * 入站消息：只有主人、且宿主提供会话控制器时才接手。
+   *
+   * `content` 是文字与图片 part 组成的消息（ADR-0017），由 `buildPromptContent` 组装；
+   * 空白内容直接丢弃，不建会话。
+   */
+  async submit(sender: string, content: readonly PromptPart[]): Promise<SubmitResult> {
+    if (content.length === 0) return 'ignored';
     if (!this.#isOwner(sender)) return 'ignored';
     const controller = this.#controller();
     if (!controller) return 'unavailable';
@@ -143,20 +150,26 @@ export class DirectChat {
     }
     const busy = await this.#isBusy(controller, sessionId);
     const mode: BusyMode = busy && this.#busyMode() === 'steer' ? 'steer' : 'queue';
+    const requestId = randomUUID();
+    // 一次入站只给一个提交预算：被拒后的重发沿用同一个 signal，不再多等一个超时。
+    const signal = AbortSignal.timeout(this.#submitTimeoutMs);
+    let imageDropped = false;
     try {
-      await this.#submitTo(controller, sessionId, body, mode);
+      await this.#submitTo(controller, { requestId, sessionId, mode, content: withImageHint(content) }, signal);
     } catch (error) {
-      this.#logger?.warn?.(`独立模式提交失败（${mode}）`, messageOf(error));
-      await this.#send(`没能把消息交给会话：${messageOf(error)}`);
-      return 'failed';
+      if (!(await this.#retryTextOnly(controller, { requestId, sessionId, mode }, content, signal, error))) {
+        return 'failed';
+      }
+      imageDropped = true;
     }
     if (mode === 'steer') {
-      await this.#send(STEER_NOTICE);
+      await this.#send(withImageDropped(STEER_NOTICE, imageDropped));
       return 'steered';
     }
     // 排队的回合开跑前宿主可能还在处理上一条，提示只在「当前确实在跑」时给，
     // 平淡的一句排队提示会变成每条消息都多一条噪音。
-    if (busy) await this.#send(QUEUE_NOTICE);
+    if (busy) await this.#send(withImageDropped(QUEUE_NOTICE, imageDropped));
+    else if (imageDropped) await this.#send(IMAGE_DROPPED_NOTICE);
     return 'queued';
   }
 
@@ -244,18 +257,58 @@ export class DirectChat {
     return this.#running;
   }
 
-  async #submitTo(controller: DirectController, sessionId: string, text: string, mode: BusyMode): Promise<void> {
-    const request = {
-      requestId: randomUUID(),
-      sessionId,
-      mode,
-      content: [{ type: 'text', text }] as const,
-      clientTimeZone: timeZone(),
-    };
-    const result = await controller.prompt(request, AbortSignal.timeout(this.#submitTimeoutMs));
+  async #submitTo(
+    controller: DirectController,
+    request: { requestId: string; sessionId: string; mode: BusyMode; content: readonly PromptPart[] },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const result = await controller.prompt(
+      { ...request, clientTimeZone: timeZone() },
+      signal,
+    );
     if (result.accepted !== true) throw new Error('会话没有接受这条消息');
     // 记一笔：宿主事件一定会来，但在它来之前再发一条消息时，busy 判定不会漏。
-    if (mode === 'queue') this.#running = true;
+    if (request.mode === 'queue') this.#running = true;
+  }
+
+  /**
+   * 提交被明确拒收时，去掉图片用**同一个 requestId** 重发一次纯文字。
+   *
+   * 宿主按 requestId 去重（同一条请求再提交直接回 `accepted`，不会重复入队），所以重发
+   * 不会让主人收到两遍；拒收发生在建用户消息之前，图片超限、模型不支持看图都落到这里。
+   *
+   * 三种情况不重试、照旧报错：没有图片（与改动前一致）、没有真实文字（只剩补的提示，
+   * 重发没有意义）、我们自己超时了（宿主可能已经受理，只是回执没回来）。
+   */
+  async #retryTextOnly(
+    controller: DirectController,
+    request: { requestId: string; sessionId: string; mode: BusyMode },
+    content: readonly PromptPart[],
+    signal: AbortSignal,
+    error: unknown,
+  ): Promise<boolean> {
+    const text = textContent(content);
+    const hasImage = content.some((part) => part.type === 'image');
+    if (!hasImage || text.trim() === '' || signal.aborted) {
+      await this.#reportSubmitFailure(content, error);
+      return false;
+    }
+    try {
+      // 沿用原 signal：总预算仍是一次提交的时长，不为重发多等一轮。
+      await this.#submitTo(controller, { ...request, content: [{ type: 'text', text }] }, signal);
+      return true;
+    } catch (retryError) {
+      await this.#reportSubmitFailure(content, retryError);
+      return false;
+    }
+  }
+
+  async #reportSubmitFailure(content: readonly PromptPart[], error: unknown): Promise<void> {
+    const detail = messageOf(error);
+    this.#logger?.warn?.('独立模式提交失败', detail);
+    // 微信那头只发中文：宿主给的是英文技术细节（模型名、限额），留在日志里排障。
+    const imageOnly = content.every((part) => part.type === 'image');
+    await this.#send(imageOnly ? IMAGE_ONLY_REJECTED : `没能把消息交给会话：${detail}`);
   }
 
   /** 状态快照里的时间戳：面板显示「最近一次绑定」。 */
@@ -272,6 +325,10 @@ export class DirectChat {
   nowMs(): number {
     return this.#now();
   }
+}
+
+function withImageDropped(notice: string, imageDropped: boolean): string {
+  return imageDropped ? `${notice}${IMAGE_DROPPED_SUFFIX}` : notice;
 }
 
 function timeZone(): string | undefined {

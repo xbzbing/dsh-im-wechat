@@ -6,6 +6,8 @@
  * `docs/design/03-协议与扩展点.md` 第 3 节一致。
  */
 
+import type { ImageMediaType } from '../../shared/media.ts';
+
 export const PROTOCOL_V1 = 'my-superagent/v1';
 
 /** 核心声明它时才会接受 `OwnerMessageDraft.images`（ADR-0004）。 */
@@ -75,7 +77,7 @@ export interface Delivery {
 export const DELIVERY_IMAGES_MAX = 4;
 
 export interface DeliveryImage {
-  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  readonly mediaType: ImageMediaType;
   readonly data: string;
   readonly name?: string;
 }
@@ -126,7 +128,7 @@ export interface BridgeProvider {
 }
 
 export interface OwnerImage {
-  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  mediaType: ImageMediaType;
   /** 规范 base64（带填充，长度为 4 的倍数）。 */
   data: string;
   name?: string;

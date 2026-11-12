@@ -1,54 +1,10 @@
 import assert from 'node:assert/strict';
-import { createCipheriv, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 
-import { toOwnerMessageDraft } from '../../src/host/inbound.ts';
-import type { ImageItem, WeixinMessage } from '../../src/host/ilink/types.ts';
-
-const CDN = 'https://novac2c.cdn.weixin.qq.com/c2c';
-const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(8, 0x01)]);
-
-function encrypt(plaintext: Buffer, key: Buffer): Buffer {
-  const cipher = createCipheriv('aes-128-ecb', key, null);
-  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
-}
-
-/** 一个按调用顺序返回图片字节的假 CDN。 */
-function imageFetch(payloads: Buffer[]): { impl: typeof globalThis.fetch; calls: number } {
-  let calls = 0;
-  const impl = (async () => {
-    const payload = payloads[Math.min(calls, payloads.length - 1)];
-    calls += 1;
-    return new Response(new Uint8Array(payload));
-  }) as typeof globalThis.fetch;
-  return {
-    impl,
-    get calls() {
-      return calls;
-    },
-  } as unknown as { impl: typeof globalThis.fetch; calls: number };
-}
-
-function imageMessage(count: number): { message: WeixinMessage; payload: Buffer } {
-  const key = randomBytes(16);
-  const itemList: unknown[] = [{ type: 1, text_item: { text: '看这张' } }];
-  for (let index = 0; index < count; index += 1) {
-    const item: ImageItem = {
-      media: { encrypt_query_param: `p-${index}`, aes_key: key.toString('base64') },
-      mid_size: 32,
-    };
-    itemList.push({ type: 2, msg_id: `img-${index}`, image_item: item });
-  }
-  return {
-    message: {
-      message_id: '2001',
-      from_user_id: 'owner-1',
-      create_time_ms: 1_760_000_000_000,
-      item_list: itemList as WeixinMessage['item_list'],
-    },
-    payload: encrypt(PNG, key),
-  };
-}
+import { downloadOwnerImages, toOwnerMessageDraft } from '../../src/host/inbound.ts';
+import type { WeixinMessage } from '../../src/host/ilink/types.ts';
+import { CDN, PNG, encrypt, imageFetch, imageMessage } from './helpers/inbound-fixtures.ts';
 
 test('纯文本消息原样转成草稿', async () => {
   const draft = await toOwnerMessageDraft(
@@ -78,7 +34,7 @@ test('核心没声明 owner-images 时不下载图片', async () => {
     cdnBaseUrl: CDN,
     fetch: fetch.impl,
   });
-  assert.equal(fetch.calls, 0);
+  assert.equal(fetch.calls(), 0);
   assert.equal(draft?.images, undefined);
 });
 
@@ -119,7 +75,7 @@ test('非主人不下载图片，但文本照常交给核心判定', async () =>
     senderIsOwner: () => false,
     fetch: fetch.impl,
   });
-  assert.equal(fetch.calls, 0);
+  assert.equal(fetch.calls(), 0);
   assert.equal(draft?.text, '看这张');
   assert.equal(draft?.images, undefined);
 });
@@ -135,7 +91,7 @@ test('最多 9 张，多出来的忽略', async () => {
     fetch: fetch.impl,
   });
   assert.equal(draft?.images?.length, 9);
-  assert.equal(fetch.calls, 9);
+  assert.equal(fetch.calls(), 9);
 });
 
 test('声明了图片但没有身份判定时按纯文本处理，不下载', async () => {
@@ -148,7 +104,7 @@ test('声明了图片但没有身份判定时按纯文本处理，不下载', as
     imagesEnabled: true,
     fetch: fetch.impl,
   });
-  assert.equal(fetch.calls, 0);
+  assert.equal(fetch.calls(), 0);
   assert.equal(draft?.text, '看这张');
   assert.equal(draft?.images, undefined);
 });
@@ -186,4 +142,40 @@ test('只有图没有文字时 text 为空串而不是缺字段', async () => {
   });
   assert.equal(draft?.text, '');
   assert.equal(draft?.images?.length, 1);
+});
+
+test('独立模式：不依赖核心声明，主人发的图直接下载', async () => {
+  const built = imageMessage(1);
+  const fetch = imageFetch([built.payload]);
+  const images = await downloadOwnerImages(built.message, {
+    cdnBaseUrl: CDN,
+    senderIsOwner: () => true,
+    fetch: fetch.impl,
+  });
+  assert.equal(images.length, 1);
+  assert.equal(images[0]?.mediaType, 'image/png');
+  assert.equal(images[0]?.name, 'weixin-img-0.png');
+  assert.equal(Buffer.from(images[0]?.data ?? '', 'base64').equals(PNG), true);
+});
+
+test('独立模式：非主人发的图一律不下载', async () => {
+  const built = imageMessage(1);
+  const fetch = imageFetch([built.payload]);
+  const images = await downloadOwnerImages(built.message, {
+    cdnBaseUrl: CDN,
+    senderIsOwner: () => false,
+    fetch: fetch.impl,
+  });
+  assert.equal(fetch.calls(), 0);
+  assert.deepEqual(images, []);
+});
+
+test('没有图片条目时不发任何请求', async () => {
+  const fetch = imageFetch([PNG]);
+  const images = await downloadOwnerImages(
+    { message_id: '1', from_user_id: 'owner-1', item_list: [{ type: 1, text_item: { text: 'hi' } }] },
+    { cdnBaseUrl: CDN, senderIsOwner: () => true, fetch: fetch.impl },
+  );
+  assert.equal(fetch.calls(), 0);
+  assert.deepEqual(images, []);
 });

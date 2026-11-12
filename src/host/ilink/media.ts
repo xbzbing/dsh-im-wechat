@@ -13,6 +13,7 @@
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
+import type { ImageMediaType } from '../../shared/media.ts';
 import { classifyNetworkFailure } from './api.ts';
 import type { CdnMedia, ImageItem } from './types.ts';
 
@@ -20,8 +21,6 @@ import type { CdnMedia, ImageItem } from './types.ts';
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
-
-export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
 
 /** CDN 直链只允许落在微信自家域名下。 */
 export function isAllowedMediaUrl(url: string): boolean {

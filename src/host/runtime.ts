@@ -187,12 +187,13 @@ export class WeixinRuntime {
       isOwner: (sender) => this.#owner.isOwner(sender),
       replyQuestion: (text) => this.#questions.reply(text),
       superagentEnabled: () => this.#superagent,
+      directAvailable: () => this.#direct.status().available,
       typingStart: (sender) => this.#typing.start(sender),
-      submitDirect: (sender, text) => {
-        void this.#direct.submit(sender, text).catch((error: unknown) => {
-          this.#logger.warn?.('独立模式处理失败', messageOf(error));
-        });
-      },
+      typingStop: (sender) => this.#typing.stop(sender),
+      submitDirect: (sender, content) => this.#direct.submit(sender, content).catch((error: unknown) => {
+        this.#logger.warn?.('独立模式处理失败', messageOf(error));
+        return 'failed' as const;
+      }),
       setHealth: (health) => {
         this.#health = health;
       },

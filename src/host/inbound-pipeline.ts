@@ -7,13 +7,16 @@
  * 不自己持有连接生命周期之外的东西。
  */
 
+import type { SubmitResult } from './direct.ts';
 import type { ILinkApi } from './ilink/api.ts';
 import { PollLoop } from './ilink/poll.ts';
 import type { PollHealth } from './ilink/poll.ts';
 import type { SessionGuard } from './ilink/session-guard.ts';
 import type { WeixinMessage } from './ilink/types.ts';
 import { messageText } from './ilink/identity.ts';
-import { toOwnerMessageDraft } from './inbound.ts';
+import { downloadOwnerImages, toOwnerMessageDraft } from './inbound.ts';
+import { buildPromptContent } from './prompt-parts.ts';
+import type { PromptPart } from './prompt-parts.ts';
 import { messageOf } from './host-context.ts';
 import type { WeixinBridge } from './superagent/bridge.ts';
 import type { BridgeBinder } from './superagent/link.ts';
@@ -44,8 +47,12 @@ export interface InboundPipelineDeps {
   /** 主人这条文本是不是在回答挂着的问题；是就交给提问器。 */
   replyQuestion(text: string): boolean;
   superagentEnabled(): boolean;
+  /** 独立模式有没有可用的会话服务（宿主没提供时不必下载图片）。 */
+  directAvailable(): boolean;
   typingStart(sender: string): void;
-  submitDirect(sender: string, text: string): void;
+  typingStop(sender: string): void;
+  /** 交给独立模式的会话；返回值决定「正在输入」要不要自己收尾。 */
+  submitDirect(sender: string, content: readonly PromptPart[]): Promise<SubmitResult>;
   setHealth(health: BridgeHealth): void;
   noteError(message: string): void;
 }
@@ -118,14 +125,30 @@ export class InboundPipeline {
     }
 
     // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；
-    // 没配会话控制器、或不是主人时照旧到此为止。
+    // 没配会话控制器、或不是主人时照旧到此为止。主人发的图片按 ADR-0017 下载成
+    // 附件 part，与文字一起交给会话；下载失败的图当这条没有图。
     if (!deps.superagentEnabled() || !binder) {
       if (!deps.ownFeaturesActive()) return;
       if (!deps.isOwner(sender)) return;
-      const text = messageText(message.item_list);
-      if (text.trim() === '') return;
+      // 宿主没有会话服务时独立模式接不了：先判，别白白下载图片、开输入状态。
+      if (!deps.directAvailable()) return;
+      const images = await downloadOwnerImages(message, {
+        cdnBaseUrl: deps.cdnBaseUrl,
+        ...(deps.fetch ? { fetch: deps.fetch } : {}),
+        signal,
+        logger: deps.logger,
+        senderIsOwner: deps.isOwner,
+      });
+      const content = buildPromptContent(messageText(message.item_list), images);
+      // 图片阶段等了十几秒，这里按同一个判据重新看一眼：这期间停用、登出、停机或
+      // 打开「接入超级助理」都会让独立模式失效，不能再开新提交。
+      if (content.length === 0 || !deps.ownFeaturesActive()) return;
+      // 图片下载完才开「正在输入」：一张都没成、又没有文字时不能留下一直闪的输入状态。
       deps.typingStart(sender);
-      deps.submitDirect(sender, text);
+      const result = await deps.submitDirect(sender, content);
+      // 进了会话就等回合结束再取消（turn/end 会停）；被拒、无服务时没有回合，自己收尾。
+      // 输入状态按用户只留一份：这里收尾可能提前关掉上一轮的，但比挂着十分钟好。
+      if (result !== 'queued' && result !== 'steered') deps.typingStop(sender);
       return;
     }
     const ownerLookup = bridge.ownerLookup;

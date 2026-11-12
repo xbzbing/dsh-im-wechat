@@ -294,7 +294,7 @@ export function DirectSection(props: {
         h('p', { className: 'wx-draft-hint' },
           superagent
             ? t('接入超级助理后，会话与模型由核心决定；关闭上方开关即可启用独立模式。')
-            : t('未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，回答发回微信。')),
+            : t('未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，文字与图片交给会话，回答发回微信。')),
         h('div', { className: 'wx-settings-list' },
           h(SwitchRow, {
             title: t('回合内插话'),

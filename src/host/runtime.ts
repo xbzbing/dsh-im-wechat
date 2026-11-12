@@ -18,6 +18,8 @@ import type { LoginSnapshot } from './ilink/login.ts';
 import { SessionGuard } from './ilink/session-guard.ts';
 import { messageOf } from './host-context.ts';
 import { OwnerChannel } from './owner-channel.ts';
+import { forwardPresentedImages } from './present-images.ts';
+import { dispatchSessionEvent, type SessionEventDeps } from './session-events.ts';
 import { InboundPipeline } from './inbound-pipeline.ts';
 import { buildStatus, listWorkspaces } from './runtime-status.ts';
 import { DefaultWorkspace, WORKSPACE_ERROR_PREFIX } from './workspace-default.ts';
@@ -89,6 +91,7 @@ export class WeixinRuntime {
   #directWorkspaceId = '';
   #directBusyMode: BusyMode = DEFAULT_DIRECT_BUSY_MODE;
   readonly #defaultWorkspace: DefaultWorkspace;
+  readonly #sessionEvents: SessionEventDeps;
   #stopped = false;
 
   constructor(deps: RuntimeDeps = {}) {
@@ -118,6 +121,9 @@ export class WeixinRuntime {
       ownerId: () => this.#loginState?.userId,
       token: (account, to) => this.#tokenStore.get(account, to),
       noteError: (message) => this.#noteError(message),
+      cdnBaseUrl: () => this.#config.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
+      fetch: () => this.#fetch,
+      logger: this.#logger,
     });
     this.#typing = new TypingIndicator({
       api: () => this.#api,
@@ -172,13 +178,20 @@ export class WeixinRuntime {
       dir: this.#dir,
       registry: () => this.#workspaceRegistry,
       noteError: (message) => this.#noteError(message),
-      clearError: () => {
-        // 恢复成功后把旧的失败横幅清掉，否则一次瞬时失败会挂到下次扫码。
-        this.#errors = this.#errors.filter((item) => !item.message.startsWith(WORKSPACE_ERROR_PREFIX));
-      },
+      // 恢复成功后把旧的失败横幅清掉，否则一次瞬时失败会挂到下次扫码。
+      clearError: () => { this.#errors = this.#errors.filter((item) => !item.message.startsWith(WORKSPACE_ERROR_PREFIX)); },
       logger: this.#logger,
       ...(deps.workspaceTimeoutMs !== undefined ? { timeoutMs: deps.workspaceTimeoutMs } : {}),
     });
+    this.#sessionEvents = {
+      ownFeaturesActive: () => this.#ownFeaturesActive(),
+      longTasks: this.#longTasks,
+      binding: () => this.#direct.binding(),
+      ownerUserId: () => this.#loginState?.userId ?? '',
+      typingStop: (userId) => this.#typing.stop(userId),
+      forwardPresented: (event) => forwardPresentedImages(event, this.#owner, this.#logger),
+      directHandle: (sessionId, event) => this.#direct.handleEvent(sessionId, event),
+    };
     this.#pipeline = new InboundPipeline({
       enabled: () => this.#enabled,
       stopped: () => this.#stopped,
@@ -255,23 +268,8 @@ export class WeixinRuntime {
     return this.#questions.handle(request, next, this.#ownFeaturesActive());
   }
 
-  /** `session/event` 监听器：长任务提醒。 */
   handleSessionEvent(session: unknown, event: unknown): void {
-    if (!this.#ownFeaturesActive()) return;
-    const sessionId = typeof session === 'string'
-      ? session
-      : typeof (session as { id?: unknown } | null)?.id === 'string'
-        ? String((session as { id: string }).id)
-        : '';
-    if (sessionId === '') return;
-    this.#longTasks.handleEvent(sessionId, event);
-    // 独立模式：只跟踪绑定的那个会话；接入核心后这条链路整段沉默。
-    const binding = this.#direct.binding();
-    if (binding !== null && binding.sessionId === sessionId) {
-      const type = (event as { type?: unknown } | null)?.type;
-      if (type === 'turn/end') this.#typing.stop(this.#loginState?.userId ?? '');
-      this.#direct.handleEvent(sessionId, event);
-    }
+    dispatchSessionEvent(this.#sessionEvents, session, event);
   }
 
   attachBinder(binder: BridgeBinder): void {

@@ -33,6 +33,8 @@ export function fakeApi(options: {
     getUpdatesCalls: 0,
     tokens: [] as (string | undefined)[],
     sent: [] as string[],
+    /** 发出的图片条目（`image_item` 原样记录）。 */
+    images: [] as unknown[],
     notifyStart: 0,
     notifyStop: 0,
     qrCodeCalls: 0,
@@ -55,8 +57,16 @@ export function fakeApi(options: {
           }, { once: true });
         });
       },
-      async sendMessage(message: { item_list?: { text_item?: { text?: string } }[] }) {
-        record.sent.push(message.item_list?.[0]?.text_item?.text ?? '');
+      async sendMessage(message: { item_list?: { text_item?: { text?: string }; image_item?: unknown }[] }) {
+        const item = message.item_list?.[0];
+        if (item?.image_item !== undefined) {
+          record.images.push(item.image_item);
+          return;
+        }
+        record.sent.push(item?.text_item?.text ?? '');
+      },
+      async getUploadUrl() {
+        return { uploadParam: 'up', uploadFullUrl: 'https://novac2c.cdn.weixin.qq.com/c2c/upload?x=1' };
       },
       async notifyStart() {
         record.notifyStart += 1;
@@ -143,4 +153,9 @@ export async function withDir(run: (dir: string) => Promise<void>): Promise<void
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** 假的上传 CDN：POST 回来带 `x-encrypted-param`，图片发送走到这一步就算成功。 */
+export function uploadFetch(): typeof globalThis.fetch {
+  return (async () => new Response('', { status: 200, headers: { 'x-encrypted-param': 'dl-1' } })) as unknown as typeof globalThis.fetch;
 }

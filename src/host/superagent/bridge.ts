@@ -42,6 +42,17 @@ export const WEIXIN_PLATFORM = 'weixin';
  */
 export const TOKEN_WINDOW_MS = 24 * 60 * 60_000;
 
+/**
+ * 一个窗口内最多能主动发多少条：公开口径是「每 10 条需用户再开口」
+ * （PushPlus / MagicPush / 曲辕三处一致，见 docs/protocol/ilink-消息与媒体.md）。
+ *
+ * 核心据此算窗口内的条数额度，并在用尽之前请主人回一句话续约（核心 ADR-0033）；
+ * 桥这边只负责如实上报这条交付占了几条。
+ *
+ * 与 `capabilities.quotas` 的 10 条/分钟不是一回事：那是连发节奏，这是 24 小时窗口内的总额度。
+ */
+export const MESSAGES_PER_WINDOW = 10;
+
 export interface BridgeLogger {
   info?(...args: unknown[]): unknown;
   warn?(...args: unknown[]): unknown;
@@ -131,10 +142,17 @@ export class WeixinBridge implements BridgeProvider {
       maxText: { max: this.#maxText, unit: 'char' },
       detail: false,
       nativeCommands: false,
-      // 平台连发限制待真机实测（M5），先按保守值声明，核心据此节流。
+      // 每分钟最多 10 条的连发限制：待真机实测（M5），先按保守值声明，核心据此做发送节奏。
+      // 与下面 outbound.maxMessagesPerWindow 的 10 是两回事：那个是 24 小时窗口内的总额度。
       quotas: [{ scope: 'bot', max: 10, windowMs: 60_000 }],
       // 窗口从收到 token 起算（ADR-0013）：核心据此在窗口外把交付让给下一座桥。
-      outbound: { requiresPriorInbound: true, windowMs: TOKEN_WINDOW_MS, images: true },
+      // 条数额度是同一份账的第二维：窗口内条数用尽同样发不出去，核心会提前请主人续约。
+      outbound: {
+        requiresPriorInbound: true,
+        windowMs: TOKEN_WINDOW_MS,
+        maxMessagesPerWindow: MESSAGES_PER_WINDOW,
+        images: true,
+      },
     };
   }
 
@@ -252,7 +270,8 @@ export class WeixinBridge implements BridgeProvider {
     const text = composeDeliveryText(delivery);
     const parts = splitText(text, this.#maxText);
     const images = delivery.images ?? [];
-    if (parts.length === 0 && images.length === 0) return { ...base, status: 'sent' };
+    // 没有正文也没有图：一条都没发出去，如实报 0 条，别让核心把这条算进额度。
+    if (parts.length === 0 && images.length === 0) return { ...base, status: 'sent', messagesSent: 0 };
 
     const contextToken = this.#contextTokens.get(this.account, recipient);
 
@@ -303,6 +322,9 @@ export class WeixinBridge implements BridgeProvider {
     return {
       ...base,
       status: 'sent',
+      // 整条交付一共占了几条额度：中途失败的那几次回执是 failed，核心不据此记账，
+      // 所以成功这一次要给总数（图 + 文字分条），断点续发也只在这一次结算。
+      messagesSent: images.length + parts.length,
       ...(lastClientId ? { bridgeMessageId: lastClientId } : {}),
     };
   }

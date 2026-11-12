@@ -8,7 +8,7 @@ import { ILinkError } from '../../src/host/ilink/api.ts';
 import type { ILinkApi } from '../../src/host/ilink/api.ts';
 import { SessionGuard } from '../../src/host/ilink/session-guard.ts';
 import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
-import { TOKEN_WINDOW_MS, WeixinBridge } from '../../src/host/superagent/bridge.ts';
+import { MESSAGES_PER_WINDOW, TOKEN_WINDOW_MS, WeixinBridge } from '../../src/host/superagent/bridge.ts';
 import type { BridgeHandle, Delivery } from '../../src/host/superagent/protocol.ts';
 
 interface Sent {
@@ -182,6 +182,7 @@ test('单交付内分条按声明配额节流：每 10 条等一个窗口', asyn
     assert.equal(receipt.status, 'sent');
     assert.equal(h.sent.length, 12, '120 字按 10 字分 12 条');
     assert.deepEqual(sleeps, [60_000], '第 10 条之后等一个声明窗口');
+    assert.equal(receipt.messagesSent, 12, '分条扇出要如实报条数，核心据此算额度');
   });
 });
 
@@ -191,6 +192,7 @@ test('超长正文分条发送', async () => {
     const receipt = await h.bridge.deliver(delivery({ title: '', body }));
     assert.equal(receipt.status, 'sent');
     assert.ok(h.sent.length > 1);
+    assert.equal(receipt.messagesSent, h.sent.length, '报了条数就要与实际发出的条数一致');
     // 纯文本行之间会被补成空行（PC 端 Markdown 才能分段），比对时把空行折回换行。
     assert.equal(h.sent.map((item) => item.text).join('\n').replace(/\n{2,}/g, '\n'), body);
   });
@@ -223,6 +225,23 @@ test('分条中途失败后重试从断点续发，不重复已发内容', async
     assert.equal(second.status, 'sent');
     // 断点续发：第二批只补后面的段落。
     assert.equal(h.sent.map((item) => item.text).join('\n').replace(/\n{2,}/g, '\n'), body);
+  });
+});
+
+test('空交付报 0 条：没有正文也没有图，就不占平台额度', async () => {
+  await withHarness({}, async (h) => {
+    const receipt = await h.bridge.deliver(delivery({ title: '', body: '' }));
+    assert.equal(receipt.status, 'sent');
+    assert.equal(h.sent.length, 0);
+    assert.equal(receipt.messagesSent, 0);
+  });
+});
+
+test('分条中途失败的回执不带条数：那一次核心不记账，成功时再按总数结算', async () => {
+  await withHarness({ failAt: [2] }, async (h) => {
+    const receipt = await h.bridge.deliver(delivery({ id: 'half', title: '', body: 'x'.repeat(60) }));
+    assert.equal(receipt.status, 'failed');
+    assert.equal(receipt.messagesSent, undefined, '失败回执只说明这一次没成，条数额度不算');
   });
 });
 
@@ -277,6 +296,9 @@ test('能力声明：纯文本、分条上限、无交互卡、需要先有入�
   // 声明窗口让核心在窗口外跳过本桥、把流量让给下一座，而不是每分钟空转（ADR-0013、0015）。
   assert.equal(bridge.capabilities.outbound.windowMs, TOKEN_WINDOW_MS);
   assert.equal(bridge.capabilities.outbound.windowMs, 24 * 60 * 60_000);
+  // 条数额度是窗口的第二维：核心据此在用尽之前请主人续约（核心 ADR-0031）。
+  assert.equal(bridge.capabilities.outbound.maxMessagesPerWindow, MESSAGES_PER_WINDOW);
+  assert.equal(bridge.capabilities.outbound.maxMessagesPerWindow, 10);
 });
 
 test('核心能力声明决定图片下载与身份查询', () => {

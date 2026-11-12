@@ -86,6 +86,8 @@ export interface Receipt {
   deliveryId: string;
   status: 'sent' | 'failed' | 'uncertain';
   bridgeMessageId?: string;
+  // 这条交付实际占用了平台多少条主动消息（分条发送时大于 1）：核心据此算窗口内的条数额度。
+  messagesSent?: number;
   error?: string;
   errorCode?: ReceiptErrorCode;
 }
@@ -105,7 +107,7 @@ export interface BridgeCapabilities {
   detail: boolean;
   nativeCommands: boolean;
   quotas?: { scope: 'bot' | 'conversation'; max: number; windowMs: number }[];
-  outbound: { requiresPriorInbound: boolean; windowMs?: number; images?: boolean };
+  outbound: { requiresPriorInbound: boolean; windowMs?: number; maxMessagesPerWindow?: number; images?: boolean };
 }
 
 export interface BridgeHealth {

@@ -1,9 +1,32 @@
 {
   "name": "dsh-im-wechat",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "把微信（WeChat iLink）接入 DeepSeek Harness 的 IM 桥插件",
+  "license": "MIT",
+  "author": "xbzbing <xbzbing@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xbzbing/dsh-im-wechat.git"
+  },
+  "homepage": "https://github.com/xbzbing/dsh-im-wechat#readme",
+  "bugs": {
+    "url": "https://github.com/xbzbing/dsh-im-wechat/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "wechat",
+    "weixin",
+    "ilink",
+    "im",
+    "bridge"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "icon": "./assets/icon.svg",
   "main": "./lib/index.js",
   "bin": {

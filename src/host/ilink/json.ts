@@ -11,8 +11,9 @@
  * 3. 其余键原样返回。
  */
 
-/** 需要保真的键：都在 iLink 的消息形状里，且都可能是 64 位整数。 */
-const INTEGER_KEYS = new Set(['message_id', 'msg_id']);
+/** 需要保真的键：都在 iLink 的消息形状里，且都可能是 64 位整数。
+ *  `svr_id` 是引用消息里被引用那条的服务端 id，新版客户端只带它；取整会认到错的那条交付。 */
+const INTEGER_KEYS = new Set(['message_id', 'msg_id', 'svr_id']);
 
 /** `JSON.parse` 的 reviver 第三参数（JSON source access）；老运行时不会传。 */
 interface ReviverContext {

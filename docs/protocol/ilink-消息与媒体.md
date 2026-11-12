@@ -10,6 +10,15 @@
 - `ret=-2 prepare failed` 不专指 token 过期：单条正文过长（官方仓库实测 5000 字符可发、7337 字符被拒）同样返回这一句，别用它区分「窗口关了」与「消息太长」。
 - 消息条目在 `item_list` 里，`type = 2` 是图片。
 
+## 发送响应与引用回指
+
+- `ilink/bot/sendmessage` 成功时返回平台侧消息 id：`{ message_id?: string }`（uint64 on the wire，按字符串无损解析）。核心把它写进投递回执 `bridgeMessageId`，用来把用户后来的引用认回这次交付。
+- 入站引用在 `item_list[].ref_msg` 里，两种形态都要认，**优先级 `svr_id` 高于 `message_item.msg_id`**：
+  - `ref_msg.svr_id`：新版客户端只带这个，不带被引用消息的正文或媒体；
+  - `ref_msg.message_item.msg_id`：旧版形态；`title` 只是展示文案，不是 id。
+  - `ref_msg` 里没有可用 id 时，桥不猜，草稿不带 `replyTo`。
+- 三个 id（`message_id`、`msg_id`、`svr_id`）都可能是 64 位整数，解析时按无损字符串处理（`ilink/json.ts` 的 `INTEGER_KEYS`）；取整会认到错的那条交付。
+
 ## 请求壳与 `bot_agent`
 
 - 每个请求都带 `base_info: { channel_version, bot_agent }`，长轮询、发消息、上传、`getconfig`、`sendtyping` 一视同仁。

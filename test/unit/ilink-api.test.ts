@@ -88,6 +88,12 @@ test('message_id 保住 64 位精度，-0 归一成 0', () => {
   assert.equal(Object.is(parsed.n, -0), true);
 });
 
+test('引用里的 svr_id 同样按 64 位保真，取整会认到错的那条交付', () => {
+  const text = '{"ref_msg":{"svr_id":9007199254740993}}';
+  const parsed = parseJsonKeepIntegers(text) as { ref_msg: { svr_id: unknown } };
+  assert.equal(parsed.ref_msg.svr_id, '9007199254740993');
+});
+
 test('POST 带齐协议头与 base_info', async () => {
   const { calls, impl } = recordingFetch(jsonResponse({ ret: 0, msgs: [] }));
   const api = makeApi({ fetch: impl });

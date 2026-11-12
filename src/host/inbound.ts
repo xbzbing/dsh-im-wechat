@@ -68,6 +68,28 @@ function imageName(index: number, mediaType: OwnerImage['mediaType'], itemId: st
   return `weixin-${stem}.${EXTENSION[mediaType]}`.slice(0, OWNER_IMAGE_NAME_MAX);
 }
 
+// 平台 id 统一入口：字符串 trim，数字转字符串，空与非法值都当没有。
+function platformId(value: string | number | undefined): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+// 用户引用了一条消息时，被引用消息的平台 id 在这里；核心靠它认回是哪次交付。
+// 新版客户端只带 `svr_id`（优先），旧版带 `message_item.msg_id`。
+function replyTo(message: WeixinMessage): string | undefined {
+  for (const item of message.item_list ?? []) {
+    const ref = item.ref_msg;
+    if (ref === undefined) continue;
+    const id = platformId(ref.svr_id) ?? platformId(ref.message_item?.msg_id);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
 /**
  * 把一条 iLink 消息转成核心的草稿。
  *
@@ -89,11 +111,13 @@ export async function toOwnerMessageDraft(
     ? message.create_time_ms
     : (options.now ?? Date.now)();
 
+  const quoted = replyTo(message);
   return {
     messageId,
     sender,
     text,
     at,
+    ...(quoted ? { replyTo: quoted } : {}),
     ...(images.length > 0 ? { images } : {}),
   };
 }

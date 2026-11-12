@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { ILinkError } from '../../src/host/ilink/api.ts';
 import type { ILinkApi } from '../../src/host/ilink/api.ts';
-import { HARD_TEXT_LIMIT, SendError, classifySendFailure, sendText } from '../../src/host/ilink/send.ts';
+import { HARD_TEXT_LIMIT, SendError, classifySendFailure, sendImage, sendText } from '../../src/host/ilink/send.ts';
 import type { OutboundMessage } from '../../src/host/ilink/types.ts';
 
 interface Sent {
@@ -11,12 +11,13 @@ interface Sent {
   timeoutMs?: number;
 }
 
-async function recordingApi(result: Error | null = null): Promise<{ api: ILinkApi; sent: Sent[] }> {
+async function recordingApi(result: Error | null = null, response: Record<string, unknown> = {}): Promise<{ api: ILinkApi; sent: Sent[] }> {
   const sent: Sent[] = [];
   const api = {
     async sendMessage(message: OutboundMessage, options: { timeoutMs?: number } = {}) {
       sent.push({ message, ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) });
       if (result) throw result;
+      return response;
     },
   } as unknown as ILinkApi;
   return { api, sent };
@@ -47,6 +48,29 @@ test('发送文本带齐协议字段', async () => {
   assert.deepEqual(sent[0].message.item_list, [{ type: 1, text_item: { text: '你好' } }]);
   assert.equal(sent[0].message.client_id, result.clientId);
   assert.match(result.clientId, /^dsh-im-wechat:/);
+});
+
+test('平台返回的 message_id 带回来，供引用回指定位到那一条', async () => {
+  const { api } = await recordingApi(null, { message_id: '7526728717449013512' });
+  const result = await sendText(api, { to: 'owner-1', text: 'hi', contextToken: 'ctx-1' });
+  assert.equal(result.messageId, '7526728717449013512');
+});
+
+test('响应里没有 message_id 时不编造', async () => {
+  const { api } = await recordingApi(null, { ret: 0 });
+  const result = await sendText(api, { to: 'owner-1', text: 'hi', contextToken: 'ctx-1' });
+  assert.equal(result.messageId, undefined);
+});
+
+test('图片发送同样带回平台 message_id', async () => {
+  const { api, sent } = await recordingApi(null, { message_id: '7526728717449013512' });
+  const result = await sendImage(api, {
+    to: 'owner-1',
+    contextToken: 'ctx-1',
+    upload: { encryptQueryParam: 'p', aesKeyHex: '0'.repeat(32), ciphertextSize: 16 },
+  });
+  assert.equal(result.messageId, '7526728717449013512');
+  assert.equal(sent.length, 1);
 });
 
 test('空文本不发空 item_list', async () => {

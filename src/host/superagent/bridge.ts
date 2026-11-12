@@ -81,12 +81,14 @@ export interface WeixinBridgeOptions {
   uploadFetch?: typeof globalThis.fetch;
   /** 分条节流的等待；测试注入以免真实等待声明窗口。 */
   sleep?: (ms: number) => Promise<void>;
+  /** 当前时刻（毫秒）；测试注入，生产用 Date.now。 */
+  now?: () => number;
 }
 
 /** 进度表只放最近 100 条，避免长时间运行后无界增长。 */
 const PROGRESS_LIMIT = 100;
 
-function rememberBounded(map: Map<string, number>, key: string, value: number): void {
+function rememberBounded<T>(map: Map<string, T>, key: string, value: T): void {
   map.set(key, value);
   while (map.size > PROGRESS_LIMIT) {
     const oldest = map.keys().next();
@@ -116,9 +118,14 @@ export class WeixinBridge implements BridgeProvider {
   readonly #inflight = new Map<string, Promise<Receipt>>();
   /** 已发到第几张图（ADR-0010）：断点续发，避免重试把已到的图再发一遍。 */
   readonly #imageProgress = new Map<string, number>();
+  /** 最后一张图发出去得到的平台消息 id：图片-only 交付的回执要用，断点续发时复用。 */
+  readonly #imageMessageIds = new Map<string, string>();
+  /** 平台没回 message_id 的告警节流：协议漂移只需要看见一次。 */
+  #noIdWarnedAt: number | undefined;
   readonly #cdnBaseUrl: string;
   readonly #uploadFetch: typeof globalThis.fetch | undefined;
   readonly #sleep: (ms: number) => Promise<void>;
+  readonly #now: () => number;
   #handle: BridgeHandle | null = null;
   #features: ReadonlySet<string> = new Set();
 
@@ -136,12 +143,15 @@ export class WeixinBridge implements BridgeProvider {
     this.#cdnBaseUrl = options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL;
     this.#uploadFetch = options.uploadFetch;
     this.#sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    this.#now = options.now ?? Date.now;
     this.capabilities = {
       // 微信客户端原生渲染 Markdown（表格、代码块、标题都支持），见 ADR-0008。
       markdown: 'full',
       maxText: { max: this.#maxText, unit: 'utf8-byte' },
       detail: false,
       nativeCommands: false,
+      // 收得到用户引用消息里的被引用 id，核心据此把引用回一句转给对应会话。
+      quoteReply: true,
       // 每分钟最多 10 条的连发限制：待真机实测（M5），先按保守值声明，核心据此做发送节奏。
       // 与下面 outbound.maxMessagesPerWindow 的 10 是两回事：那个是 24 小时窗口内的总额度。
       quotas: [{ scope: 'bot', max: 10, windowMs: 60_000 }],
@@ -223,7 +233,8 @@ export class WeixinBridge implements BridgeProvider {
           { data: Buffer.from(image.data, 'base64'), toUserId: recipient },
           { cdnBaseUrl: this.#cdnBaseUrl, ...(this.#uploadFetch ? { fetch: this.#uploadFetch } : {}) },
         );
-        await sendImage(api, { to: recipient, upload, contextToken });
+        const result = await sendImage(api, { to: recipient, upload, contextToken });
+        if (result.messageId !== undefined) rememberBounded(this.#imageMessageIds, delivery.id, result.messageId);
         rememberBounded(this.#imageProgress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
@@ -275,13 +286,17 @@ export class WeixinBridge implements BridgeProvider {
 
     const contextToken = this.#contextTokens.get(this.account, recipient);
 
+    // 整条交付最后发出去那一条的平台消息 id：用户引用哪条，就靠它认回这次交付。
+    // 只记最后一条（取舍见 ADR-0022）：引用前面的分条认不回来，会退回前台。
+    let lastMessageId: string | undefined;
     // 图片先发：文字里通常写着「图见上」，图没到就发文字会让人以为没发。
     if (images.length > 0) {
       const failure = await this.#sendImages(api, delivery, recipient, contextToken);
       if (failure) return { ...base, ...failure };
+      // 图片-only 交付没有文字覆盖，回执就靠最后一张图的 id。
+      lastMessageId = this.#imageMessageIds.get(delivery.id);
     }
     let sent = this.#progress.get(delivery.id) ?? 0;
-    let lastClientId: string | undefined;
     // 桥自己执行自己声明的配额：核心只见一次 deliver，按交付节流管不到分条扇出。
     const quota = this.capabilities.quotas?.[0];
 
@@ -298,7 +313,7 @@ export class WeixinBridge implements BridgeProvider {
       }
       try {
         const result = await sendText(api, { to: recipient, text: parts[sent], contextToken });
-        lastClientId = result.clientId;
+        if (result.messageId !== undefined) lastMessageId = result.messageId;
         rememberBounded(this.#progress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
@@ -306,6 +321,7 @@ export class WeixinBridge implements BridgeProvider {
           // 结果未知：核心不重发，进度与图片断点都已无意义，清掉不留死条目。
           this.#progress.delete(delivery.id);
           this.#imageProgress.delete(delivery.id);
+          this.#imageMessageIds.delete(delivery.id);
           this.#logger?.warn?.(`微信发送结果未知（${delivery.id}）`, failure.message);
           return { ...base, status: 'uncertain', error: failure.message };
         }
@@ -319,14 +335,25 @@ export class WeixinBridge implements BridgeProvider {
 
     this.#progress.delete(delivery.id);
     this.#imageProgress.delete(delivery.id);
+    this.#imageMessageIds.delete(delivery.id);
+    // 平台没回 message_id：不编造，但让它在面板上留下一次痕迹（协议漂移探针）。
+    if (lastMessageId === undefined) this.#warnMissingMessageId(delivery.id);
     return {
       ...base,
       status: 'sent',
       // 整条交付一共占了几条额度：中途失败的那几次回执是 failed，核心不据此记账，
       // 所以成功这一次要给总数（图 + 文字分条），断点续发也只在这一次结算。
       messagesSent: images.length + parts.length,
-      ...(lastClientId ? { bridgeMessageId: lastClientId } : {}),
+      ...(lastMessageId ? { bridgeMessageId: lastMessageId } : {}),
     };
+  }
+
+  /** 平台没回 message_id 时按小时告警一次：让协议漂移在面板上可见，而不是静默少一个 id。 */
+  #warnMissingMessageId(deliveryId: string): void {
+    const now = this.#now();
+    if (this.#noIdWarnedAt !== undefined && now - this.#noIdWarnedAt < 3_600_000) return;
+    this.#noIdWarnedAt = now;
+    this.#logger?.warn?.('微信发送成功但没有返回 message_id：引用回指会失效', deliveryId);
   }
 
   /** 被拒时记下 token 年龄：收紧声明有效期的依据；从磁盘灌进来的年龄未知。 */

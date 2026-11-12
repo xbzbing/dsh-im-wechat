@@ -54,6 +54,8 @@ async function harness(
     uploadParam?: string;
     uploadFails?: boolean;
     maxText?: number;
+    // 模拟平台不回 message_id：回执不能编造一个。
+    noMessageId?: boolean;
     sleep?: (ms: number) => Promise<void>;
   } = {},
 ): Promise<Harness> {
@@ -73,12 +75,13 @@ async function harness(
       const item = message.item_list?.[0];
       if (item?.image_item !== undefined) {
         images.push(item.image_item as Record<string, unknown>);
-        return;
+        return options.noMessageId ? {} : { message_id: `wm-${calls}` };
       }
       sent.push({
         to: message.to_user_id,
         text: (item?.text_item as { text?: string } | undefined)?.text ?? '',
       });
+      return options.noMessageId ? {} : { message_id: `wm-${calls}` };
     },
     async getUploadUrl() {
       if (options.uploadFails) throw new ILinkError('api', 'getuploadurl 失败 ret=-1', { ret: -1 });
@@ -116,11 +119,12 @@ async function withHarness(
   }
 }
 
-test('正常交付：发出文本，回 sent 与 bridgeMessageId', async () => {
+test('正常交付：发出文本，回 sent 与平台消息 id', async () => {
   await withHarness({}, async (h) => {
     const receipt = await h.bridge.deliver(delivery());
     assert.equal(receipt.status, 'sent');
-    assert.match(receipt.bridgeMessageId ?? '', /^dsh-im-wechat:/);
+    // 回执带平台侧 message_id：用户引用这条消息时，核心靠它认回是哪条交付。
+    assert.equal(receipt.bridgeMessageId, 'wm-1');
     assert.deepEqual(h.sent, [{ to: OWNER, text: '完成\n\n正文' }]);
   });
 });
@@ -293,6 +297,8 @@ test('能力声明：纯文本、分条上限、无交互卡、需要先有入�
   assert.equal(bridge.capabilities.interaction, undefined);
   assert.equal(bridge.capabilities.detail, false);
   assert.equal(bridge.capabilities.nativeCommands, false);
+  // 能收到用户引用消息里的被引用 id，并把它交给核心做回指。
+  assert.equal(bridge.capabilities.quoteReply, true);
   assert.equal(bridge.capabilities.outbound.requiresPriorInbound, true);
   // 声明窗口让核心在窗口外跳过本桥、把流量让给下一座，而不是每分钟空转（ADR-0013、0015）。
   assert.equal(bridge.capabilities.outbound.windowMs, TOKEN_WINDOW_MS);
@@ -370,6 +376,24 @@ test('交付带图：先上传再发 image_item，然后才发文字', async () 
     assert.equal(image.aeskey, undefined);
     assert.equal(typeof image.mid_size, 'number');
     assert.deepEqual(h.sent, [{ to: OWNER, text: 'A · Q 版抱鲸鱼' }]);
+  });
+});
+
+test('平台没回 message_id：回执不带 bridgeMessageId，不编造', async () => {
+  await withHarness({ noMessageId: true }, async (h) => {
+    const receipt = await h.bridge.deliver(delivery());
+    assert.equal(receipt.status, 'sent');
+    assert.equal(receipt.bridgeMessageId, undefined);
+  });
+});
+
+test('图片-only 交付：回执带最后一张图的平台 id，引用那张图也能认回', async () => {
+  await withHarness({}, async (h) => {
+    const receipt = await h.bridge.deliver(withImage({ body: '' }));
+    assert.equal(receipt.status, 'sent');
+    assert.equal(h.sent.length, 0);
+    assert.equal(h.images.length, 1);
+    assert.match(receipt.bridgeMessageId ?? '', /^wm-/);
   });
 });
 

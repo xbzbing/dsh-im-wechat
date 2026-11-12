@@ -60,6 +60,8 @@ export interface TextItem {
 
 export interface RefMessage {
   title?: string;
+  /** 被引用消息的服务端 id；新版客户端只带它，不带 message_item。 */
+  svr_id?: string;
   message_item?: WeixinItem;
 }
 
@@ -179,4 +181,9 @@ export interface GenericResponse {
   ret?: number;
   errcode?: number;
   errmsg?: string;
+}
+
+/** `ilink/bot/sendmessage` 的响应：平台侧消息 id 是用户引用回指时带回来的那个 id。 */
+export interface SendMessageResponse extends GenericResponse {
+  message_id?: string;
 }

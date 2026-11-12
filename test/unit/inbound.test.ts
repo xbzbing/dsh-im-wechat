@@ -19,6 +19,88 @@ test('纯文本消息原样转成草稿', async () => {
   });
 });
 
+test('引用消息把被引用消息的平台 id 带进 replyTo', async () => {
+  const draft = await toOwnerMessageDraft(
+    {
+      message_id: '1', from_user_id: 'owner-1', create_time_ms: 5,
+      item_list: [{
+        type: 1,
+        msg_id: 'v1:1658853100243168092',
+        text_item: { text: '测试引用回复' },
+        ref_msg: { message_item: { type: 0, msg_id: '7526724741542363528' } },
+      }],
+    },
+    { account: 'bot' },
+  );
+  assert.equal(draft?.replyTo, '7526724741542363528');
+});
+
+test('新版客户端只带 svr_id：照样带进 replyTo', async () => {
+  const draft = await toOwnerMessageDraft(
+    {
+      message_id: '1', from_user_id: 'owner-1', create_time_ms: 5,
+      item_list: [{ type: 1, text_item: { text: '好' }, ref_msg: { svr_id: '9007199254740993' } }],
+    },
+    { account: 'bot' },
+  );
+  assert.equal(draft?.replyTo, '9007199254740993');
+});
+
+test('svr_id 与 message_item.msg_id 同时在时取 svr_id', async () => {
+  const draft = await toOwnerMessageDraft(
+    {
+      message_id: '1', from_user_id: 'owner-1', create_time_ms: 5,
+      item_list: [{
+        type: 1, text_item: { text: '好' },
+        ref_msg: { svr_id: ' 900 ', message_item: { type: 0, msg_id: 'v1:legacy' } },
+      }],
+    },
+    { account: 'bot' },
+  );
+  assert.equal(draft?.replyTo, '900');
+});
+
+test('多个内容项时取第一个带引用的', async () => {
+  const draft = await toOwnerMessageDraft(
+    {
+      message_id: '1', from_user_id: 'owner-1', create_time_ms: 5,
+      item_list: [
+        { type: 1, text_item: { text: '前半句' } },
+        { type: 1, text_item: { text: '后半句' }, ref_msg: { message_item: { type: 0, msg_id: ' 7526724741542363528 ' } } },
+      ],
+    },
+    { account: 'bot' },
+  );
+  assert.equal(draft?.replyTo, '7526724741542363528');
+});
+
+test('引用只有标题、没有 id 时不带 replyTo', async () => {
+  const draft = await toOwnerMessageDraft(
+    {
+      message_id: '1', from_user_id: 'owner-1', create_time_ms: 5,
+      item_list: [{ type: 1, text_item: { text: '好' }, ref_msg: { title: '被引用的消息' } }],
+    },
+    { account: 'bot' },
+  );
+  assert.equal(draft?.replyTo, undefined);
+});
+
+test('没有引用、或引用里没有 msg_id 时不带 replyTo', async () => {
+  const plain = await toOwnerMessageDraft(
+    { message_id: '1', from_user_id: 'owner-1', create_time_ms: 5, item_list: [{ type: 1, text_item: { text: 'hi' } }] },
+    { account: 'bot' },
+  );
+  assert.equal(plain?.replyTo, undefined);
+  const empty = await toOwnerMessageDraft(
+    {
+      message_id: '2', from_user_id: 'owner-1', create_time_ms: 6,
+      item_list: [{ type: 1, text_item: { text: 'hi' }, ref_msg: { message_item: { type: 0 } } }],
+    },
+    { account: 'bot' },
+  );
+  assert.equal(empty?.replyTo, undefined);
+});
+
 test('没有任何内容的消息不产出草稿', async () => {
   assert.equal(await toOwnerMessageDraft({ from_user_id: 'owner-1' }, { account: 'bot' }), null);
   assert.equal(

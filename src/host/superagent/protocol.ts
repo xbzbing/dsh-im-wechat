@@ -87,6 +87,7 @@ export type ReceiptErrorCode = 'window-closed' | 'rate-limited' | 'auth-expired'
 export interface Receipt {
   deliveryId: string;
   status: 'sent' | 'failed' | 'uncertain';
+  /** 平台侧消息 id，用户引用这条消息时带回来的就是它。不许加前缀、不许换成桥自己的 id。 */
   bridgeMessageId?: string;
   // 这条交付实际占用了平台多少条主动消息（分条发送时大于 1）：核心据此算窗口内的条数额度。
   messagesSent?: number;
@@ -108,6 +109,9 @@ export interface BridgeCapabilities {
   edit?: { scope: 'any' | 'reply'; minIntervalMs: number; maxLifetimeMs?: number };
   detail: boolean;
   nativeCommands: boolean;
+  /** 能收到用户引用消息里的被引用消息 id（`replyTo`），核心可用它做引用回指。
+   *  best-effort：平台不回 `message_id` 时桥只是少一个 id，不会撤回这项声明。 */
+  quoteReply?: boolean;
   quotas?: { scope: 'bot' | 'conversation'; max: number; windowMs: number }[];
   outbound: { requiresPriorInbound: boolean; windowMs?: number; maxMessagesPerWindow?: number; images?: boolean };
 }

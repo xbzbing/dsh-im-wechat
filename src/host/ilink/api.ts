@@ -24,6 +24,7 @@ import type {
   OutboundMessage,
   QrCodeResponse,
   QrStatusResponse,
+  SendMessageResponse,
 } from './types.ts';
 import { ILINK_PROTOCOL_VERSION } from '../../shared/version.ts';
 
@@ -350,7 +351,7 @@ export class ILinkApi {
   }
 
   /** 发送一条消息（文本或已上传的媒体项）。业务失败抛 `api` 类错误并带上 `ret`。 */
-  async sendMessage(message: OutboundMessage, options: { timeoutMs?: number } = {}): Promise<void> {
+  async sendMessage(message: OutboundMessage, options: { timeoutMs?: number } = {}): Promise<SendMessageResponse> {
     const response = await this.#postObject(
       'ilink/bot/sendmessage',
       { msg: message, base_info: this.baseInfo() },
@@ -364,6 +365,7 @@ export class ILinkApi {
     if (errcode !== undefined && errcode !== 0) {
       throw new ILinkError('api', `sendmessage 失败 errcode=${errcode}`, { errcode });
     }
+    return response as SendMessageResponse;
   }
 
   /** 读机器人在某个主人上的配置（目前只用 `typing_ticket`，保留能力）。 */

@@ -53,11 +53,21 @@ function newClientId(): string {
 }
 
 /**
+ * 平台侧消息 id：用户引用一条消息时，`ref_msg` 里带回来的就是它（协议见 docs/protocol/）。
+ * 数字形态已由 `json.ts` 无损转成字符串，这里只认字符串，不编造。
+ */
+function platformMessageId(response: { message_id?: string } | undefined): string | undefined {
+  const value = response?.message_id;
+  return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+/**
  * 发一条文本。
  *
- * 返回 `clientId`：它是这条消息在协议里的客户端标识，也是 `bridgeMessageId`。
+ * 返回 `clientId`（客户端标识）与平台侧的 `messageId`：后者用来把「用户引用了哪一条」
+ * 认回是哪次交付；平台没回时是 undefined，不编造。
  */
-export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{ clientId: string }> {
+export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{ clientId: string; messageId?: string }> {
   const contextToken = (params.contextToken ?? '').trim();
   if (contextToken === '') {
     throw new SendError('window-closed', '缺少 context_token：主人最近没有发过消息');
@@ -71,7 +81,7 @@ export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{
     throw new SendError('too-long', `文本超过 ${HARD_TEXT_LIMIT} 字符`);
   }
   const clientId = params.clientId ?? newClientId();
-  await api.sendMessage(
+  const response = await api.sendMessage(
     {
       from_user_id: '',
       to_user_id: params.to,
@@ -84,7 +94,8 @@ export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{
     },
     params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {},
   );
-  return { clientId };
+  const messageId = platformMessageId(response);
+  return { clientId, ...(messageId ? { messageId } : {}) };
 }
 
 export interface SendImageParams {
@@ -105,14 +116,14 @@ export interface SendImageParams {
  * 客户端按它解密就得到一坨乱码，现象是聊天里一个灰块，而不是任何报错；
  * `media.encrypt_type` 缺省时客户端不按「带缩略图元数据」解，同样渲染不出来。
  */
-export async function sendImage(api: ILinkApi, params: SendImageParams): Promise<{ clientId: string }> {
+export async function sendImage(api: ILinkApi, params: SendImageParams): Promise<{ clientId: string; messageId?: string }> {
   const contextToken = (params.contextToken ?? '').trim();
   if (contextToken === '') {
     throw new SendError('window-closed', '缺少 context_token：主人最近没有发过消息');
   }
   if (params.to.trim() === '') throw new SendError('other', '缺少收件人');
   const clientId = params.clientId ?? newClientId();
-  await api.sendMessage(
+  const response = await api.sendMessage(
     {
       from_user_id: '',
       to_user_id: params.to,
@@ -135,7 +146,8 @@ export async function sendImage(api: ILinkApi, params: SendImageParams): Promise
     },
     params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {},
   );
-  return { clientId };
+  const messageId = platformMessageId(response);
+  return { clientId, ...(messageId ? { messageId } : {}) };
 }
 
 export interface SendFailure {

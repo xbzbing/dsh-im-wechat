@@ -91,8 +91,8 @@ export const en = {
   '未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，文字与图片交给会话，回答发回微信。':
     'Without My Superagent, this plugin talks to the session directly: the first message creates a session in the chosen workspace, text and images go to the session, and answers come back to WeChat.',
   '回合内插话': 'Steer within a running turn',
-  '关闭时新消息排队等待当前回合结束；打开后插入正在运行的回合。':
-    'Off: new messages queue until the current turn ends. On: they are inserted into the running turn.',
+  '默认打开：插入正在运行的回合；关闭时新消息排队等待当前回合结束。':
+    'On by default: new messages are inserted into the running turn. Off: they queue until the current turn ends.',
   '工作区': 'Workspace',
   '首次消息在该工作区新建会话并持续复用；默认使用自动创建的「微信会话」。':
     'The first message creates a session in this workspace and reuses it afterwards; the auto-created “WeChat session” is the default.',

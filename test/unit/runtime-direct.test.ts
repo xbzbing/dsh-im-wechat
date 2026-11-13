@@ -166,3 +166,13 @@ test('独立模式：present 的非图片文件不往微信发', async () => {
     await runtime.stop();
   });
 });
+
+test('独立模式：回合在跑时的新消息默认插队，面板改过就按改的来', async () => {
+  await withDir(async (dir) => {
+    const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: fakeApi().createApi });
+    assert.equal(runtime.status().direct?.busyMode, 'steer');
+    await runtime.setDirect({ busyMode: 'queue' });
+    assert.equal(runtime.status().direct?.busyMode, 'queue');
+    await runtime.stop();
+  });
+});

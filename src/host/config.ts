@@ -45,7 +45,7 @@ export interface PluginConfig {
   verifyPin?: boolean;
   /** 独立模式建会话的工作区 id；空表示自动创建的默认工作区「微信会话」（ADR-0018）。 */
   directWorkspaceId?: string;
-  /** 独立模式里回合正在跑时又来一条消息的提交方式：排队（默认）或插话（ADR-0009）。 */
+  /** 独立模式里回合正在跑时又来一条消息的提交方式：插话（默认，见 DEFAULT_DIRECT_BUSY_MODE）或排队（ADR-0009）。 */
   directBusyMode?: BusyMode;
 }
 
@@ -71,9 +71,9 @@ function asMaxText(value: unknown): number | undefined {
 /** 独立模式的提交方式；与宿主 `InputSubmitMode` 同一套取值。 */
 export type BusyMode = 'queue' | 'steer';
 
-export const DEFAULT_DIRECT_BUSY_MODE: BusyMode = 'queue';
+export const DEFAULT_DIRECT_BUSY_MODE: BusyMode = 'steer';
 
-/** 只认 queue / steer；其余一律回落到默认（排队）。 */
+/** 只认 queue / steer；其余一律回落到默认（插队）。 */
 export function normalizeBusyMode(value: unknown): BusyMode | undefined {
   return value === 'queue' || value === 'steer' ? value : undefined;
 }

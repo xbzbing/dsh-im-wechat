@@ -298,7 +298,7 @@ export function DirectSection(props: {
         h('div', { className: 'wx-settings-list' },
           h(SwitchRow, {
             title: t('回合内插话'),
-            description: t('关闭时新消息排队等待当前回合结束；打开后插入正在运行的回合。'),
+            description: t('默认打开：插入正在运行的回合；关闭时新消息排队等待当前回合结束。'),
             checked: directBusy,
             disabled: directLocked,
             onChange: (next: boolean) => void saveDirect({ busyMode: next ? 'steer' : 'queue' }),

@@ -379,6 +379,17 @@ test('交付带图：先上传再发 image_item，然后才发文字', async () 
   });
 });
 
+test('分条交付的回执带全部平台 id：引用中间那条也能认回', async () => {
+  await withHarness({ maxText: 20 }, async (h) => {
+    const receipt = await h.bridge.deliver(delivery({ title: '', body: '第一段内容\n第二段内容\n第三段内容\n第四段内容' }));
+    assert.equal(receipt.status, 'sent');
+    assert.ok((receipt.bridgeMessageIds ?? []).length > 1);
+    assert.equal(receipt.bridgeMessageIds!.length, h.sent.length);
+    assert.equal(receipt.bridgeMessageId, receipt.bridgeMessageIds!.at(-1));
+    assert.equal(new Set(receipt.bridgeMessageIds).size, receipt.bridgeMessageIds!.length, 'id 不重复');
+  });
+});
+
 test('平台没回 message_id：回执不带 bridgeMessageId，不编造', async () => {
   await withHarness({ noMessageId: true }, async (h) => {
     const receipt = await h.bridge.deliver(delivery());
@@ -394,6 +405,7 @@ test('图片-only 交付：回执带最后一张图的平台 id，引用那张�
     assert.equal(h.sent.length, 0);
     assert.equal(h.images.length, 1);
     assert.match(receipt.bridgeMessageId ?? '', /^wm-/);
+    assert.deepEqual(receipt.bridgeMessageIds, [receipt.bridgeMessageId]);
   });
 });
 

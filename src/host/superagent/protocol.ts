@@ -89,6 +89,8 @@ export interface Receipt {
   status: 'sent' | 'failed' | 'uncertain';
   /** 平台侧消息 id，用户引用这条消息时带回来的就是它。不许加前缀、不许换成桥自己的 id。 */
   bridgeMessageId?: string;
+  /** 分条交付的全部平台消息 id（按发送顺序）：引用任意一条都能认回这次交付。 */
+  bridgeMessageIds?: string[];
   // 这条交付实际占用了平台多少条主动消息（分条发送时大于 1）：核心据此算窗口内的条数额度。
   messagesSent?: number;
   error?: string;

@@ -222,6 +222,7 @@ export class WeixinBridge implements BridgeProvider {
     delivery: Delivery,
     recipient: string,
     contextToken: string | undefined,
+    remember: (messageId: string | undefined) => void,
   ): Promise<Pick<Receipt, 'status' | 'error' | 'errorCode'> | undefined> {
     const images = delivery.images ?? [];
     let sent = this.#imageProgress.get(delivery.id) ?? 0;
@@ -235,6 +236,7 @@ export class WeixinBridge implements BridgeProvider {
         );
         const result = await sendImage(api, { to: recipient, upload, contextToken });
         if (result.messageId !== undefined) rememberBounded(this.#imageMessageIds, delivery.id, result.messageId);
+        remember(result.messageId);
         rememberBounded(this.#imageProgress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
@@ -286,15 +288,15 @@ export class WeixinBridge implements BridgeProvider {
 
     const contextToken = this.#contextTokens.get(this.account, recipient);
 
-    // 整条交付最后发出去那一条的平台消息 id：用户引用哪条，就靠它认回这次交付。
-    // 只记最后一条（取舍见 ADR-0022）：引用前面的分条认不回来，会退回前台。
-    let lastMessageId: string | undefined;
+    // 每条发出去的消息的平台 id：引用其中任意一条都应认回这次交付（分条也不例外）。
+    const messageIds: string[] = [];
+    const remember = (id: string | undefined): void => { if (id !== undefined) messageIds.push(id); };
     // 图片先发：文字里通常写着「图见上」，图没到就发文字会让人以为没发。
     if (images.length > 0) {
-      const failure = await this.#sendImages(api, delivery, recipient, contextToken);
+      const failure = await this.#sendImages(api, delivery, recipient, contextToken, remember);
       if (failure) return { ...base, ...failure };
-      // 图片-only 交付没有文字覆盖，回执就靠最后一张图的 id。
-      lastMessageId = this.#imageMessageIds.get(delivery.id);
+      // 断点续发时图片阶段直接跳过，从上次记住的最后一张补回来。
+      if (messageIds.length === 0) remember(this.#imageMessageIds.get(delivery.id));
     }
     let sent = this.#progress.get(delivery.id) ?? 0;
     // 桥自己执行自己声明的配额：核心只见一次 deliver，按交付节流管不到分条扇出。
@@ -313,7 +315,7 @@ export class WeixinBridge implements BridgeProvider {
       }
       try {
         const result = await sendText(api, { to: recipient, text: parts[sent], contextToken });
-        if (result.messageId !== undefined) lastMessageId = result.messageId;
+        remember(result.messageId);
         rememberBounded(this.#progress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
@@ -337,14 +339,14 @@ export class WeixinBridge implements BridgeProvider {
     this.#imageProgress.delete(delivery.id);
     this.#imageMessageIds.delete(delivery.id);
     // 平台没回 message_id：不编造，但让它在面板上留下一次痕迹（协议漂移探针）。
-    if (lastMessageId === undefined) this.#warnMissingMessageId(delivery.id);
+    if (messageIds.length === 0) this.#warnMissingMessageId(delivery.id);
     return {
       ...base,
       status: 'sent',
       // 整条交付一共占了几条额度：中途失败的那几次回执是 failed，核心不据此记账，
       // 所以成功这一次要给总数（图 + 文字分条），断点续发也只在这一次结算。
       messagesSent: images.length + parts.length,
-      ...(lastMessageId ? { bridgeMessageId: lastMessageId } : {}),
+      ...(messageIds.length > 0 ? { bridgeMessageId: messageIds[messageIds.length - 1]!, bridgeMessageIds: messageIds } : {}),
     };
   }
 

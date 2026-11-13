@@ -12,7 +12,7 @@
 
 ## 发送响应与引用回指
 
-- `ilink/bot/sendmessage` 成功时返回平台侧消息 id：`{ message_id?: string }`（uint64 on the wire，按字符串无损解析）。核心把它写进投递回执 `bridgeMessageId`，用来把用户后来的引用认回这次交付。
+- `ilink/bot/sendmessage` 成功时返回平台侧消息 id：`{ message_id?: string }`（uint64 on the wire，按字符串无损解析）。桥把它写进投递回执：单条交付写 `bridgeMessageId`，分条交付同时写 `bridgeMessageIds`（全部 id），核心据此把用户后来的引用认回这次交付。
 - 入站引用在 `item_list[].ref_msg` 里，两种形态都要认，**优先级 `svr_id` 高于 `message_item.msg_id`**：
   - `ref_msg.svr_id`：新版客户端只带这个，不带被引用消息的正文或媒体；
   - `ref_msg.message_item.msg_id`：旧版形态；`title` 只是展示文案，不是 id。

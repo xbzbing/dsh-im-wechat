@@ -44,6 +44,8 @@ export interface QuestionBrokerOptions {
   enabled?: () => boolean;
   /** 提醒前的等待时间（毫秒）：这段时间在 Web 端答完就不打扰。 */
   delayMs?: () => number;
+  /** 发出提醒后通知协调者：入站文本该先给这一路认领。 */
+  onSent?: () => void;
   now?: () => number;
   newId?: () => string;
   logger?: QuestionLogger;
@@ -54,7 +56,6 @@ export interface QuestionBrokerOptions {
 interface Pending {
   readonly id: string;
   readonly questions: AskQuestion[];
-  readonly createdAt: number;
   /** 本地取消器：abort 会连带 abort 宿主看到的 union signal，Web 端据此收起卡片。 */
   readonly cancel: AbortController;
   resolve(answer: Answer): void;
@@ -100,7 +101,6 @@ function whenAborted(signal: AbortSignal | undefined): { promise: Promise<void>;
 
 const DEFAULT_WAIT_MS = 30 * 60_000;
 const PENDING_MAX = 50;
-const PENDING_TTL_MS = 60 * 60_000;
 
 export interface QuestionSnapshot {
   pending: number;
@@ -115,9 +115,6 @@ export class QuestionBroker {
   readonly #pending = new Map<string, Pending>();
   #lastError: { at: number; message: string } | undefined;
   #closed = false;
-  /** 最近一次发出提醒的序号：入站文本先给「最后发的那条」认领。 */
-  #seq = 0;
-  #lastSent = 0;
 
   constructor(options: QuestionBrokerOptions) {
     this.#options = options;
@@ -125,11 +122,6 @@ export class QuestionBroker {
     let counter = 0;
     this.#newId = options.newId ?? (() => `wx-q-${++counter}`);
     this.#waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
-  }
-
-  /** 最近一次提醒的序号（跨提问与审批比较，谁的提醒更晚谁先认领）。 */
-  lastSentSeq(): number {
-    return this.#lastSent;
   }
 
   snapshot(): QuestionSnapshot {
@@ -195,20 +187,28 @@ export class QuestionBroker {
         this.#noteError('问题提醒发送失败，已交回 Web 端');
         return web;
       }
+      // 发送期间 Web 已经答完（或请求已取消）：别再挂一条过时的提醒。
+      const late = await Promise.race([
+        webSettled,
+        aborted.promise.then(() => ({ kind: 'aborted' as const })),
+        Promise.resolve({ kind: 'continue' as const }),
+      ]);
+      if (late.kind === 'web') return late.value;
+      if (late.kind === 'web-error') throw late.error;
+      if (late.kind === 'aborted') throw cancellation(request);
 
-      this.#sweep();
       const pendingId = this.#newId();
       const answer = deferred<Answer>();
       const pending: Pending = {
         id: pendingId,
         questions,
-        createdAt: this.#now(),
         cancel: local,
         resolve: (value) => answer.resolve(value),
         reject: (error) => answer.reject(error),
       };
       this.#pending.set(pendingId, pending);
-      this.#lastSent = ++this.#seq;
+      this.#sweep();
+      this.#options.onSent?.();
       const im: Promise<{ kind: 'im'; value: Answer } | { kind: 'im-error'; error: unknown }> = answer.promise.then(
         (value) => ({ kind: 'im', value }),
         (error: unknown) => ({ kind: 'im-error', error }),
@@ -316,15 +316,8 @@ export class QuestionBroker {
     return Number.isFinite(value) && value > 0 ? value : 0;
   }
 
+  /** 上限在插入之后收口：表里最多 `PENDING_MAX` 条。 */
   #sweep(): void {
-    const deadline = this.#now() - PENDING_TTL_MS;
-    for (const [id, pending] of this.#pending) {
-      if (pending.createdAt < deadline) {
-        pending.cancel.abort(abortReason('提问等待超时'));
-        pending.reject(abortReason('提问等待超时'));
-        this.#pending.delete(id);
-      }
-    }
     while (this.#pending.size > PENDING_MAX) {
       const oldest = this.#pending.keys().next();
       if (oldest.done) break;

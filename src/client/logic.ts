@@ -89,6 +89,17 @@ export function isHostOlder(status: any, required: number): boolean {
   return contract < required;
 }
 
+/**
+ * 只属于独立模式的设置能不能改：问题与审批提醒、长任务阈值、直连会话。
+ *
+ * 接入核心后这几项都不再参与（提醒由核心按自己的设置发，消息由核心接管），值留在
+ * 配置里只是给「以后关掉核心」用；面板锁住而不是让人改完发现没反应。宿主版本对不上
+ * 时同样锁住：不确定端点还在不在。两处共用同一个判据，免得再次各写一份。
+ */
+export function standaloneSettingsLocked(input: { superagent: boolean; hostOlder: boolean; busy: string }): boolean {
+  return input.superagent || input.hostOlder || input.busy !== '';
+}
+
 /** 健康状态 → 字典键；宿主给了具体原因时保留原文。 */
 export type HealthLabel = { key: WeChatKey } | { text: string };
 

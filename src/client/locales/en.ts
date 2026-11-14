@@ -87,6 +87,7 @@ export const en: Record<WeChatKey, string> = {
   'reminder.questionDelayTitle': 'Wait before reminding (minutes)',
   'reminder.questionDelayDescription': 'Answering in the Web UI during this window means no WeChat message; after it, the reminder is sent.',
   'reminder.questionDelayValue': 'Current wait: {value} {unit}',
+  'reminder.ownHandledByCore': 'Connected to My Superagent: questions, approvals, and long-task reminders come from the core with its own settings, so the three items below apply to standalone mode only.',
   'reminder.invalid': 'Must be a whole number of minutes between {min} and {max}',
   'reminder.source': 'Reminder source',
   'reminder.sourcePlugin': 'Sent by this plugin',

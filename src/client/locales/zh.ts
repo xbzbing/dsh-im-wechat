@@ -85,6 +85,7 @@ export const zh = {
   'reminder.questionDelayTitle': '提醒前等待（分钟）',
   'reminder.questionDelayDescription': '这段时间里在 Web 端答完就不打扰；到点还没答才发到微信。',
   'reminder.questionDelayValue': '当前等待：{value} {unit}',
+  'reminder.ownHandledByCore': '已接入我的超级助理：提问、审批与长任务提醒都由核心按它自己的设置发送，下面三项只在独立模式生效。',
   'reminder.invalid': '需为 {min} 到 {max} 的整数分钟',
   'reminder.source': '提醒来源',
   'reminder.sourcePlugin': '由本插件发送',

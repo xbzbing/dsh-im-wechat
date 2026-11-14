@@ -11,6 +11,7 @@ import {
   describeLoginPhase,
   formatTime,
   healthText,
+  standaloneSettingsLocked,
   validateMinutes,
   validateQuestionDelay,
   workspaceOptions,
@@ -228,7 +229,7 @@ function MinutesRow(props: {
     draftHint !== null ? h('p', { className: 'wx-draft-hint' }, draftHint) : null);
 }
 
-/** 消息与提醒区：两个接入开关、提醒开关与两个分钟阈值。 */
+/** 消息与提醒区：接入开关、提醒来源，以及独立模式才生效的提醒设置。 */
 export function ReminderSection(props: {
   t: T;
   rpcCall: RpcCall;
@@ -259,6 +260,8 @@ export function ReminderSection(props: {
   const questionCheck = validateQuestionDelay(questionDelay);
   const canSaveQuestionDelay = questionCheck.ok
     && questionCheck.value !== (typeof questionDelayValue === 'number' ? questionDelayValue : -1);
+  // 下面三项只在独立模式生效：接入核心后由核心按自己的设置发，锁住并说明原因。
+  const ownLocked = standaloneSettingsLocked({ superagent, hostOlder, busy });
 
   return h('section', { className: 'wx-panel' },
     h('div', { className: 'wx-section-head' },
@@ -281,49 +284,51 @@ export function ReminderSection(props: {
         disabled: busy !== '',
         onChange: (next: boolean) => void run('superagent', () => rpcCall(ENDPOINTS.setSuperagent, { enabled: next })),
       }),
-      h(SwitchRow, {
-        title: t('reminder.questionTitle'),
-        description: t('reminder.questionDescription'),
-        checked: questionReminders,
-        disabled: busy !== '' || hostOlder,
-        onChange: (next: boolean) => void toggleQuestionReminders(next),
-      }),
-      h(MinutesRow, {
-        t,
-        title: t('reminder.questionDelayTitle'),
-        description: t('reminder.questionDelayDescription'),
-        value: questionDelay,
-        placeholder: '5',
-        disabled: busy !== '' || hostOlder || !questionReminders,
-        canSave: canSaveQuestionDelay,
-        onChange: onQuestionDelayChange,
-        onSave: saveQuestionDelay,
-        error: !questionCheck.ok && questionDelay.trim() !== '' ? t(questionCheck.key, questionCheck.params) : null,
-        draftHint: questionDelayDirty
-          ? t('reminder.questionDelayValue', {
-            value: typeof questionDelayValue === 'number' ? questionDelayValue : '—',
-            unit: t('common.minutes'),
-          })
-          : null,
-      }),
-      h(MinutesRow, {
-        t,
-        title: t('reminder.thresholdTitle'),
-        description: t('reminder.thresholdDescription'),
-        value: minutes,
-        placeholder: '30',
-        disabled: busy !== '' || hostOlder,
-        canSave: canSaveMinutes,
-        onChange: onMinutesChange,
-        onSave: saveMinutes,
-        error: !check.ok && minutes.trim() !== '' ? t(check.key, check.params) : null,
-        draftHint: minutesDirty
-          ? t('reminder.thresholdValue', {
-            value: typeof threshold === 'number' ? threshold : '—',
-            unit: t('common.minutes'),
-          })
-          : null,
-      })));
+      h('div', { className: `wx-settings-list${superagent ? ' wx-panel-muted' : ''}` },
+        superagent ? h('p', { className: 'wx-draft-hint' }, t('reminder.ownHandledByCore')) : null,
+        h(SwitchRow, {
+          title: t('reminder.questionTitle'),
+          description: t('reminder.questionDescription'),
+          checked: questionReminders,
+          disabled: ownLocked,
+          onChange: (next: boolean) => void toggleQuestionReminders(next),
+        }),
+        h(MinutesRow, {
+          t,
+          title: t('reminder.questionDelayTitle'),
+          description: t('reminder.questionDelayDescription'),
+          value: questionDelay,
+          placeholder: '5',
+          disabled: ownLocked || !questionReminders,
+          canSave: canSaveQuestionDelay,
+          onChange: onQuestionDelayChange,
+          onSave: saveQuestionDelay,
+          error: !questionCheck.ok && questionDelay.trim() !== '' ? t(questionCheck.key, questionCheck.params) : null,
+          draftHint: questionDelayDirty
+            ? t('reminder.questionDelayValue', {
+              value: typeof questionDelayValue === 'number' ? questionDelayValue : '—',
+              unit: t('common.minutes'),
+            })
+            : null,
+        }),
+        h(MinutesRow, {
+          t,
+          title: t('reminder.thresholdTitle'),
+          description: t('reminder.thresholdDescription'),
+          value: minutes,
+          placeholder: '30',
+          disabled: ownLocked,
+          canSave: canSaveMinutes,
+          onChange: onMinutesChange,
+          onSave: saveMinutes,
+          error: !check.ok && minutes.trim() !== '' ? t(check.key, check.params) : null,
+          draftHint: minutesDirty
+            ? t('reminder.thresholdValue', {
+              value: typeof threshold === 'number' ? threshold : '—',
+              unit: t('common.minutes'),
+            })
+            : null,
+        }))));
 }
 
 /** 独立模式区：插话、工作区与绑定（ADR-0009）。 */
@@ -345,7 +350,7 @@ export function DirectSection(props: {
   const { superagent, directExpanded, direct, workspaceId, workspaces, workspacesReady, hostOlder, busy } = props;
   const directBusy = direct?.busyMode === 'steer';
   // 同形的禁用条件只算一次：四份拷贝已经漂移过（重置绑定曾少了 available 判断）。
-  const directLocked = superagent || busy !== '' || hostOlder || direct?.available === false;
+  const directLocked = standaloneSettingsLocked({ superagent, hostOlder, busy }) || direct?.available === false;
   const boundWorkspace = direct?.bound && direct.workspaceId
     ? workspaces.find((workspace) => workspace.id === direct.workspaceId)
     : undefined;

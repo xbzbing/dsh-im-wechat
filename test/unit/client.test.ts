@@ -20,6 +20,7 @@ import {
   MENU_Z_INDEX,
   menuSurfaceStyle,
   placeMenu,
+  standaloneSettingsLocked,
   unwrapResult,
   validateMinutes,
   validateQuestionDelay,
@@ -84,6 +85,16 @@ test('契约版本对不上时判定为 Host 落后', () => {
   assert.equal(isHostOlder({ contract: 1 }, 1), false);
   assert.equal(isHostOlder({ contract: 9 }, 1), false);
   assert.equal(isHostOlder(null, 1), false);
+});
+
+test('只属于独立模式的设置：接入核心后一律锁住', () => {
+  // 接入核心后提醒由核心按自己的设置发，本插件的值与直连设置都不再参与；
+  // 留着可改等于让人改完发现没反应。
+  assert.equal(standaloneSettingsLocked({ superagent: true, hostOlder: false, busy: '' }), true);
+  assert.equal(standaloneSettingsLocked({ superagent: false, hostOlder: false, busy: '' }), false);
+  // 另外两个锁：宿主版本对不上（不确定端点是否在）与有动作在跑。
+  assert.equal(standaloneSettingsLocked({ superagent: false, hostOlder: true, busy: '' }), true);
+  assert.equal(standaloneSettingsLocked({ superagent: false, hostOlder: false, busy: 'enabled' }), true);
 });
 
 test('二维码渲染：正常内容出 data URL，超长内容退回 null', () => {

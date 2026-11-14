@@ -57,7 +57,7 @@ interface Pending {
   readonly release: () => void;
 }
 
-/** 提醒那一路的默认窗口；审批只提醒不代答，窗口与提问一致即可。 */
+/** 提醒发出后最多等这么久；到点把请求交回 Web，不再接受微信作答。 */
 const DEFAULT_WAIT_MS = 30 * 60_000;
 const PENDING_MAX = 20;
 /** 原因只发这么多字符：它来自宿主，可能带路径/命令片段，也可能很长。 */

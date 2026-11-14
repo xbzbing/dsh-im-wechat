@@ -109,7 +109,9 @@ test('typingIndicator 只收布尔值，缺省视为开启', () => {
 
 test('提醒开关与等待时间：收窄到 0–120 分钟，非数字丢掉交给默认', () => {
   assert.equal(normalizePluginConfig({ questionReminders: false }).questionReminders, false);
-  assert.equal('questionReminders' in normalizePluginConfig({ questionReminders: 'no' }), false);
+  // 写坏的开关按「关」处理：不因为配置错误静默恢复「微信可批授权」。
+  assert.equal(normalizePluginConfig({ questionReminders: 'no' }).questionReminders, false);
+  assert.equal(normalizePluginConfig({ questionReminders: null }).questionReminders, false);
   assert.equal(normalizePluginConfig({ questionDelayMinutes: 5 }).questionDelayMinutes, 5);
   assert.equal(normalizePluginConfig({ questionDelayMinutes: 0 }).questionDelayMinutes, 0);
   assert.equal(normalizePluginConfig({ questionDelayMinutes: -3 }).questionDelayMinutes, 0);

@@ -129,8 +129,10 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
   const typingIndicator = asBoolean(record.typingIndicator);
   if (typingIndicator !== undefined) config.typingIndicator = typingIndicator;
-  const questionReminders = asBoolean(record.questionReminders);
-  if (questionReminders !== undefined) config.questionReminders = questionReminders;
+  // 这个开关决定「微信消息能否批一次工具授权」：写坏了按关处理，不静默恢复。
+  if (record.questionReminders !== undefined) {
+    config.questionReminders = asBoolean(record.questionReminders) ?? false;
+  }
   const questionDelay = normalizeQuestionDelayMinutes(record.questionDelayMinutes);
   if (questionDelay !== undefined) config.questionDelayMinutes = questionDelay;
   const verifyPin = asBoolean(record.verifyPin);
@@ -190,7 +192,9 @@ export class LocalConfigStore {
     const enabled = asBoolean(record.enabled);
     const superagent = asBoolean(record.superagent);
     const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
-    const questionReminders = asBoolean(record.questionReminders);
+    const questionReminders = record.questionReminders === undefined
+      ? undefined
+      : asBoolean(record.questionReminders) ?? false;
     const questionDelay = normalizeQuestionDelayMinutes(record.questionDelayMinutes);
     const directWorkspaceId = asString(record.directWorkspaceId);
     const directBusyMode = normalizeBusyMode(record.directBusyMode);

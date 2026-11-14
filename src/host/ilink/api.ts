@@ -283,9 +283,9 @@ export class ILinkApi {
       if (isAbortError(error)) {
         throw new ILinkError('timeout', `${label} 请求超时`, { reason: 'timeout' });
       }
-      throw new ILinkError('network', `${label} 网络失败：${(error as Error)?.message ?? '未知'}`, {
-        reason: classifyNetworkFailure(error),
-      });
+      const reason = classifyNetworkFailure(error);
+      // 不拼底层 error.message：运行时生成，可能带完整请求 URL（含 verify_code）。
+      throw new ILinkError('network', `${label} 网络失败（${reason}）`, { reason });
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       external?.removeEventListener('abort', onExternalAbort);

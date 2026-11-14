@@ -243,6 +243,22 @@ test('扫码轮询的 HTTP 错误消息不带查询串（PIN 不进日志与面�
   });
 });
 
+test('网络错误文案不拼底层 message：请求 URL 里的 PIN 不泄漏', async () => {
+  // 运行时的 error.message 可能带完整 URL；即使带了也不能进日志与面板。
+  const leaking = (async () => {
+    throw new Error('request to https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=q1&verify_code=secret-pin failed');
+  }) as typeof globalThis.fetch;
+  const api = makeApi({ fetch: leaking });
+  await assert.rejects(api.getQrStatus({ qrcode: 'q1', verifyCode: 'secret-pin' }), (error: unknown) => {
+    assert.ok(error instanceof ILinkError);
+    assert.equal(error.kind, 'network');
+    assert.equal(error.message.includes('secret-pin'), false);
+    assert.equal(error.message.includes('verify_code'), false);
+    assert.match(error.message, /ilink\/bot\/get_qrcode_status/);
+    return true;
+  });
+});
+
 test('响应必须是对象：网关返回非 JSON 对象按 api 错误拒绝', async () => {
   const scalar = (async () => new Response('<html>gateway</html>', {
     status: 200,

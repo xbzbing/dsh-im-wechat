@@ -13,6 +13,7 @@
  */
 
 import { answerFromText, normalizeQuestions, questionsToInteraction } from './answer-text.ts';
+import { PendingTable, abortReason, deferred, whenAborted } from './reply-pending.ts';
 import { renderInteraction } from '../shared/question-text.ts';
 import type { AskQuestion, Answer } from './answer-text.ts';
 
@@ -62,41 +63,9 @@ interface Pending {
   reject(error: unknown): void;
 }
 
-export interface Deferred<T> {
-  promise: Promise<T>;
-  resolve(value: T): void;
-  reject(error: unknown): void;
-}
-
-export function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((onResolve, onReject) => {
-    resolve = onResolve;
-    reject = onReject;
-  });
-  return { promise, resolve, reject };
-}
-
 /** 「没有监听者」：说明 Web 端根本不在，不算作答，继续等微信。 */
 function isNoProvider(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === 'NO_PROVIDER';
-}
-
-/** 一个信号 abort 时 resolve（不 reject，便于直接参与 race）。 */
-function whenAborted(signal: AbortSignal | undefined): { promise: Promise<void>; dispose(): void } {
-  let dispose = (): void => {};
-  const promise = new Promise<void>((resolve) => {
-    if (!signal) return;
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const onAbort = (): void => resolve();
-    signal.addEventListener('abort', onAbort, { once: true });
-    dispose = () => signal.removeEventListener('abort', onAbort);
-  });
-  return { promise, dispose };
 }
 
 const DEFAULT_WAIT_MS = 30 * 60_000;
@@ -112,7 +81,7 @@ export class QuestionBroker {
   readonly #now: () => number;
   readonly #newId: () => string;
   readonly #waitMs: number;
-  readonly #pending = new Map<string, Pending>();
+  readonly #pending = new PendingTable<Pending>(PENDING_MAX);
   #lastError: { at: number; message: string } | undefined;
   #closed = false;
 
@@ -206,8 +175,8 @@ export class QuestionBroker {
         resolve: (value) => answer.resolve(value),
         reject: (error) => answer.reject(error),
       };
-      this.#pending.set(pendingId, pending);
-      this.#sweep();
+      this.#pending.add(pending);
+      for (const dropped of this.#pending.sweep()) this.#drop(dropped);
       this.#options.onSent?.();
       const im: Promise<{ kind: 'im'; value: Answer } | { kind: 'im-error'; error: unknown }> = answer.promise.then(
         (value) => ({ kind: 'im', value }),
@@ -272,8 +241,7 @@ export class QuestionBroker {
    * 多条待答时认**最后一条**：主人在微信里看到的是最近发出的那条提醒。
    */
   reply(text: string): boolean {
-    const pendingList = [...this.#pending.values()].reverse();
-    for (const pending of pendingList) {
+    for (const pending of this.#pending.newestFirst()) {
       // 单题（含计划审阅）认自由输入——提示语与 answerFromText 都这么承诺；
       // 多题只认分段可解析的作答，整段自由输入交给普通消息路径（前一轮评审裁决）。
       if (!looksLikeAnswer(pending.questions, text)) continue;
@@ -317,15 +285,10 @@ export class QuestionBroker {
   }
 
   /** 上限在插入之后收口：表里最多 `PENDING_MAX` 条。 */
-  #sweep(): void {
-    while (this.#pending.size > PENDING_MAX) {
-      const oldest = this.#pending.keys().next();
-      if (oldest.done) break;
-      const dropped = this.#pending.get(oldest.value);
-      dropped?.cancel.abort(abortReason('提问过多'));
-      dropped?.reject(abortReason('提问过多'));
-      this.#pending.delete(oldest.value);
-    }
+  /** 被挤掉的待答按「提问过多」收尾：abort 本地信号，Web 端随之收起。 */
+  #drop(pending: Pending): void {
+    pending.cancel.abort(abortReason('提问过多'));
+    pending.reject(abortReason('提问过多'));
   }
 
   #noteError(message: string): void {
@@ -364,13 +327,6 @@ function resolvesToOption(question: AskQuestion, reply: string): boolean {
     }
     return options.some((option) => option.label.toLowerCase() === token.toLowerCase());
   });
-}
-
-function abortReason(message: string): Error {
-  const error = new Error(message);
-  error.name = 'UserQuestionError';
-  (error as { code?: string }).code = 'ASK_ABORTED';
-  return error;
 }
 
 /** Web 端那一路的结果：答了、没有监听者、或者它自己出错。 */

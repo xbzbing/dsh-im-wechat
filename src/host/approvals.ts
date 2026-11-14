@@ -13,7 +13,7 @@
  * 只在独立模式（未接入核心）下接管，接入核心后由核心提醒（ADR-0006）。
  */
 
-import { deferred } from './questions.ts';
+import { PendingTable, deferred, whenAborted } from './reply-pending.ts';
 import type { QuestionLogger, WebOutcome } from './questions.ts';
 
 export interface ApprovalRequest {
@@ -112,7 +112,7 @@ function decisionOf(outcome: ApprovalDecision, raw: string | undefined): Decisio
 export class ApprovalBroker {
   readonly #options: ApprovalBrokerOptions;
   readonly #waitMs: number;
-  readonly #pending = new Map<string, Pending>();
+  readonly #pending = new PendingTable<Pending>(PENDING_MAX);
   #closed = false;
   #reminded = 0;
 
@@ -185,8 +185,8 @@ export class ApprovalBroker {
         resolve: (value) => outcome.resolve(value),
         release: () => released.resolve({ kind: 'release' }),
       };
-      this.#pending.set(pendingId, pending);
-      this.#sweep();
+      this.#pending.add(pending);
+      for (const dropped of this.#pending.sweep()) dropped.release();
       this.#options.onSent?.();
 
       const im = outcome.promise.then(
@@ -255,7 +255,7 @@ export class ApprovalBroker {
   reply(text: string): boolean {
     const decision = parseDecision(text);
     if (decision === null) return false;
-    const pending = decision.no === undefined ? this.#newest() : this.#byNo(decision.no);
+    const pending = decision.no === undefined ? this.#pending.newest() : this.#byNo(decision.no);
     if (pending === undefined) return false;
     pending.resolve(decision.outcome);
     this.#pending.delete(pending.id);
@@ -285,22 +285,6 @@ export class ApprovalBroker {
   #delayMs(): number {
     const value = this.#options.delayMs?.() ?? 0;
     return Number.isFinite(value) && value > 0 ? value : 0;
-  }
-
-  /** 上限在插入之后收口：表里最多 `PENDING_MAX` 条。 */
-  #sweep(): void {
-    while (this.#pending.size > PENDING_MAX) {
-      const oldest = this.#pending.keys().next();
-      if (oldest.done) break;
-      this.#pending.get(oldest.value)?.release();
-      this.#pending.delete(oldest.value);
-    }
-  }
-
-  #newest(): Pending | undefined {
-    let last: Pending | undefined;
-    for (const pending of this.#pending.values()) last = pending;
-    return last;
   }
 
   #byNo(no: number): Pending | undefined {
@@ -337,17 +321,3 @@ function receipt(pending: Pending, outcome: ApprovalDecision): string {
   return `${outcome === 'allowed-once' ? '已批准' : '已拒绝'}：${pending.tool}（#${pending.no}）`;
 }
 
-function whenAborted(signal: AbortSignal | undefined): { promise: Promise<void>; dispose(): void } {
-  let dispose = (): void => {};
-  const promise = new Promise<void>((resolve) => {
-    if (!signal) return;
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const onAbort = (): void => resolve();
-    signal.addEventListener('abort', onAbort, { once: true });
-    dispose = () => signal.removeEventListener('abort', onAbort);
-  });
-  return { promise, dispose };
-}

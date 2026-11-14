@@ -43,6 +43,7 @@ import type { LoginState } from './state/login-state.ts';
 import { DirectBindingStore } from './state/direct-binding.ts';
 import { SyncCursorStore } from './state/sync-cursor.ts';
 import { ConsumedReplies } from './state/consumed-replies.ts';
+import { ReminderGate } from './send-gate.ts';
 import { resolveWorkspaceDir } from './state/paths.ts';
 import {
   DEFAULT_DIRECT_BUSY_MODE,
@@ -67,6 +68,7 @@ export class WeixinRuntime {
   readonly #loginStore: LoginStateStore;
   readonly #cursorStore: SyncCursorStore;
   readonly #consumed: ConsumedReplies;
+  readonly #reminderGate = new ReminderGate();
   readonly #tokenStore: ContextTokenStore;
   readonly #localConfig: LocalConfigStore;
   readonly #botAgent: string;
@@ -131,6 +133,7 @@ export class WeixinRuntime {
       noteError: (message) => this.#noteError(message),
       cdnBaseUrl: () => this.#config.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
       fetch: () => this.#fetch,
+      gate: this.#reminderGate,
       logger: this.#logger,
     });
     this.#typing = new TypingIndicator({

@@ -28,6 +28,8 @@ export interface OwnerChannelOptions {
   cdnBaseUrl?: () => string;
   /** 上传用 fetch（测试注入）。 */
   fetch?: () => typeof globalThis.fetch | undefined;
+  /** 提醒发送的节流窗口：超预算时返回 false，由调用方交回 Web。 */
+  gate?: { tryTake(): boolean };
   logger?: { warn?(...args: unknown[]): unknown };
 }
 
@@ -56,6 +58,11 @@ export class OwnerChannel {
     const account = this.#options.account();
     const recipient = this.recipient();
     if (!api || !account || recipient === null) return false;
+    // 提醒不走交付的配额账本：这里单独节流，避免密集 pending 把平台配额吃光。
+    if (this.#options.gate !== undefined && !this.#options.gate.tryTake()) {
+      this.#options.logger?.warn?.('提醒发送过于频繁，已跳过');
+      return false;
+    }
     try {
       await sendText(api, {
         to: recipient,

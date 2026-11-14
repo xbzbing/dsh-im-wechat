@@ -34,6 +34,7 @@ function makeChannel(options: {
   api?: ILinkApi | null;
   ownerId?: string;
   token?: string;
+  gate?: { tryTake(): boolean };
 } = {}) {
   const errors: string[] = [];
   const channel = new OwnerChannel({
@@ -43,6 +44,7 @@ function makeChannel(options: {
     ownerId: () => options.ownerId,
     token: () => options.token ?? 'ctx-1',
     noteError: (message) => errors.push(message),
+    ...(options.gate !== undefined ? { gate: options.gate } : {}),
   });
   return { channel, errors };
 }
@@ -67,6 +69,13 @@ test('发到主人：带上收件人、文本与 context_token', async () => {
   assert.equal(await channel.send('长任务提醒'), true);
   assert.deepEqual(sent, [{ to: 'owner-1', text: '长任务提醒', contextToken: 'ctx-1' }]);
   assert.deepEqual(errors, []);
+});
+
+test('提醒超预算时不发，交给调用方交回 Web', async () => {
+  const { api, sent } = fakeApi();
+  const { channel } = makeChannel({ api, ownerId: 'owner-1', gate: { tryTake: () => false } });
+  assert.equal(await channel.send('提醒'), false);
+  assert.deepEqual(sent, []);
 });
 
 test('没有令牌或没有客户端时不发，也不会编造成功', async () => {

@@ -76,6 +76,13 @@ const STEER_NOTICE = '已插进正在跑的这一轮，本轮回答仍由原回�
 const IMAGE_DROPPED_NOTICE = '图片没有发出去（当前会话的模型可能不支持看图），已按文字发送。';
 const IMAGE_DROPPED_SUFFIX = '（图片没有发出去，已按文字发送）';
 const IMAGE_ONLY_REJECTED = '图片没有发出去：当前会话的模型可能不支持看图，换个模型或改用文字再发一次。';
+/**
+ * 提交在我们自己的超时预算内没拿到回执。
+ *
+ * 宿主可能已经受理，只是回执没回来；不能说“没交出去”诱导主人重发，也不该把
+ * 英文 DOMException 原文发到微信。先让主人别重复发送，回合真跑完时回答仍会送回。
+ */
+const SUBMIT_TIMEOUT_NOTICE = '提交超时，可能已经进入会话；先别重复发送，回答会照常发给你。';
 
 export class DirectChat {
   readonly #controller: () => DirectController | null;
@@ -291,7 +298,7 @@ export class DirectChat {
     const text = textContent(content);
     const hasImage = content.some((part) => part.type === 'image');
     if (!hasImage || text.trim() === '' || signal.aborted) {
-      await this.#reportSubmitFailure(content, error);
+      await this.#reportSubmitFailure(content, error, isSubmitTimeout(signal, error));
       return false;
     }
     try {
@@ -299,14 +306,19 @@ export class DirectChat {
       await this.#submitTo(controller, { ...request, content: [{ type: 'text', text }] }, signal);
       return true;
     } catch (retryError) {
-      await this.#reportSubmitFailure(content, retryError);
+      await this.#reportSubmitFailure(content, retryError, isSubmitTimeout(signal, retryError));
       return false;
     }
   }
 
-  async #reportSubmitFailure(content: readonly PromptPart[], error: unknown): Promise<void> {
+  async #reportSubmitFailure(content: readonly PromptPart[], error: unknown, timedOut: boolean): Promise<void> {
     const detail = messageOf(error);
     this.#logger?.warn?.('独立模式提交失败', detail);
+    if (timedOut) {
+      // 宿主可能已经受理：微信侧只说“可能已进入”，不把英文异常原文发出去。
+      await this.#send(SUBMIT_TIMEOUT_NOTICE);
+      return;
+    }
     // 微信那头只发中文：宿主给的是英文技术细节（模型名、限额），留在日志里排障。
     const imageOnly = content.every((part) => part.type === 'image');
     await this.#send(imageOnly ? IMAGE_ONLY_REJECTED : `没能把消息交给会话：${detail}`);
@@ -330,6 +342,19 @@ export class DirectChat {
 
 function withImageDropped(notice: string, imageDropped: boolean): string {
   return imageDropped ? `${notice}${IMAGE_DROPPED_SUFFIX}` : notice;
+}
+
+/**
+ * 这次失败是不是我们自己设的提交预算到期。
+ *
+ * `AbortSignal.timeout` 到点后 `signal.reason` 是 `TimeoutError`；宿主也可能把这个 reason
+ * 当异常抛回来。两者都认，但不把“signal 已中止”一律当超时——调用方传入的 signal 也可能
+ * 因停机被中止，那种情况照常报错。
+ */
+function isSubmitTimeout(signal: AbortSignal, error: unknown): boolean {
+  const reasonName = (signal.reason as { name?: unknown } | null | undefined)?.name;
+  const errorName = (error as { name?: unknown } | null | undefined)?.name;
+  return reasonName === 'TimeoutError' || errorName === 'TimeoutError';
 }
 
 function timeZone(): string | undefined {

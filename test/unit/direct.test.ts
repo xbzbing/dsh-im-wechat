@@ -266,7 +266,7 @@ test('独立模式：只有文字被拒收时照旧报错，不做任何重发',
   assert.match(sent.join('\n'), /没能把消息交给会话/);
 });
 
-test('独立模式：我们自己超时后不重发，避免宿主可能已受理时重复入队', async (t) => {
+test('独立模式：我们自己超时后不重发，只说可能已进入会话', async (t) => {
   const controller = fakeController();
   let calls = 0;
   controller.prompt = (_request, signal) => new Promise((_resolve, reject) => {
@@ -279,7 +279,11 @@ test('独立模式：我们自己超时后不重发，避免宿主可能已受�
   assert.equal(await chat.submit('owner-1', [{ type: 'text', text: '看图' }, image]), 'failed');
 
   assert.equal(calls, 1, '超时后不再用文字重发');
-  assert.match(sent.join('\n'), /没能把消息交给会话/);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!, /提交超时/);
+  assert.match(sent[0]!, /可能已经进入会话/);
+  // 微信侧只看到中文提示，不把宿主的英文异常原文发出去。
+  assert.doesNotMatch(sent[0]!, /TimeoutError|aborted|The operation/);
 });
 
 test('独立模式：去掉图片重发也失败时，只报一次失败、不再说已按文字发送', async (t) => {

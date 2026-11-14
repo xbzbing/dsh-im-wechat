@@ -44,6 +44,7 @@ dsh plugin --profile web add file:/Users/ankh/workspace/private/dsh-plugins/dsh-
 dsh plugin --profile web remove dsh-im-wechat
 ```
 
+- **版本要求**：Node ≥ 24、DSH ≥ 0.2.2-rc.1（`engines.node` / `engines.dsh`）。更低的版本装不上也激活不了；确实要试时用 `dsh plugin allow-version` 精确豁免（[ADR-0024](docs/adr/0024-装机声明与版本基线.md)）。
 - **官方产物有两条，都带 `lib/`**：npm 上的版本，和 GitHub Release 上同名同版本的 `<包名>-<版本>.tgz` 附件。两者都由 CI 在门禁之后打包（[ADR-0020](docs/adr/0020-发布走CI与npm可信发布.md)），装哪一种都不需要本地构建。
 - **本地源码安装要先构建**：`lib/` 是构建产物、不入库，`prepack` 只在 `npm pack` / `npm publish` 时跑。`file:` 安装是把目录按 `files` 清单复制进 profile，**不会**帮你构建，也不读软链接——没有 `lib/` 时装出来的包没有入口，插件加载报 `Cannot find module .../lib/index.js`。
 - `file:` 复制的是安装那一刻的产物：改完源码要 `npm run build` 再卸载重装，仓库里的 `lib/` 变了不会自动同步到已装的 profile。

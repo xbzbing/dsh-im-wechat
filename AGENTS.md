@@ -32,7 +32,7 @@
 ## 工程约定
 
 - TypeScript strict，`erasableSyntaxOnly`：不用 enum、namespace、参数属性；相对 import 写 `.ts` 后缀。
-- **零运行时依赖**：只用 Node 内置模块（`fetch`、`node:crypto` 等）；平台模块（`react`、`@deepseek-ai/*`）在 client 半 external。协议实现参考官方 `openclaw-weixin` 的接口定义自写，不把它或任何第三方插件代码作为依赖引入。
+- **零运行时依赖**：只用 Node 内置模块（`fetch`、`node:crypto` 等）；平台模块（`react`、`@deepseek-ai/*`）在 client 半 external。协议实现参考官方 `openclaw-weixin` 的接口定义自写，不把它或任何第三方插件代码作为依赖引入。`dependencies` / `optionalDependencies` 恒为空；`peerDependencies` 只允许 `@deepseek-ai/*` 平台包且必须标 `optional`（只作兼容声明，npm 不装副本，ADR-0024）。
 - **不引用、不复制、不提及任何第三方 DSH 微信插件仓库**；协议事实以官方实现与实测为准，出处写进 `docs/protocol/`。
 - 宿主与核心服务一律用最小结构类型描述，不 import 宿主包与 `dsh-my-superagent` 的包。
 - 外部输入（协议帧、面板 RPC 参数、配置文件）在边界按 Schema 校验，领域内部不再做防御式判空。
@@ -75,7 +75,7 @@ npm run check      # 提交前门禁：typecheck + test + verify
 - 发布只由 `.github/workflows/release.yml` 在 master 上做（ADR-0020）：**不要手工打 tag，也不要在本地 `npm publish`**。改版本号 + 写 `docs/releases/v<版本>.md`，一起提交推上 master 即可。
 - npm 走可信发布（OIDC），仓库里不放 `NPM_TOKEN`。门禁 job 会执行依赖代码，所以它只有 `contents: read`；`id-token: write` 与 `contents: write` 只在发布 job 上——`test/unit/release.test.ts` 会拦下把这两样挪回门禁 job 的改动。
 - 版本号带 `-` 是预发布：只打 tag + 建 GitHub 预发布，不发 npm。
-- 门禁固定 node 24。node 22 的 `node --test` 会把依赖 `AbortSignal.timeout`（定时器 unref）的直连用例判成 `cancelledByParent`，在 22 上跑本地全量会看到 9 条假失败，不是产品问题。
+- 门禁固定 node 24。node 22 的 `node --test` 会把依赖 `AbortSignal.timeout`（定时器 unref）的直连用例判成 `cancelledByParent`，在 22 上跑本地全量会看到 9 条假失败，不是产品问题；`engines.node` 因此也只写 24（ADR-0024）。
 
 ## 安全红线
 

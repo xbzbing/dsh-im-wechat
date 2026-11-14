@@ -7,6 +7,7 @@
 
 import { MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES, RPC_PATH, RPC_TIMEOUT_MS } from './constants.ts';
 import { encodeQr, qrSvgDataUrl } from '../shared/qr.ts';
+import type { Translate, WeChatKey } from './locales.ts';
 
 export interface CodedError extends Error {
   code?: string;
@@ -25,7 +26,7 @@ export function unwrapResult(raw: any): any {
   }
   if (!result.ok) {
     const error = new Error(
-      typeof result.error?.message === 'string' && result.error.message ? result.error.message : '操作失败',
+      typeof result.error?.message === 'string' && result.error.message ? result.error.message : '',
     ) as CodedError;
     error.code = typeof result.error?.code === 'string' ? result.error.code : 'rpc-failed';
     error.details = result.error?.details ?? {};
@@ -58,9 +59,20 @@ export interface DescribedError {
 }
 
 export function describeError(error: any): DescribedError {
-  const message = typeof error?.message === 'string' && error.message ? error.message : '操作失败';
+  const message = typeof error?.message === 'string' ? error.message : '';
   const code = typeof error?.code === 'string' ? error.code : '';
   return { message, code };
+}
+
+/**
+ * 错误展示文案：宿主给了原文就原样显示，没有原文才用字典里的通用失败文案。
+ *
+ * 宿主消息是运行期文本，不是本命名空间的键；送进 `t()` 也只会原样返回，所以
+ * 这里直接分两路，别让「查不到键」的兜底掩盖真正的文案来源。
+ */
+export function errorText(t: Translate, error: any): string {
+  const { message } = describeError(error);
+  return message !== '' ? message : t('error.operationFailed');
 }
 
 /** 面板比 host 新：契约版本对不上时提示重启，而不是让按钮报「未知端点」。 */
@@ -70,24 +82,41 @@ export function isHostOlder(status: any, required: number): boolean {
   return contract < required;
 }
 
-/** 健康状态 → 中文原文（再交给 `t()` 翻译）。 */
-export function describeHealth(health: any): string {
-  if (!health || typeof health !== 'object') return '未登录';
-  if (health.state === 'ok') return '连接正常';
-  if (health.state === 'degraded') return '连接异常';
-  if (health.reason) return String(health.reason);
-  return '连接中断';
+/** 健康状态 → 字典键；宿主给了具体原因时保留原文。 */
+export type HealthLabel = { key: WeChatKey } | { text: string };
+
+/** 健康状态 → 展示用标签（键或宿主原文）。 */
+export function describeHealth(health: any): HealthLabel {
+  if (!health || typeof health !== 'object') return { key: 'health.unknown' };
+  if (health.state === 'ok') return { key: 'health.ok' };
+  if (health.state === 'degraded') return { key: 'health.degraded' };
+  if (health.reason) return { text: String(health.reason) };
+  return { key: 'health.down' };
 }
 
-/** 扫码阶段 → 中文原文。 */
-export function describeLoginPhase(phase: string): string {
+/** 健康状态 → 展示文案：字典键过一遍 `t()`，宿主原因原样显示。 */
+export function healthText(t: Translate, health: any): string {
+  const label = describeHealth(health);
+  return 'key' in label ? t(label.key) : label.text;
+}
+
+/** 扫码阶段 → 字典键；`idle` 等无对应阶段返回空串，由调用点补默认文案。 */
+export type LoginPhaseKey =
+  | 'login.phase.waiting'
+  | 'login.phase.scanned'
+  | 'login.phase.needCode'
+  | 'login.phase.confirmed'
+  | 'login.phase.bound'
+  | 'login.phase.expired';
+
+export function describeLoginPhase(phase: string): LoginPhaseKey | '' {
   switch (phase) {
-    case 'waiting': return '等待扫码';
-    case 'scanned': return '已扫描，请在手机上确认';
-    case 'need-verify-code': return '需要在手机上输入验证码';
-    case 'confirmed': return '登录成功';
-    case 'binded': return '已连接过，无需重复登录';
-    case 'failed': return '二维码已过期或流程结束';
+    case 'waiting': return 'login.phase.waiting';
+    case 'scanned': return 'login.phase.scanned';
+    case 'need-verify-code': return 'login.phase.needCode';
+    case 'confirmed': return 'login.phase.confirmed';
+    case 'binded': return 'login.phase.bound';
+    case 'failed': return 'login.phase.expired';
     default: return '';
   }
 }
@@ -138,9 +167,12 @@ export function isLoginActive(phase: string): boolean {
  * 长任务阈值的入参校验：1..1440 的整数分钟。
  *
  * 与 host 半的夹取区间一致——非整数会被宿主 round 改写，与其保存后输入框被
- * 回读值顶掉，不如在面板就拒绝并说明。
+ * 回读值顶掉，不如在面板就拒绝并说明。区间上下限由常量带进字典的插值参数，
+ * 文案里不重复写死两个数字。
  */
-export function validateMinutes(raw: string): { ok: true; value: number } | { ok: false; message: string } {
+export function validateMinutes(
+  raw: string,
+): { ok: true; value: number } | { ok: false; key: 'reminder.invalid'; params: { min: number; max: number } } {
   const text = raw.trim();
   const value = Number(text);
   if (
@@ -150,7 +182,11 @@ export function validateMinutes(raw: string): { ok: true; value: number } | { ok
     || value < MIN_LONG_TASK_MINUTES
     || value > MAX_LONG_TASK_MINUTES
   ) {
-    return { ok: false, message: `阈值需为 ${MIN_LONG_TASK_MINUTES} 到 ${MAX_LONG_TASK_MINUTES} 的整数分钟` };
+    return {
+      ok: false,
+      key: 'reminder.invalid',
+      params: { min: MIN_LONG_TASK_MINUTES, max: MAX_LONG_TASK_MINUTES },
+    };
   }
   return { ok: true, value };
 }

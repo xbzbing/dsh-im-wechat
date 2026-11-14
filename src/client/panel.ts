@@ -12,13 +12,14 @@
 
 import { ENDPOINTS, LOGIN_POLL_INTERVAL_MS, REFRESH_INTERVAL_MS, REQUIRED_CONTRACT } from './constants.ts';
 import {
-  describeError,
+  errorText,
   isHostOlder,
   isLoginActive,
   isHttpsUrl,
   qrImageUrl,
   validateMinutes,
 } from './logic.ts';
+import type { Translate } from './locales.ts';
 import { h, useCallback, useEffect, useMemo, useRef, useState } from './platform.ts';
 import {
   ConnectionSection,
@@ -33,7 +34,7 @@ import { Button, IconRefresh, StateDot, copyText } from './ui.ts';
 import iconUrl from '../../assets/icon.svg';
 
 export function WeixinSettingsPanel(props: any) {
-  const t = props.t as (text: string) => string;
+  const t = props.t as Translate;
   const rpcCall = props.rpcCall as <T = any>(endpoint: string, payload?: any) => Promise<T>;
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -84,7 +85,7 @@ export function WeixinSettingsPanel(props: any) {
             setPollError('');
           }
         } catch (error) {
-          if (seq === requestSeq.current) setPollError(t(describeError(error).message));
+          if (seq === requestSeq.current) setPollError(errorText(t, error));
         } finally {
           if (seq === requestSeq.current) setLoading(false);
         }
@@ -121,7 +122,7 @@ export function WeixinSettingsPanel(props: any) {
     try {
       await action();
     } catch (error) {
-      setActionError(t(describeError(error).message));
+      setActionError(errorText(t, error));
     } finally {
       // 失败也回读宿主真值：报错与最新状态同时可见（refresh 不碰 actionError）。
       await refresh();
@@ -144,9 +145,9 @@ export function WeixinSettingsPanel(props: any) {
         setCopied(true);
         return;
       }
-      setActionError(t('操作失败'));
+      setActionError(t('error.operationFailed'));
     } catch {
-      setActionError(t('操作失败'));
+      setActionError(t('error.operationFailed'));
     }
   }, [login.qrContent, t]);
 
@@ -161,7 +162,7 @@ export function WeixinSettingsPanel(props: any) {
   const saveMinutes = useCallback(async () => {
     const check = validateMinutes(minutes);
     if (!check.ok) {
-      setActionError(t(check.message));
+      setActionError(t(check.key, check.params));
       return;
     }
     setBusy('longtask');
@@ -174,7 +175,7 @@ export function WeixinSettingsPanel(props: any) {
       setStatus(next);
       setMinutesDirty(false);
     } catch (error) {
-      setActionError(t(describeError(error).message));
+      setActionError(errorText(t, error));
       await refresh();
     } finally {
       setBusy('');
@@ -191,7 +192,7 @@ export function WeixinSettingsPanel(props: any) {
       setStatus(next);
       if (patch.workspaceId !== undefined) setWorkspaceDirty(false);
     } catch (error) {
-      setActionError(t(describeError(error).message));
+      setActionError(errorText(t, error));
       await refresh();
     } finally {
       setBusy('');
@@ -224,7 +225,7 @@ export function WeixinSettingsPanel(props: any) {
   if (loading && !status) {
     return h('div', { className: 'wx-root wx-loading', 'data-plugin': 'dsh-im-wechat' },
       h('div', { className: 'wx-loading-bar', 'aria-busy': 'true' }),
-      h('p', { className: 'wx-hint' }, t('加载中…')));
+      h('p', { className: 'wx-hint' }, t('common.loading')));
   }
 
   // 首次加载失败：不拿默认值冒充已知状态，整页只留报错与重试（刷新按钮在头部）。
@@ -238,8 +239,8 @@ export function WeixinSettingsPanel(props: any) {
   const active = isLoginActive(login.phase);
   const showLoginPanel = active || login.phase === 'failed' || login.phase === 'binded';
   const stateLabel = statusUnavailable
-    ? t('状态不可用')
-    : !enabled ? t('已停用') : loggedIn ? t('已登录') : t('未登录');
+    ? t('status.unavailable')
+    : !enabled ? t('status.disabled') : loggedIn ? t('status.signedIn') : t('status.signedOut');
   const state = statusUnavailable
     ? 'idle'
     : !enabled ? 'idle' : loggedIn ? healthDot(String(health.state ?? 'ok')) : 'warning';
@@ -248,8 +249,8 @@ export function WeixinSettingsPanel(props: any) {
     h('div', { className: 'wx-brand' },
       h('img', { className: 'wx-mark', src: iconUrl, alt: '', 'aria-hidden': 'true' }),
       h('div', { className: 'wx-brand-copy' },
-        h('h3', { className: 'wx-title' }, t('微信')),
-        h('p', { className: 'wx-subtitle' }, t('把微信接入本机 Harness：扫码登录后，消息与交付会在微信和核心之间同步。')))),
+        h('h3', { className: 'wx-title' }, t('panel.title')),
+        h('p', { className: 'wx-subtitle' }, t('panel.subtitle')))),
     h('div', { className: 'wx-hero-actions' },
       h('div', { className: 'wx-state-chip', 'data-state': state },
         h(StateDot, { state }),
@@ -260,12 +261,12 @@ export function WeixinSettingsPanel(props: any) {
         icon: h(IconRefresh, null),
         disabled: busy !== '',
         onClick: () => void refresh(),
-      }, t('刷新'))));
+      }, t('panel.refresh'))));
 
   const banner = hostOlder
     ? h('div', { className: 'wx-banner wx-banner-warning', role: 'status' },
       h(StateDot, { state: 'warning' }),
-      h('span', null, t('请重启 dsh web：面板比 Host 新')))
+      h('span', null, t('banner.hostOlder')))
     : null;
   const errorSection = h(ErrorSection, {
     t,

@@ -11,13 +11,13 @@
  */
 
 import { BUNDLE_CONFIG_SLOT, PACKAGE_NAME, PANEL_ID, SLOT_NAME } from './constants.ts';
-import { en, NS, zh } from './locales.ts';
+import { en, fallbackTranslate, NS, zh } from './locales.ts';
 import type { Translate } from './locales.ts';
 import { createRpcCall } from './logic.ts';
 import { WeixinSettingsPanel } from './panel.ts';
 
 export function apply(ctx: any): void {
-  let t: Translate = (text: string) => text;
+  let t: Translate = fallbackTranslate;
 
   if (typeof ctx.locale?.register === 'function') {
     ctx.effect(() => {
@@ -45,7 +45,7 @@ export function apply(ctx: any): void {
   const rpcCall = createRpcCall(ctx.connection);
   // 组件不感知 ctx：依赖在注册时快照，与宿主设置页的注入方式一致。
   const dependencies = () => ({ t, rpcCall });
-  const label = () => t('微信');
+  const label = () => t('panel.title');
 
   if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
 

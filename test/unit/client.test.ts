@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { en, zh } from '../../src/client/locales.ts';
+import { en, fallbackTranslate, zh } from '../../src/client/locales.ts';
+import { MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES } from '../../src/client/constants.ts';
 import {
   createRpcCall,
   describeError,
   describeHealth,
   describeLoginPhase,
+  errorText,
   formatTime,
+  healthText,
   isHostOlder,
   isHttpsUrl,
   isLoginActive,
@@ -57,13 +60,16 @@ test('没有 connection 时给出可读错误', async () => {
   await assert.rejects(rpcCall('status'), /没有可用的 Host 连接/);
 });
 
-test('健康与扫码阶段翻译成中文原文', () => {
-  assert.equal(describeHealth({ state: 'ok' }), '连接正常');
-  assert.equal(describeHealth({ state: 'degraded' }), '连接异常');
-  assert.equal(describeHealth({ state: 'down', reason: '尚未登录微信' }), '尚未登录微信');
-  assert.equal(describeHealth(undefined), '未登录');
-  assert.equal(describeLoginPhase('need-verify-code'), '需要在手机上输入验证码');
-  assert.equal(describeLoginPhase('confirmed'), '登录成功');
+test('健康与扫码阶段映射到文案键，宿主原因保持原文', () => {
+  assert.deepEqual(describeHealth({ state: 'ok' }), { key: 'health.ok' });
+  assert.deepEqual(describeHealth({ state: 'degraded' }), { key: 'health.degraded' });
+  assert.deepEqual(describeHealth({ state: 'down', reason: '尚未登录微信' }), { text: '尚未登录微信' });
+  assert.deepEqual(describeHealth({ state: 'down' }), { key: 'health.down' });
+  assert.deepEqual(describeHealth(undefined), { key: 'health.unknown' });
+  assert.equal(healthText(fallbackTranslate, { state: 'ok' }), '连接正常');
+  assert.equal(healthText(fallbackTranslate, { state: 'down', reason: 'token 已失效' }), 'token 已失效');
+  assert.equal(describeLoginPhase('need-verify-code'), 'login.phase.needCode');
+  assert.equal(describeLoginPhase('confirmed'), 'login.phase.confirmed');
   assert.equal(describeLoginPhase('idle'), '');
   assert.equal(isLoginActive('waiting'), true);
   assert.equal(isLoginActive('confirmed'), false);
@@ -167,7 +173,9 @@ test('时间格式化与错误描述', () => {
   assert.match(formatTime(1_760_000_000_000), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   assert.equal(formatTime('x'), '');
   assert.deepEqual(describeError(new Error('boom')), { message: 'boom', code: '' });
-  assert.deepEqual(describeError({ message: '', code: 'x' }), { message: '操作失败', code: 'x' });
+  assert.deepEqual(describeError({ message: '', code: 'x' }), { message: '', code: 'x' });
+  assert.equal(errorText(fallbackTranslate, new Error('boom')), 'boom');
+  assert.equal(errorText(fallbackTranslate, { message: '', code: 'x' }), '操作失败');
 });
 
 /** 面板源码里 `t('…')` / `t("…")` 引用到的文案键。 */
@@ -180,18 +188,19 @@ function usedKeys(files: string[]): Set<string> {
   return used;
 }
 
-/** 运行期产出、同样要送进 `t()` 的文案（源码里没有字面量，只能从函数推导）。 */
+/** 运行期产出、同样要过 `t()` 的键（源码里没有字面量，只能从函数推导）。 */
 function dynamicLabels(): string[] {
   const labels: string[] = [];
   for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'failed']) {
-    labels.push(describeLoginPhase(phase));
+    const key = describeLoginPhase(phase);
+    if (key !== '') labels.push(key);
   }
   for (const health of [{ state: 'ok' }, { state: 'degraded' }, { state: 'down' }, null]) {
-    labels.push(describeHealth(health));
+    const label = describeHealth(health);
+    if ('key' in label) labels.push(label.key);
   }
-  labels.push(describeError({ message: '', code: 'x' }).message);
   const rejected = validateMinutes('0');
-  if (!rejected.ok) labels.push(rejected.message);
+  if (!rejected.ok) labels.push(rejected.key);
   return labels;
 }
 
@@ -200,7 +209,7 @@ test('文案：两种语言键集一致', () => {
 });
 
 test('文案：面板用到的文案都有翻译，且没有未使用的文案', () => {
-  const used = usedKeys(['panel.ts', 'sections.ts']);
+  const used = usedKeys(['index.ts', 'panel.ts', 'sections.ts']);
   for (const label of dynamicLabels()) used.add(label);
   for (const label of used) {
     assert.equal(Object.hasOwn(en, label), true, `缺少文案：${label}`);
@@ -210,13 +219,37 @@ test('文案：面板用到的文案都有翻译，且没有未使用的文案',
   }
 });
 
-test('状态翻译与错误描述都包在 t() 内，英文界面不半中半英', () => {
+test('文案：没有 Host 文案服务时回落到中文，占位符按宿主规则替换', () => {
+  assert.equal(fallbackTranslate('panel.title'), '微信');
+  assert.equal(fallbackTranslate('login.phase.waiting'), '等待扫码');
+  assert.equal(
+    fallbackTranslate('reminder.invalid', { min: MIN_LONG_TASK_MINUTES, max: MAX_LONG_TASK_MINUTES }),
+    '阈值需为 1 到 1440 的整数分钟',
+  );
+  assert.equal(
+    fallbackTranslate('reminder.thresholdValue', { value: 30, unit: fallbackTranslate('common.minutes') }),
+    '当前阈值：30 分钟',
+  );
+  // 缺参数时保留占位符，与宿主的插值实现一致。
+  assert.equal(fallbackTranslate('reminder.invalid', { min: 1 }), '阈值需为 1 到 {max} 的整数分钟');
+});
+
+test('动态文案先落到字典键或宿主原文，不把运行期文本当键', () => {
+  for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'failed']) {
+    const key = describeLoginPhase(phase);
+    assert.equal(Object.hasOwn(en, key), true, `缺少文案：${key}`);
+  }
+  for (const health of [{ state: 'ok' }, { state: 'degraded' }, { state: 'down' }, null]) {
+    const label = describeHealth(health);
+    if ('key' in label) assert.equal(Object.hasOwn(en, label.key), true, `缺少文案：${label.key}`);
+  }
+  // 宿主给的原因与报错是运行期文本，原样展示，不查字典。
+  assert.equal(healthText(fallbackTranslate, { state: 'down', reason: 'token 已失效' }), 'token 已失效');
+  assert.equal(errorText(fallbackTranslate, new Error('boom')), 'boom');
   for (const file of ['panel.ts', 'sections.ts']) {
     const source = readFileSync(new URL(`../../src/client/${file}`, import.meta.url), 'utf8');
-    for (const match of source.matchAll(/\bdescribe(?:Health|LoginPhase|Error)\(/g)) {
-      const before = source.slice(0, match.index ?? 0).trimEnd();
-      assert.ok(before.endsWith('t('), `${file} 里 ${match[0]} 的调用点没有包在 t() 内`);
-    }
+    assert.doesNotMatch(source, /\bt\(\s*String\(/, `${file} 把运行期文本当成了文案键`);
+    assert.doesNotMatch(source, /\bt\(\s*describeError\(/, `${file} 把宿主报错当成了文案键`);
   }
 });
 
@@ -227,10 +260,16 @@ test('阈值校验：1 到 1440 的整数分钟才通过，其余给出可翻译
   for (const raw of ['', '  ', '0', '1441', '-5', '30.4', 'abc', 'Infinity', 'NaN']) {
     const result = validateMinutes(raw);
     assert.equal(result.ok, false, `应拒绝：${JSON.stringify(raw)}`);
-    if (!result.ok) assert.equal(typeof result.message, 'string');
+    if (!result.ok) {
+      assert.equal(result.key, 'reminder.invalid');
+      assert.deepEqual(result.params, { min: MIN_LONG_TASK_MINUTES, max: MAX_LONG_TASK_MINUTES });
+    }
   }
-  // 报错文案是翻译键，必须进字典。
+  // 报错键必须在字典里，插值参数由常量提供。
   const rejected = validateMinutes('0');
   assert.equal(rejected.ok, false);
-  if (!rejected.ok) assert.equal(Object.hasOwn(en, rejected.message), true, `缺少文案：${rejected.message}`);
+  if (!rejected.ok) assert.equal(Object.hasOwn(en, rejected.key), true, `缺少文案：${rejected.key}`);
 });
+
+
+

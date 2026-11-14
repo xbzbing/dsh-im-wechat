@@ -20,7 +20,7 @@ interface SlotRegistration {
   component: unknown;
 }
 
-function loadClientBundle(): {
+function loadClientBundle(options: { locale?: boolean } = {}): {
   apply: (ctx: any) => void;
   name: string;
   inject: readonly string[];
@@ -66,13 +66,15 @@ function loadClientBundle(): {
   const localeNamespaces: string[] = [];
   const ctx = {
     effect: (execute: () => unknown) => execute(),
-    locale: {
-      register: (namespace: string) => {
-        localeNamespaces.push(namespace);
-        return () => undefined;
+    ...(options.locale === false ? {} : {
+      locale: {
+        register: (namespace: string) => {
+          localeNamespaces.push(namespace);
+          return () => undefined;
+        },
+        bind: () => (key: string) => key,
       },
-      bind: () => (text: string) => text,
-    },
+    }),
     connection: { rpc: { call: async () => ({ result: { ok: true, value: {} } }) } },
     slots: {
       inject: (_name: string, install: () => unknown) => install(),
@@ -107,9 +109,18 @@ test('客户端产物可按宿主的加载协议载入并注册', () => {
     const dependencies = registration.spec.inject();
     assert.equal(typeof dependencies.t, 'function');
     assert.equal(typeof dependencies.rpcCall, 'function');
-    assert.equal(dependencies.t('微信'), '微信');
   }
   assert.equal(loaded.registrations[1].spec.key, 'dsh-im-wechat');
+});
+
+test('缺少文案服务时回落到中文字典，不把键名露给用户', () => {
+  const loaded = loadClientBundle({ locale: false });
+  for (const registration of loaded.registrations) {
+    const dependencies = registration.spec.inject();
+    assert.equal(dependencies.t('panel.title'), '微信');
+    assert.equal(dependencies.t('login.phase.waiting'), '等待扫码');
+    assert.equal(dependencies.t('reminder.invalid', { min: 1, max: 1440 }), '阈值需为 1 到 1440 的整数分钟');
+  }
 });
 
 test('缺少槽位与文案服务时安静降级，不抛', () => {

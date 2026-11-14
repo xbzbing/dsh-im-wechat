@@ -186,10 +186,10 @@ git commit -m "chore: release v<v>"
 
 - `src/host/ilink/` — iLink 协议客户端（类型、HTTP、登录、长轮询、发送、媒体）
 - `src/host/direct.ts`、`src/host/state/direct-binding.ts` — 独立模式的直连会话与绑定
-- `src/host/state/` — 登录态、长轮询游标、`context_token` 与会话绑定的本机持久化
+- `src/host/state/` — 登录态、长轮询游标、`context_token`、会话绑定与已消费提醒回复的本机持久化
 - `src/host/superagent/` — `my-superagent/v1` 桥适配与 Markdown 呈现
-- `src/host/runtime.ts`、`src/host/runtime-status.ts`、`src/host/inbound-pipeline.ts`、`src/host/panel-rpc.ts` — 运行期装配、状态视图、入站流水线与面板 RPC
-- `src/host/questions.ts`、`long-tasks.ts`、`typing.ts`、`answer-text.ts`、`host-agents.ts` — 自有问题提醒、长任务提醒、输入状态与根会话识别
+- `src/host/runtime.ts`、`src/host/runtime-status.ts`、`src/host/inbound-pipeline.ts`、`src/host/panel-rpc.ts`、`src/host/panel-actions.ts`、`src/host/send-gate.ts` — 运行期装配、状态视图、入站流水线、面板 RPC 与设置动作、提醒节流
+- `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`reply-pending.ts`、`long-tasks.ts`、`typing.ts`、`answer-text.ts`、`host-agents.ts` — 自有问题与审批提醒、两者共用的待答机械件、长任务提醒、输入状态与根会话识别
 - `src/host/cli.ts`、`bin/dsh-wechat-send.mjs` — 出站快捷命令（ADR-0012）
 - `src/client/` — Web 设置面板
 - `src/shared/` — 跨上下文的纯函数（版本、二维码编码器、提问提示语、文件行数上限）

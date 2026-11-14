@@ -14,9 +14,9 @@
 | `src/host/index.ts` | Cordis 入口：只装配与接线 |
 | `src/host/ilink/` | iLink 协议客户端：`types`/`api`（端点、请求头、错误分类）、`json`（64 位消息 id 保真）、`identity`（入站身份）、`login`、`poll`、`send`、`upload`（CDN 上传）、`media`、`session-guard`；只用 Node 内置模块 |
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`quota`（bridge 级发送窗口）、`send-health`（发送失败到健康状态）、`link`（延后注册的 `BridgeBinder`） |
-| `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、审批提醒与微信作答（ADR-0023）、两者的开关/等待窗口与入站归属、作答匹配、长任务提醒、根会话识别 |
-| `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`、独立模式绑定；`files.ts` 私密文件读写、`paths.ts` 目录解析；目录 `0700`、文件 `0600`、原子写 |
-| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`runtime-status.ts` 面板状态、`panel-actions.ts` 面板设置的校验/落盘/生效、`inbound.ts` 入站转换、`inbound-pipeline.ts` 轮询/投递流水线、`owner-channel.ts` 主人收发通道、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`present-images.ts` present 图片转发（ADR-0019）、`session-events.ts` 会话事件、`workspace-default.ts` 默认工作区、`bot-agent.ts` 机器人元数据、`prompt-parts.ts` 提交给会话的文字/图片 part（ADR-0017）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`reply-pending.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、审批提醒与微信作答（ADR-0023）、两者的开关/等待窗口与入站归属、共用的待答机械件、作答匹配、长任务提醒、按会话来源判根会话 |
+| `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`、独立模式绑定、已消费的提醒回复；`files.ts` 私密文件读写、`paths.ts` 目录解析；目录 `0700`、文件 `0600`、原子写 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`runtime-status.ts` 面板状态、`panel-actions.ts` 面板设置的校验/落盘/生效、`inbound.ts` 入站转换、`inbound-pipeline.ts` 轮询/投递流水线、`owner-channel.ts` 主人收发通道、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`present-images.ts` present 图片转发（ADR-0019）、`session-events.ts` 会话事件、`workspace-default.ts` 默认工作区、`bot-agent.ts` 机器人元数据、`prompt-parts.ts` 提交给会话的文字/图片 part（ADR-0017）、`panel-rpc.ts` 面板 RPC、`send-gate.ts` 提醒节流、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `bin/dsh-wechat-send.mjs` | 出站命令入口，只把参数交给 `lib/src/host/cli.js`（ADR-0012） |
 | `src/host/command.ts` | 斜杠命令 `/wechat`：人用入口，复用 `cli.ts` 的解析与发送端口（ADR-0012） |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |

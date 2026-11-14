@@ -43,6 +43,7 @@ import { LoginStateStore, accountTail } from './state/login-state.ts';
 import type { LoginState } from './state/login-state.ts';
 import { DirectBindingStore } from './state/direct-binding.ts';
 import { SyncCursorStore } from './state/sync-cursor.ts';
+import { ConsumedReplies } from './state/consumed-replies.ts';
 import { resolveWorkspaceDir } from './state/paths.ts';
 import {
   DEFAULT_DIRECT_BUSY_MODE,
@@ -66,6 +67,7 @@ export class WeixinRuntime {
   readonly #createApi: (options: { baseUrl: string; token?: string; botAgent: string }) => ILinkApi;
   readonly #loginStore: LoginStateStore;
   readonly #cursorStore: SyncCursorStore;
+  readonly #consumed: ConsumedReplies;
   readonly #tokenStore: ContextTokenStore;
   readonly #localConfig: LocalConfigStore;
   readonly #botAgent: string;
@@ -117,6 +119,7 @@ export class WeixinRuntime {
     }));
     this.#loginStore = new LoginStateStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
     this.#cursorStore = new SyncCursorStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
+    this.#consumed = new ConsumedReplies({ dir: this.#dir, logger: this.#logger, now: this.#now });
     this.#tokenStore = new ContextTokenStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
     this.#localConfig = new LocalConfigStore({ dir: this.#dir, logger: this.#logger });
     this.#guard = new SessionGuard({ now: this.#now });
@@ -149,6 +152,7 @@ export class WeixinRuntime {
       isActive: () => this.#ownFeaturesActive(),
       logger: this.#logger,
       now: this.#now,
+      consumed: this.#consumed,
       ...(this.#config.questionReminders !== undefined ? { enabled: this.#config.questionReminders } : {}),
       ...(this.#config.questionDelayMinutes !== undefined ? { delayMinutes: this.#config.questionDelayMinutes } : {}),
     });
@@ -222,7 +226,7 @@ export class WeixinRuntime {
       binder: () => this.#binder,
       ownFeaturesActive: () => this.#ownFeaturesActive(),
       isOwner: (sender) => this.#owner.isOwner(sender),
-      replyQuestion: (text) => this.#reminders.reply(text),
+      replyQuestion: (text, identity) => this.#reminders.reply(text, identity),
       superagentEnabled: () => this.#superagent,
       directAvailable: () => this.#direct.status().available,
       typingStart: (sender) => this.#typing.start(sender),
@@ -318,6 +322,8 @@ export class WeixinRuntime {
     // 有效 UA 落盘给同机的 dsh-wechat-send：命令读不到宿主 profile 里的插件配置。
     await this.#botAgentStore.save(this.#botAgent);
     const stored = await this.#localConfig.load();
+    // 已消费的提醒回复要先读回来：重启后同一帧可能被重投（at-least-once）。
+    await this.#consumed.load();
     this.#enabled = stored.enabled ?? this.#config.enabled ?? true;
     this.#superagent = stored.superagent ?? this.#config.superagent ?? true;
     this.#longTasks.setThresholdMinutes(

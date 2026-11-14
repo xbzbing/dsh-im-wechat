@@ -13,7 +13,7 @@ import { PollLoop } from './ilink/poll.ts';
 import type { PollHealth } from './ilink/poll.ts';
 import type { SessionGuard } from './ilink/session-guard.ts';
 import type { WeixinMessage } from './ilink/types.ts';
-import { messageText } from './ilink/identity.ts';
+import { messageIdentity, messageText } from './ilink/identity.ts';
 import { downloadOwnerImages, toOwnerMessageDraft } from './inbound.ts';
 import { buildPromptContent } from './prompt-parts.ts';
 import type { PromptPart } from './prompt-parts.ts';
@@ -44,8 +44,8 @@ export interface InboundPipelineDeps {
   /** 自有功能是否生效（启用 + 未接入核心 + 已登录 + 未停机）。 */
   ownFeaturesActive(): boolean;
   isOwner(sender: string): boolean;
-  /** 主人这条文本是不是在回答挂着的问题；是就交给提问器。 */
-  replyQuestion(text: string): boolean;
+  /** 主人这条文本是不是在回答挂着的提醒；是就交给提醒中心。 */
+  replyQuestion(text: string, identity: string | null): boolean;
   superagentEnabled(): boolean;
   /** 独立模式有没有可用的会话服务（宿主没提供时不必下载图片）。 */
   directAvailable(): boolean;
@@ -123,7 +123,9 @@ export class InboundPipeline {
     // 只认已确认主人的消息——陌生人的文本绝不能把主人的问题答掉。
     if (deps.ownFeaturesActive() && deps.isOwner(sender)) {
       const text = messageText(message.item_list);
-      if (text.trim() !== '' && deps.replyQuestion(text)) return;
+      // 身份用于跨重启去重：同一条重投的「批准」不能再批一次（见 consumed-replies.ts）。
+      const identity = messageIdentity(deps.connection()?.account ?? '', message);
+      if (text.trim() !== '' && deps.replyQuestion(text, identity)) return;
     }
 
     // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；

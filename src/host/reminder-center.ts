@@ -24,6 +24,8 @@ export interface ReminderCenterOptions {
   /** 授权类根会话判据：拿不准时拒绝（失败关闭）。 */
   canApprove: (agent: unknown) => boolean;
   isActive: () => boolean;
+  /** 已消费的提醒回复（跨重启去重）；缺省不去重。 */
+  consumed?: { has(identity: string | null | undefined): boolean; remember(identity: string | null | undefined): Promise<void> };
   logger?: QuestionLogger;
   now: () => number;
   /** 启动时的设置（面板值或静态配置）；缺省开、等 5 分钟。 */
@@ -32,6 +34,7 @@ export interface ReminderCenterOptions {
 }
 
 export class ReminderCenter {
+  readonly #consumed: ReminderCenterOptions['consumed'];
   readonly #questions: QuestionBroker;
   readonly #approvals: ApprovalBroker;
   #enabled: boolean;
@@ -39,6 +42,7 @@ export class ReminderCenter {
   #lastSent: ReminderKind = 'question';
 
   constructor(options: ReminderCenterOptions) {
+    this.#consumed = options.consumed;
     this.#enabled = options.enabled ?? true;
     this.#delayMinutes = options.delayMinutes ?? DEFAULT_QUESTION_DELAY_MINUTES;
     const shared = {
@@ -95,11 +99,14 @@ export class ReminderCenter {
    * 单题提问认任意文本（自由输入），不按发送顺序的话，审批的「批准」会被它吞掉。
    * 顺序由本类记录——两个 broker 各自计数不可比（各发一次时恒为 1:1）。
    */
-  reply(text: string): boolean {
-    if (this.#lastSent === 'approval') {
-      return this.#approvals.reply(text) || this.#questions.reply(text);
-    }
-    return this.#questions.reply(text) || this.#approvals.reply(text);
+  reply(text: string, identity?: string | null): boolean {
+    // 重投的同一条消息不能再消费一次：重启后游标会回退（at-least-once）。
+    if (this.#consumed?.has(identity) === true) return false;
+    const claimed = this.#lastSent === 'approval'
+      ? this.#approvals.reply(text) || this.#questions.reply(text)
+      : this.#questions.reply(text) || this.#approvals.reply(text);
+    if (claimed) void this.#consumed?.remember(identity);
+    return claimed;
   }
 
   /** 更新设置；关掉时把在等的请求交回 Web，别挂到超时。 */

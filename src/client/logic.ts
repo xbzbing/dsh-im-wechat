@@ -5,7 +5,14 @@
  * 生成失败时的降级，都不依赖 React。
  */
 
-import { MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES, RPC_PATH, RPC_TIMEOUT_MS } from './constants.ts';
+import {
+  MAX_LONG_TASK_MINUTES,
+  MAX_QUESTION_DELAY_MINUTES,
+  MIN_LONG_TASK_MINUTES,
+  MIN_QUESTION_DELAY_MINUTES,
+  RPC_PATH,
+  RPC_TIMEOUT_MS,
+} from './constants.ts';
 import { encodeQr, qrSvgDataUrl } from '../shared/qr.ts';
 import type { Translate, WeChatKey } from './locales.ts';
 
@@ -175,20 +182,25 @@ export function isLoginActive(phase: string): boolean {
 export function validateMinutes(
   raw: string,
 ): { ok: true; value: number } | { ok: false; key: 'reminder.invalid'; params: { min: number; max: number } } {
+  return validateRange(raw, MIN_LONG_TASK_MINUTES, MAX_LONG_TASK_MINUTES);
+}
+
+/** 问题与审批提醒的等待时间：0 表示立即提醒。 */
+export function validateQuestionDelay(
+  raw: string,
+): { ok: true; value: number } | { ok: false; key: 'reminder.invalid'; params: { min: number; max: number } } {
+  return validateRange(raw, MIN_QUESTION_DELAY_MINUTES, MAX_QUESTION_DELAY_MINUTES);
+}
+
+function validateRange(
+  raw: string,
+  min: number,
+  max: number,
+): { ok: true; value: number } | { ok: false; key: 'reminder.invalid'; params: { min: number; max: number } } {
   const text = raw.trim();
   const value = Number(text);
-  if (
-    text === ''
-    || !Number.isFinite(value)
-    || !Number.isInteger(value)
-    || value < MIN_LONG_TASK_MINUTES
-    || value > MAX_LONG_TASK_MINUTES
-  ) {
-    return {
-      ok: false,
-      key: 'reminder.invalid',
-      params: { min: MIN_LONG_TASK_MINUTES, max: MAX_LONG_TASK_MINUTES },
-    };
+  if (text === '' || !Number.isFinite(value) || !Number.isInteger(value) || value < min || value > max) {
+    return { ok: false, key: 'reminder.invalid', params: { min, max } };
   }
   return { ok: true, value };
 }

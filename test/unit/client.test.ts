@@ -22,6 +22,7 @@ import {
   placeMenu,
   unwrapResult,
   validateMinutes,
+  validateQuestionDelay,
   workspaceOptions,
 } from '../../src/client/logic.ts';
 
@@ -272,4 +273,15 @@ test('阈值校验：1 到 1440 的整数分钟才通过，其余给出可翻译
   const rejected = validateMinutes('0');
   assert.equal(rejected.ok, false);
   if (!rejected.ok) assert.equal(Object.hasOwn(en, rejected.key), true, `缺少文案：${rejected.key}`);
+});
+
+test('提醒等待时间：0 到 120 的整数分钟才通过，其余给出可翻译的报错', () => {
+  assert.deepEqual(validateQuestionDelay('5'), { ok: true, value: 5 });
+  assert.deepEqual(validateQuestionDelay('0'), { ok: true, value: 0 });
+  assert.deepEqual(validateQuestionDelay('120'), { ok: true, value: 120 });
+  for (const bad of ['-1', '121', '1.5', 'soon', '']) {
+    const result = validateQuestionDelay(bad);
+    assert.equal(result.ok, false, bad);
+    if (!result.ok) assert.deepEqual(result.params, { min: 0, max: 120 });
+  }
 });

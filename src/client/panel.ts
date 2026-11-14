@@ -18,6 +18,7 @@ import {
   isHttpsUrl,
   qrImageUrl,
   validateMinutes,
+  validateQuestionDelay,
 } from './logic.ts';
 import type { Translate } from './locales.ts';
 import { h, useCallback, useEffect, useMemo, useRef, useState } from './platform.ts';
@@ -48,6 +49,9 @@ export function WeixinSettingsPanel(props: any) {
   /** 阈值输入框的草稿；`dirty` 时不被状态刷新覆盖，免得正在输入的值被轮询冲掉。 */
   const [minutes, setMinutes] = useState('');
   const [minutesDirty, setMinutesDirty] = useState(false);
+  /** 提醒等待时间输入框的草稿；dirty 时不被轮询覆盖。 */
+  const [questionDelay, setQuestionDelay] = useState('');
+  const [questionDelayDirty, setQuestionDelayDirty] = useState(false);
   /** 独立模式的工作区草稿；`dirty` 时不被轮询快照覆盖。 */
   const [workspaceId, setWorkspaceId] = useState('');
   const [workspaceDirty, setWorkspaceDirty] = useState(false);
@@ -100,12 +104,18 @@ export function WeixinSettingsPanel(props: any) {
   }, [refresh]);
 
   const threshold = status?.longTaskThresholdMinutes;
+  const questionDelayValue = status?.questionDelayMinutes;
+  const questionReminders = status?.questionReminders !== false;
   /** Host 比面板旧（契约对不上）：新端点还没实现，阈值控件要禁用。 */
   const hostOlder = isHostOlder(status, REQUIRED_CONTRACT);
   useEffect(() => {
     if (minutesDirty || typeof threshold !== 'number') return;
     setMinutes(String(threshold));
   }, [threshold, minutesDirty]);
+  useEffect(() => {
+    if (questionDelayDirty || typeof questionDelayValue !== 'number') return;
+    setQuestionDelay(String(questionDelayValue));
+  }, [questionDelayValue, questionDelayDirty]);
 
   const phase = typeof status?.login?.phase === 'string' ? status.login.phase : 'idle';
   useEffect(() => {
@@ -181,6 +191,44 @@ export function WeixinSettingsPanel(props: any) {
       setBusy('');
     }
   }, [minutes, rpcCall, refresh, t]);
+
+  /** 保存提醒等待时间：0 表示立即提醒。 */
+  const saveQuestionDelay = useCallback(async () => {
+    const check = validateQuestionDelay(questionDelay);
+    if (!check.ok) {
+      setActionError(t(check.key, check.params));
+      return;
+    }
+    setBusy('question');
+    setActionError('');
+    try {
+      const next = await rpcCall(ENDPOINTS.setQuestion, { delayMinutes: check.value });
+      requestSeq.current += 1;
+      setStatus(next);
+      setQuestionDelayDirty(false);
+    } catch (error) {
+      setActionError(errorText(t, error));
+      await refresh();
+    } finally {
+      setBusy('');
+    }
+  }, [questionDelay, rpcCall, refresh, t]);
+
+  /** 问题与审批提醒开关：立即生效。 */
+  const toggleQuestionReminders = useCallback(async (enabled: boolean) => {
+    setBusy('question');
+    setActionError('');
+    try {
+      const next = await rpcCall(ENDPOINTS.setQuestion, { enabled });
+      requestSeq.current += 1;
+      setStatus(next);
+    } catch (error) {
+      setActionError(errorText(t, error));
+      await refresh();
+    } finally {
+      setBusy('');
+    }
+  }, [rpcCall, refresh, t]);
 
   /** 独立模式：保存工作区或提交方式，或重置绑定（ADR-0009）。 */
   const saveDirect = useCallback(async (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean }) => {
@@ -293,6 +341,13 @@ export function WeixinSettingsPanel(props: any) {
         setMinutes(value);
       },
       enabled, superagent, minutes, minutesDirty, threshold, hostOlder, busy,
+      questionReminders, questionDelay, questionDelayDirty, questionDelayValue,
+      onQuestionDelayChange: (value: string) => {
+        setQuestionDelayDirty(true);
+        setQuestionDelay(value);
+      },
+      saveQuestionDelay,
+      toggleQuestionReminders,
     }),
     h(DirectSection, {
       t, saveDirect, onWorkspaceChange: (value: string) => {

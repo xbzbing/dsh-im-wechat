@@ -7,7 +7,14 @@
  */
 
 import { ENDPOINTS } from './constants.ts';
-import { describeLoginPhase, formatTime, healthText, validateMinutes, workspaceOptions } from './logic.ts';
+import {
+  describeLoginPhase,
+  formatTime,
+  healthText,
+  validateMinutes,
+  validateQuestionDelay,
+  workspaceOptions,
+} from './logic.ts';
 import { h } from './platform.ts';
 import { Button, IconCopy, IconLink, Input, MenuPicker, StateDot, Switch } from './ui.ts';
 import type { Translate } from './locales.ts';
@@ -192,13 +199,25 @@ export function ReminderSection(props: {
   minutes: string;
   minutesDirty: boolean;
   threshold: unknown;
+  questionReminders: boolean;
+  questionDelay: string;
+  questionDelayDirty: boolean;
+  questionDelayValue: unknown;
+  onQuestionDelayChange: (value: string) => void;
+  saveQuestionDelay: () => Promise<void>;
+  toggleQuestionReminders: (enabled: boolean) => Promise<void>;
   hostOlder: boolean;
   busy: string;
 }) {
   const { t, rpcCall, run, saveMinutes, onMinutesChange } = props;
   const { enabled, superagent, minutes, minutesDirty, threshold, hostOlder, busy } = props;
+  const { questionReminders, questionDelay, questionDelayDirty, questionDelayValue } = props;
+  const { onQuestionDelayChange, saveQuestionDelay, toggleQuestionReminders } = props;
   const check = validateMinutes(minutes);
   const canSaveMinutes = check.ok && check.value !== (typeof threshold === 'number' ? threshold : -1);
+  const questionCheck = validateQuestionDelay(questionDelay);
+  const canSaveQuestionDelay = questionCheck.ok
+    && questionCheck.value !== (typeof questionDelayValue === 'number' ? questionDelayValue : -1);
 
   return h('section', { className: 'wx-panel' },
     h('div', { className: 'wx-section-head' },
@@ -221,6 +240,44 @@ export function ReminderSection(props: {
         disabled: busy !== '',
         onChange: (next: boolean) => void run('superagent', () => rpcCall(ENDPOINTS.setSuperagent, { enabled: next })),
       }),
+      h(SwitchRow, {
+        title: t('reminder.questionTitle'),
+        description: t('reminder.questionDescription'),
+        checked: questionReminders,
+        disabled: busy !== '' || hostOlder,
+        onChange: (next: boolean) => void toggleQuestionReminders(next),
+      }),
+      h('div', { className: 'wx-setting-row wx-threshold-row' },
+        h('div', { className: 'wx-setting-copy' },
+          h('span', { className: 'wx-setting-title' }, t('reminder.questionDelayTitle')),
+          h('span', { className: 'wx-setting-description' }, t('reminder.questionDelayDescription'))),
+        h('div', { className: 'wx-threshold-control' },
+          h(Input, {
+            className: 'wx-minutes',
+            value: questionDelay,
+            placeholder: '5',
+            'aria-label': t('reminder.questionDelayTitle'),
+            disabled: busy !== '' || hostOlder || !questionReminders,
+            onChange: (event: any) => onQuestionDelayChange(String(event.target.value)),
+          }),
+          h('span', { className: 'wx-unit' }, t('common.minutes')),
+          h(Button, {
+            variant: 'outline',
+            size: 'sm',
+            disabled: busy !== '' || hostOlder || !questionReminders || !canSaveQuestionDelay,
+            onClick: () => void saveQuestionDelay(),
+          }, t('common.save')))),
+      // 提醒关掉时等待时间不会立刻生效：置灰而不是藏起来，切回来还能看到当前值。
+      !questionCheck.ok && questionDelay.trim() !== ''
+        ? h('p', { className: 'wx-error' }, t(questionCheck.key, questionCheck.params))
+        : null,
+      questionDelayDirty
+        ? h('p', { className: 'wx-draft-hint' },
+          t('reminder.questionDelayValue', {
+            value: typeof questionDelayValue === 'number' ? questionDelayValue : '—',
+            unit: t('common.minutes'),
+          }))
+        : null,
       h('div', { className: 'wx-setting-row wx-threshold-row' },
         h('div', { className: 'wx-setting-copy' },
           h('span', { className: 'wx-setting-title' }, t('reminder.thresholdTitle')),

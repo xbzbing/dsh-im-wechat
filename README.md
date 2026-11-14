@@ -30,10 +30,10 @@
 
 ```bash
 # 1) 从 npm 装正式版（推荐）
-dsh plugin --profile web add dsh-im-wechat@0.1.0
+dsh plugin --profile web add dsh-im-wechat@0.2.0
 
 # 2) 或装 GitHub Release 上的 tgz：不用构建，产物由 CI 打好
-dsh plugin --profile web add https://github.com/xbzbing/dsh-im-wechat/releases/download/v0.1.0/dsh-im-wechat-0.1.0.tgz
+dsh plugin --profile web add https://github.com/xbzbing/dsh-im-wechat/releases/download/v0.2.0/dsh-im-wechat-0.2.0.tgz
 
 # 3) 或装本地仓库的当前源码：先构建，再装
 cd /Users/ankh/workspace/private/dsh-plugins/dsh-im-wechat

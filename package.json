@@ -1,6 +1,6 @@
 {
   "name": "dsh-im-wechat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "把微信（WeChat iLink）接入 DeepSeek Harness 的 IM 桥插件",
   "license": "MIT",

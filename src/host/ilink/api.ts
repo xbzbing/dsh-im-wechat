@@ -41,7 +41,7 @@ export const ILINK_APP_ID = 'bot';
  * `iLink-App-ClientVersion`：`0x00MMNNPP`。
  *
  * 协议要求按 openclaw-weixin 的插件版本编码，而不是我们自己的包版本。
- * 3.0.0-beta-0 这一代是 3.0.0（(3<<16) = 196608）。跟着我们的 0.1.0 走
+ * 3.0.0-beta-0 这一代是 3.0.0（(3<<16) = 196608）。跟着我们自己包的版本走
  * 会让服务端以为客户端比最低支持版本还老。
  */
 export const ILINK_APP_CLIENT_VERSION = encodeClientVersion(ILINK_PROTOCOL_VERSION);

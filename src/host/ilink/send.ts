@@ -48,6 +48,15 @@ export interface SendTextParams {
 /** 单条消息的字符上限由桥上层的 `maxText` 保证，这里只兜住明显超限的异常。 */
 export const HARD_TEXT_LIMIT = 4_000;
 
+/**
+ * 单次发送请求的默认超时。
+ *
+ * 不传时 `api.sendMessage` 不会创建 AbortController，只能等 undici 的默认超时；
+ * 一次交付分多条时会被一条挂住的请求拖住整条链路。交付级的总截止在 bridge 里，
+ * 这里只保证单条请求不会无限等。
+ */
+export const DEFAULT_SEND_TIMEOUT_MS = 30_000;
+
 function newClientId(): string {
   return `dsh-im-wechat:${randomUUID()}`;
 }
@@ -81,6 +90,7 @@ export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{
     throw new SendError('too-long', `文本超过 ${HARD_TEXT_LIMIT} 字符`);
   }
   const clientId = params.clientId ?? newClientId();
+  const timeoutMs = params.timeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
   const response = await api.sendMessage(
     {
       from_user_id: '',
@@ -92,7 +102,7 @@ export async function sendText(api: ILinkApi, params: SendTextParams): Promise<{
       context_token: contextToken,
       ...(params.runId ? { run_id: params.runId } : {}),
     },
-    params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {},
+    { timeoutMs },
   );
   const messageId = platformMessageId(response);
   return { clientId, ...(messageId ? { messageId } : {}) };
@@ -123,6 +133,7 @@ export async function sendImage(api: ILinkApi, params: SendImageParams): Promise
   }
   if (params.to.trim() === '') throw new SendError('other', '缺少收件人');
   const clientId = params.clientId ?? newClientId();
+  const timeoutMs = params.timeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
   const response = await api.sendMessage(
     {
       from_user_id: '',
@@ -144,7 +155,7 @@ export async function sendImage(api: ILinkApi, params: SendImageParams): Promise
       context_token: contextToken,
       ...(params.runId ? { run_id: params.runId } : {}),
     },
-    params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {},
+    { timeoutMs },
   );
   const messageId = platformMessageId(response);
   return { clientId, ...(messageId ? { messageId } : {}) };

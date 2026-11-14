@@ -3,7 +3,14 @@ import { test } from 'node:test';
 
 import { ILinkError } from '../../src/host/ilink/api.ts';
 import type { ILinkApi } from '../../src/host/ilink/api.ts';
-import { HARD_TEXT_LIMIT, SendError, classifySendFailure, sendImage, sendText } from '../../src/host/ilink/send.ts';
+import {
+  DEFAULT_SEND_TIMEOUT_MS,
+  HARD_TEXT_LIMIT,
+  SendError,
+  classifySendFailure,
+  sendImage,
+  sendText,
+} from '../../src/host/ilink/send.ts';
 import type { OutboundMessage } from '../../src/host/ilink/types.ts';
 
 interface Sent {
@@ -54,6 +61,18 @@ test('平台返回的 message_id 带回来，供引用回指定位到那一条',
   const { api } = await recordingApi(null, { message_id: '7526728717449013512' });
   const result = await sendText(api, { to: 'owner-1', text: 'hi', contextToken: 'ctx-1' });
   assert.equal(result.messageId, '7526728717449013512');
+});
+
+test('文本与图片都带单请求超时，不依赖运行时默认值', async () => {
+  const { api, sent } = await recordingApi();
+  await sendText(api, { to: 'owner-1', text: 'hi', contextToken: 'ctx-1' });
+  await sendImage(api, {
+    to: 'owner-1',
+    contextToken: 'ctx-1',
+    upload: { encryptQueryParam: 'p', aesKeyHex: '0'.repeat(32), ciphertextSize: 16 },
+  });
+  assert.equal(sent[0]!.timeoutMs, DEFAULT_SEND_TIMEOUT_MS);
+  assert.equal(sent[1]!.timeoutMs, DEFAULT_SEND_TIMEOUT_MS);
 });
 
 test('响应里没有 message_id 时不编造', async () => {

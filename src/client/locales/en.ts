@@ -69,6 +69,7 @@ export const en: Record<WeChatKey, string> = {
   'login.phase.confirmed': 'Signed in',
   'login.phase.bound': 'Already connected — no need to sign in again',
   'login.phase.expired': 'The QR code expired or the flow ended',
+  'login.phase.failed': 'Sign-in failed',
 
   // 消息与提醒
   'reminder.eyebrow': 'Connection mode',

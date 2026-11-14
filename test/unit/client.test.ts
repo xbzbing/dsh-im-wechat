@@ -70,6 +70,9 @@ test('健康与扫码阶段映射到文案键，宿主原因保持原文', () =>
   assert.equal(healthText(fallbackTranslate, { state: 'down', reason: 'token 已失效' }), 'token 已失效');
   assert.equal(describeLoginPhase('need-verify-code'), 'login.phase.needCode');
   assert.equal(describeLoginPhase('confirmed'), 'login.phase.confirmed');
+  // 网络失败、缺 bot_token 等都会落到 failed：不能再说成「二维码已过期」。
+  assert.equal(describeLoginPhase('failed'), 'login.phase.failed');
+  assert.equal(describeLoginPhase('expired'), 'login.phase.expired');
   assert.equal(describeLoginPhase('idle'), '');
   assert.equal(isLoginActive('waiting'), true);
   assert.equal(isLoginActive('confirmed'), false);
@@ -191,7 +194,7 @@ function usedKeys(files: string[]): Set<string> {
 /** 运行期产出、同样要过 `t()` 的键（源码里没有字面量，只能从函数推导）。 */
 function dynamicLabels(): string[] {
   const labels: string[] = [];
-  for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'failed']) {
+  for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'expired', 'failed']) {
     const key = describeLoginPhase(phase);
     if (key !== '') labels.push(key);
   }
@@ -235,7 +238,7 @@ test('文案：没有 Host 文案服务时回落到中文，占位符按宿主�
 });
 
 test('动态文案先落到字典键或宿主原文，不把运行期文本当键', () => {
-  for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'failed']) {
+  for (const phase of ['waiting', 'scanned', 'need-verify-code', 'confirmed', 'binded', 'expired', 'failed']) {
     const key = describeLoginPhase(phase);
     assert.equal(Object.hasOwn(en, key), true, `缺少文案：${key}`);
   }
@@ -270,6 +273,3 @@ test('阈值校验：1 到 1440 的整数分钟才通过，其余给出可翻译
   assert.equal(rejected.ok, false);
   if (!rejected.ok) assert.equal(Object.hasOwn(en, rejected.key), true, `缺少文案：${rejected.key}`);
 });
-
-
-

@@ -67,6 +67,7 @@ export const zh = {
   'login.phase.confirmed': '登录成功',
   'login.phase.bound': '已连接过，无需重复登录',
   'login.phase.expired': '二维码已过期或流程结束',
+  'login.phase.failed': '登录未完成',
 
   // 消息与提醒
   'reminder.eyebrow': '接入方式',

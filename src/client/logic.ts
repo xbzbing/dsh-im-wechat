@@ -107,7 +107,8 @@ export type LoginPhaseKey =
   | 'login.phase.needCode'
   | 'login.phase.confirmed'
   | 'login.phase.bound'
-  | 'login.phase.expired';
+  | 'login.phase.expired'
+  | 'login.phase.failed';
 
 export function describeLoginPhase(phase: string): LoginPhaseKey | '' {
   switch (phase) {
@@ -116,7 +117,8 @@ export function describeLoginPhase(phase: string): LoginPhaseKey | '' {
     case 'need-verify-code': return 'login.phase.needCode';
     case 'confirmed': return 'login.phase.confirmed';
     case 'binded': return 'login.phase.bound';
-    case 'failed': return 'login.phase.expired';
+    case 'expired': return 'login.phase.expired';
+    case 'failed': return 'login.phase.failed';
     default: return '';
   }
 }

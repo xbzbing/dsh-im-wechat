@@ -19,6 +19,9 @@ export interface ContextTokenStoreOptions {
   now?: () => number;
 }
 
+/** 缓存上限：正常只会有主人一个 token，上限只防旧版本或异常输入把内存/文件撑大。 */
+const MAX_TOKENS = 200;
+
 function key(userId: string): string {
   return userId.trim().toLowerCase();
 }
@@ -65,6 +68,7 @@ export class ContextTokenStore {
     for (const [userId, token] of Object.entries(tokens)) {
       this.#cache.set(this.#cacheKey(account, userId), token);
     }
+    this.#trim();
   }
 
   get(account: string, userId: string): string | undefined {
@@ -86,6 +90,7 @@ export class ContextTokenStore {
     const cacheKey = this.#cacheKey(account, normalizedUser);
     this.#cache.set(cacheKey, cleaned);
     this.#receivedAt.set(cacheKey, this.#now());
+    this.#trim();
     this.#writes = this.#writes
       .then(() => this.#persist(account))
       .catch((error: unknown) => {
@@ -111,6 +116,16 @@ export class ContextTokenStore {
 
   #cacheKey(account: string, userId: string): string {
     return `${account}\u0000${key(userId)}`;
+  }
+
+  /** 只留最近写入的条目：Map 的插入顺序就是淘汰顺序。 */
+  #trim(): void {
+    while (this.#cache.size > MAX_TOKENS) {
+      const oldest = this.#cache.keys().next();
+      if (oldest.done) break;
+      this.#cache.delete(oldest.value);
+      this.#receivedAt.delete(oldest.value);
+    }
   }
 
   async #persist(account: string): Promise<void> {

@@ -179,3 +179,15 @@ test('清空账号 token 后不再返回旧值', async () => {
     assert.equal(store.get('acc', 'user-a'), undefined);
   });
 });
+
+test('context_token 缓存有上限，超出的最旧条目被淘汰', async () => {
+  await withDir(async (dir) => {
+    const store = new ContextTokenStore({ dir });
+    for (let index = 0; index < 201; index += 1) store.set('acc', `user-${index}`, `tok-${index}`);
+    assert.equal(store.get('acc', 'user-0'), undefined, '最旧的被淘汰');
+    assert.equal(store.get('acc', 'user-200'), 'tok-200', '最新的仍然可读');
+    await store.flush();
+    const saved = JSON.parse(await readFile(store.path('acc'), 'utf8')) as { tokens: Record<string, string> };
+    assert.equal(Object.keys(saved.tokens).length, 200, '落盘也保持上限');
+  });
+});

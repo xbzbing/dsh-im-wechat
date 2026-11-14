@@ -328,3 +328,33 @@ test('停机时把待答请求交回，不永久挂住', async () => {
   assert.equal(broker.snapshot().pending, 0);
   broker.close();
 });
+
+test('发送提醒期间关闭插件：发送返回后不再挂待答，直接交回 Web', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const broker = new QuestionBroker({
+    send: async () => {
+      await gate;
+      return true;
+    },
+    recipient: () => 'owner-1',
+    isRoot: () => true,
+  });
+  let nextCalls = 0;
+  const result = broker.handle(
+    { questions: SINGLE },
+    async () => {
+      nextCalls += 1;
+      return { answers: [{ id: 'q1', selected: [] }] };
+    },
+    true,
+  );
+  // 让 handle 走到 await send；此时还没有 pending。
+  await new Promise((resolve) => setImmediate(resolve));
+  broker.close();
+  release();
+
+  assert.deepEqual(await result, { answers: [{ id: 'q1', selected: [] }] });
+  assert.equal(nextCalls, 1, '交回 Web 端');
+  assert.equal(broker.snapshot().pending, 0, '没有留下永远等不到的待答');
+});

@@ -140,6 +140,7 @@ export class WeixinRuntime {
       send: (text) => this.#owner.send(text),
       recipient: () => this.#owner.recipient(),
       isRoot: (agentId) => this.#roots.isRoot(agentId),
+      isActive: () => this.#ownFeaturesActive(),
       logger: this.#logger,
       now: this.#now,
     });
@@ -346,8 +347,7 @@ export class WeixinRuntime {
   /**
    * 自有功能是否生效：插件在跑（启用 + 已登录）且**没有**接入超级助理。
    *
-   * 与如流桥同一套语义：核心接管后，问题与长任务提醒由核心发交付，插件自己那份要停掉，
-   * 否则同一条提醒会来两遍。
+   * 核心接管后问题与长任务提醒由核心发交付，插件自己那份要停掉，否则同一条提醒来两遍。
    */
   #ownFeaturesActive(): boolean {
     return this.#enabled && !this.#superagent && this.#loginState !== null && !this.#stopped;

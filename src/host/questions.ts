@@ -38,6 +38,8 @@ export interface QuestionBrokerOptions {
   recipient: () => string | null;
   /** 只提醒根会话（子代理的提问不打扰主人）。 */
   isRoot: (agentId: string | null) => boolean;
+  /** 当前是否仍然允许接管；发送提醒期间可能被停用/切到核心。 */
+  isActive?: () => boolean;
   now?: () => number;
   newId?: () => string;
   logger?: QuestionLogger;
@@ -141,6 +143,12 @@ export class QuestionBroker {
 
     const text = renderInteraction(questionsToInteraction(questions));
     const sent = await this.#send(text).catch(() => false);
+    // 发送是异步的；这期间可能已经停用/切到核心，cancelAll 看不到尚不存在的 pending。
+    // 这里再判一次，避免给已关闭的插件挂一条 30 分钟的待答。
+    if (this.#closed || (this.#options.isActive !== undefined && !this.#options.isActive())) {
+      this.#noteError('问题提醒发送期间插件状态已变化，已交回 Web 端');
+      return next();
+    }
     if (!sent) {
       // 发不出去就别接管：交给 Web，主人在 Web 端作答。
       this.#noteError('问题提醒发送失败，已交回 Web 端');

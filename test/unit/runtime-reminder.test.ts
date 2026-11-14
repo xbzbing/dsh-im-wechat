@@ -125,3 +125,31 @@ test('提醒设置：默认等 5 分钟，保存后落盘并在重启后沿用',
     await again.stop();
   });
 });
+
+test('接入核心后审批提醒不接管；切到独立模式才发提醒并计数', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const tokens = new ContextTokenStore({ dir });
+    tokens.set(ACCOUNT, OWNER, 'ctx-owner');
+    await tokens.flush();
+
+    const api = fakeApi();
+    const runtime = new WeixinRuntime({
+      config: { dataDir: dir, questionDelayMinutes: 0 },
+      createApi: api.createApi,
+    });
+    await runtime.start();
+    // 默认「接入我的超级助理」：审批由核心接管，这里一条都不发。
+    const request = () => ({ toolName: 'bash', agent: { id: 'sess-1', session: { header: {} } } });
+    assert.equal(await runtime.handleApproval(request(), async () => 'rejected'), 'rejected');
+    assert.deepEqual(api.record.sent, []);
+
+    await saveSuperagent(runtime.panelActions(), false);
+    const pending = runtime.handleApproval(request(), () => new Promise(() => {}));
+    await waitFor(() => runtime.status().pendingApprovals === 1, '审批提醒发出并挂上待授权');
+    assert.match(api.record.sent[0]!, /需要你授权 #1：bash/);
+
+    await runtime.stop();
+    pending.catch(() => {});
+  });
+});

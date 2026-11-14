@@ -62,6 +62,14 @@ export interface PollLoopOptions {
   /** 收到一条新消息（已去重）。异常会被吞掉并记日志，不能打断轮询。 */
   onMessage: (message: WeixinMessage) => void | Promise<void>;
   onHealth?: (health: PollHealth) => void;
+  /**
+   * 只缓存主人的 `context_token`。
+   *
+   * 发送路径只认扫码登录的主人（`OwnerChannel` 与 `bridge.deliver` 都会拒发非主人），
+   * 非主人的 token 没有任何消费者；不过滤会让陌生人一句话换来一份凭据级数据落盘。
+   * 未传时保持旧行为（测试与独立使用）。
+   */
+  isOwner?: (sender: string) => boolean;
   logger?: PollLogger;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
@@ -194,8 +202,9 @@ export class PollLoop {
 
   async #accept(message: WeixinMessage): Promise<{ identity: string | null; delivered: boolean }> {
     const token = typeof message.context_token === 'string' ? message.context_token : '';
-    if (token !== '') {
-      this.#options.contextTokens.set(this.#options.account, message.from_user_id ?? '', token);
+    const sender = message.from_user_id ?? '';
+    if (token !== '' && (!this.#options.isOwner || this.#options.isOwner(sender))) {
+      this.#options.contextTokens.set(this.#options.account, sender, token);
     }
     const identity = messageIdentity(this.#options.account, message);
     // 连稳定身份都没有的帧不采纳，也不进重试账本。

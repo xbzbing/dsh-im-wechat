@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -44,7 +44,10 @@ async function cleanup(h: Harness): Promise<void> {
   await rm(h.dir, { recursive: true, force: true });
 }
 
-async function harness(steps: Step[], options: { timings?: Record<string, number> } = {}): Promise<Harness> {
+async function harness(
+  steps: Step[],
+  options: { timings?: Record<string, number>; isOwner?: (sender: string) => boolean } = {},
+): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-poll-'));
   const cursor = new SyncCursorStore({ dir });
   const contextTokens = new ContextTokenStore({ dir });
@@ -86,6 +89,7 @@ async function harness(steps: Step[], options: { timings?: Record<string, number
     onHealth: (snapshot) => {
       health.push(snapshot);
     },
+    ...(options.isOwner ? { isOwner: options.isOwner } : {}),
     sleep: async (ms) => {
       delays.push(ms);
     },
@@ -121,8 +125,25 @@ test('收到消息：交出去、记下 context_token、落盘游标', async () 
   }
 });
 
-test('投递失败时不推进游标，重投成功后才落盘', async () => {
-  const h = await harness([]);
+test('只缓存主人的 context_token：陌生人的不进内存也不落盘', async () => {
+  const h = await harness(
+    [{ response: { ret: 0, msgs: [message(), message({ message_id: '1002', from_user_id: 'stranger', context_token: 'ctx-9' })] } }],
+    { isOwner: (sender) => sender === 'owner-1' },
+  );
+  try {
+    await h.loop.run(h.controller.signal);
+    assert.equal(h.messages.length, 2, '陌生人消息照常交出，只是不缓存 token');
+    assert.equal(h.contextTokens.get('bot@im.bot', 'owner-1'), 'ctx-1');
+    assert.equal(h.contextTokens.get('bot@im.bot', 'stranger'), undefined);
+    await h.contextTokens.flush();
+    const saved = await readFile(h.contextTokens.path('bot@im.bot'), 'utf8');
+    assert.equal(saved.includes('ctx-9'), false, '陌生人的 token 不能写到磁盘');
+  } finally {
+    await cleanup(h);
+  }
+});
+
+test('投递失败时不推进游标，重投成功后才落盘', async () => {  const h = await harness([]);
   const controller = new AbortController();
   let attempts = 0;
   const api = {

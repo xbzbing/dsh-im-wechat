@@ -83,6 +83,8 @@ export class InboundPipeline {
       guard: deps.guard,
       onMessage: (message) => this.route(message, abort.signal),
       onHealth: (health) => this.#handlePollHealth(health),
+      // 发送只认扫码登录的主人，其他发送者的 token 没有任何消费者，不落盘。
+      isOwner: (sender) => deps.isOwner(sender),
       logger: deps.logger,
     });
     this.#task = loop

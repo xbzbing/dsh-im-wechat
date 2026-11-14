@@ -100,13 +100,23 @@ if (manifest.type !== 'module') fail("package.json 的 type 必须是 'module'")
 
 // 3. 零运行时依赖（ADR-0001）：运行时依赖字段必须为空，devDependencies 只放
 //    构建与类型工具——「顺手引个库」必须在这里翻车，不能只靠人肉评审。
-//    宿主内部包（第二份副本会让 Host 的 Symbol 查表失效）在任何字段都禁止。
-const RUNTIME_FIELDS = ['dependencies', 'peerDependencies', 'optionalDependencies'];
+//    宿主内部包（第二份副本会让 Host 的 Symbol 查表失效）不能在运行时字段里出现；
+//    例外只有 peer 的「声明」（ADR-0024）：标了 optional，npm 不会装，只是为了
+//    让装机方看到兼容范围，与实际 import 无关。
+const RUNTIME_FIELDS = ['dependencies', 'optionalDependencies'];
 const DEV_ALLOWLIST = new Set(['typescript', 'esbuild', '@types/node', '@types/react']);
 for (const field of RUNTIME_FIELDS) {
   const deps = Object.keys(manifest[field] ?? {});
   if (deps.length > 0) {
     fail(`${field} 必须为空（零运行时依赖）：${deps.join(', ')}；协议实现自写，不引第三方库`);
+  }
+}
+const peers = Object.keys(manifest.peerDependencies ?? {});
+for (const name of peers) {
+  if (!name.startsWith('@deepseek-ai/')) {
+    fail(`peerDependencies 只允许声明宿主平台包：${name}`);
+  } else if (manifest.peerDependenciesMeta?.[name]?.optional !== true) {
+    fail(`peerDependencies['${name}'] 必须标 optional：否则 npm 会装一份宿主包副本`);
   }
 }
 for (const dep of Object.keys(manifest.devDependencies ?? {})) {

@@ -72,7 +72,20 @@
     "check": "npm run typecheck && npm test && npm run verify"
   },
   "engines": {
-    "node": ">=22.19"
+    "node": ">=24.0.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "24.19.2",

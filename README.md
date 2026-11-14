@@ -13,6 +13,7 @@
 | 扫码登录、设置面板 | 支持 | 支持 |
 | 微信里发文字 → DSH 会话 | 支持（面板里选工作区，首次消息建会话并复用） | 支持（核心的前台会话） |
 | 回合在跑时再发一条 | 支持，面板可选排队或插话 | 支持，核心的 `front.submitMode` 决定 |
+| 微信会话用哪个模型 | 面板里选，不选就跟随 DSH 默认（[ADR-0025](docs/adr/0025-独立模式会话的模型.md)） | 核心决定 |
 | 问题提醒、长任务提醒 | 插件自己发 | 核心发 |
 | 在微信里回复问题作答 | 支持 | 支持（经核心） |
 | 命令解析、主人判定 | 不解析命令；主人由扫码登录的登录态认定 | 由核心做 |
@@ -61,6 +62,7 @@ dsh plugin --profile web remove dsh-im-wechat
 - **绑定 PIN**：微信要求绑定 PIN 时，面板提示输入手机显示的数字；`verifyPin: true` 可在服务端强制之前提前验证这条链路（[ADR-0014](docs/adr/0014-跟随openclaw-weixin-3.0.0-beta的绑定兼容.md)）。
 - **Markdown 原样透传**：微信客户端原生渲染 Markdown，表格、代码块、标题、列表、链接都按原样显示；图片、`#####`/`######`、中文斜体与删除线的标记会被剔除（[ADR-0008](docs/adr/0008-微信原生Markdown与出站文本过滤.md)）。单条超过 1500 字节按段分条（约 500 个中文字；`maxText` 可配，按 UTF-8 字节计）。
 - **独立模式直连会话**：面板里从宿主的工作区列表选一个工作区；首条消息在那里建会话并复用，回答发回微信；回合正在跑时默认插话，可在面板改回排队；可随时「重置绑定」换会话（[ADR-0009](docs/adr/0009-独立模式的直连会话.md)）。
+- **独立模式的模型可选**：面板里从宿主的模型目录选一个，不选就跟随 DSH 的默认模型；改了立刻换到已绑定的会话，清空后新建的会话回到跟随默认（[ADR-0025](docs/adr/0025-独立模式会话的模型.md)）。
 - **问题提醒**：题目与选项写成文字发到微信，回复序号或文字就能作答；微信与 Web 竞答，谁先答用谁，另一边自动收起；30 分钟没人答自动交回 Web 端。默认**先等 5 分钟**——这期间在 Web 端答完就不打扰，面板可关掉提醒或改等待时间。
 - **审批提醒**：工具要授权时把工具名与原因发到微信，回复「批准」或「拒绝」即可处理；只认明确的关键词，模糊的话不会替你决定，到点没处理就交回 Web 端（[ADR-0023](docs/adr/0023-独立模式的审批提醒与微信作答.md)）。
 - **长任务提醒**：超过阈值（默认 30 分钟，面板可改）的回合结束时，推送标题、耗时与最后结论。**失败立刻提醒**：报错、被拦、非主人中止的回合不看阈值、立刻推送（主人自己停的不发）（[ADR-0011](docs/adr/0011-失败立刻提醒.md)）。
@@ -69,7 +71,7 @@ dsh plugin --profile web remove dsh-im-wechat
 - **正在输入**：消息交给会话后、首段回答送达前，微信那头显示「正在输入」；真机行为不符预期时可用 `typingIndicator: false` 关掉（[ADR-0007](docs/adr/0007-输入状态.md)）。
 - **出站快捷命令**：`dsh-wechat-send` 把文本或图片直接发到主人微信，模型在任意会话里一条命令即可，不用读插件源码（[ADR-0012](docs/adr/0012-出站快捷命令.md)）。
 - **present 的图片自动发到微信**：独立模式下，模型在会话里 `present` 的本地图片会直接发到主人的微信（只发图片，单张 ≤ 10 MiB、一次 ≤ 10 张）（[ADR-0019](docs/adr/0019-present的图片自动发到微信.md)）。
-- **设置面板**：扫码登录、开关渠道、选工作区、改长任务阈值，并查看账号尾号、绑定会话、提醒来源与最近错误；中文默认，跟随宿主浅色/深色主题。
+- **设置面板**：扫码登录、开关渠道、选工作区与模型、改长任务阈值，并查看账号尾号、绑定会话、提醒来源与最近错误；中文默认，跟随宿主浅色/深色主题。
 
 ## 使用
 
@@ -87,6 +89,7 @@ dsh plugin --profile web remove dsh-im-wechat
 - 面板「独立模式」里选工作区：默认是 `$DSH_HOME/dsh-im-wechat` 下自动创建的「微信会话」，也可以换成宿主里已有的工作区。首条微信消息在所选工作区的目录里新建一个会话，之后一直用它。
 - 这个工作区目录与会话的 cwd 是同一个位置，里面**没有**任何凭据：登录态与面板设置放在另一个目录 `$DSH_HOME/.dsh-im-wechat`（[ADR-0021](docs/adr/0021-状态目录与默认工作区分离.md)）。
 - 之后主人发的文字与图片直接提交给该会话，回答发回微信；「当前会话」里能看到绑定的会话与运行状态。模型 `present` 的本地图片会自动发到微信，不用它知道 CLI。
+- 会话用哪个模型在「默认模型」里选：候选来自宿主的模型目录，第一项是「跟随 DSH 默认」。改完立刻换到已绑定的会话；清空只影响以后新建的会话——已绑定的会话仍用它记下的模型，要回到默认请先「重置绑定」（[ADR-0025](docs/adr/0025-独立模式会话的模型.md)）。
 - 图片（png / jpeg / webp / gif，单张 ≤ 10 MiB，一次最多 9 张）作为附件交给会话；只有图没有字时补一句「请看这张图」，下载失败的图当这条没有图（[ADR-0017](docs/adr/0017-独立模式的图片入站.md)）。
 - 绑定会话的模型需要支持图片输入；不支持时图片会被拒收、文字照常送达，并回一句「图片没有发出去」。
 - 「回合内插话」默认打开：回合正在跑也会把新消息插进去（尽力而为，宿主窗口已关时退化成排队）；关掉才排队等这一轮结束。
@@ -146,11 +149,14 @@ profile 的 `cordis.patch.yml` 里按 loader id 叠加配置：
     maxText: 1500                     # 单条消息上限，按 UTF-8 字节计，默认 1500
     typingIndicator: true             # 「正在输入」状态，默认开（ADR-0007）
     verifyPin: false                  # 取码时强制服务端出 PIN，仅用于提前验证（ADR-0014）
+    directModel:                      # 独立模式微信会话的模型；整段省略 / 留空 = 跟随 DSH 默认（ADR-0025）
+      provider: deepseek-account
+      model: deepseek-chat
 ```
 
 其余键（`dataDir`、`baseUrl`、`cdnBaseUrl`、`botAgent`、`directWorkspaceId`、`directBusyMode`）见 `src/host/config.ts`。
 
-面板上改的设置（接入微信、接入我的超级助理、长任务阈值、提醒开关与等待时间、独立模式的工作区与提交方式）落在
+面板上改的设置（接入微信、接入我的超级助理、长任务阈值、提醒开关与等待时间、独立模式的工作区、提交方式与模型）落在
 `$DSH_HOME/.dsh-im-wechat/config.json`（`0600`）；独立模式的会话绑定在 `direct.json`（同目录）。两者都**优先于** profile 配置，卸载重装后沿用。
 
 ## 构建与验证
@@ -186,14 +192,14 @@ git commit -m "chore: release v<v>"
 ## 目录
 
 - `src/host/ilink/` — iLink 协议客户端（类型、HTTP、登录、长轮询、发送、媒体）
-- `src/host/direct.ts`、`src/host/state/direct-binding.ts` — 独立模式的直连会话与绑定
+- `src/host/direct.ts`、`src/host/direct-model.ts`、`src/host/state/direct-binding.ts` — 独立模式的直连会话、模型选择与绑定
 - `src/host/state/` — 登录态、长轮询游标、`context_token`、会话绑定与已消费提醒回复的本机持久化
 - `src/host/superagent/` — `my-superagent/v1` 桥适配与 Markdown 呈现
 - `src/host/runtime.ts`、`src/host/runtime-status.ts`、`src/host/inbound-pipeline.ts`、`src/host/panel-rpc.ts`、`src/host/panel-actions.ts`、`src/host/send-gate.ts` — 运行期装配、状态视图、入站流水线、面板 RPC 与设置动作、提醒节流
 - `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`reply-pending.ts`、`long-tasks.ts`、`typing.ts`、`answer-text.ts`、`host-agents.ts` — 自有问题与审批提醒、两者共用的待答机械件、长任务提醒、输入状态与根会话识别
 - `src/host/cli.ts`、`bin/dsh-wechat-send.mjs` — 出站快捷命令（ADR-0012）
 - `src/client/` — Web 设置面板
-- `src/shared/` — 跨上下文的纯函数（版本、二维码编码器、提问提示语、文件行数上限）
+- `src/shared/` — 跨上下文的纯函数与纯类型（版本、二维码编码器、提问提示语、模型契约、文件行数上限）
 - `src/host/command.ts` — 斜杠命令 `/wechat`（人用；与 CLI 共用发送实现）
 - `docs/adr/` — 架构决策记录
 

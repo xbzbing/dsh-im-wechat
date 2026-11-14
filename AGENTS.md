@@ -14,9 +14,9 @@
 | `src/host/index.ts` | Cordis 入口：只装配与接线 |
 | `src/host/ilink/` | iLink 协议客户端：`types`/`api`（端点、请求头、错误分类）、`json`（64 位消息 id 保真）、`identity`（入站身份）、`login`、`poll`、`send`、`upload`（CDN 上传）、`media`、`session-guard`；只用 Node 内置模块 |
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`quota`（bridge 级发送窗口）、`send-health`（发送失败到健康状态）、`link`（延后注册的 `BridgeBinder`） |
-| `src/host/questions.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、作答匹配、长任务提醒、根会话识别 |
+| `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、审批提醒与微信作答（ADR-0023）、两者的开关/等待窗口与入站归属、作答匹配、长任务提醒、根会话识别 |
 | `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`、独立模式绑定；`files.ts` 私密文件读写、`paths.ts` 目录解析；目录 `0700`、文件 `0600`、原子写 |
-| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`runtime-status.ts` 面板状态、`inbound.ts` 入站转换、`inbound-pipeline.ts` 轮询/投递流水线、`owner-channel.ts` 主人收发通道、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`present-images.ts` present 图片转发（ADR-0019）、`session-events.ts` 会话事件、`workspace-default.ts` 默认工作区、`bot-agent.ts` 机器人元数据、`prompt-parts.ts` 提交给会话的文字/图片 part（ADR-0017）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`runtime-status.ts` 面板状态、`panel-actions.ts` 面板设置的校验/落盘/生效、`inbound.ts` 入站转换、`inbound-pipeline.ts` 轮询/投递流水线、`owner-channel.ts` 主人收发通道、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`present-images.ts` present 图片转发（ADR-0019）、`session-events.ts` 会话事件、`workspace-default.ts` 默认工作区、`bot-agent.ts` 机器人元数据、`prompt-parts.ts` 提交给会话的文字/图片 part（ADR-0017）、`panel-rpc.ts` 面板 RPC、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `bin/dsh-wechat-send.mjs` | 出站命令入口，只把参数交给 `lib/src/host/cli.js`（ADR-0012） |
 | `src/host/command.ts` | 斜杠命令 `/wechat`：人用入口，复用 `cli.ts` 的解析与发送端口（ADR-0012） |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external |
@@ -81,7 +81,7 @@ npm run check      # 提交前门禁：typecheck + test + verify
 
 - 登录态与 token 只落本机状态文件，权限收紧；不进日志、不进面板快照、不随包发布。
 - 桥不解析命令、不判断身份：命令由核心解析，是不是主人由核心按配对绑定判断；桥只上报渠道内的发送者标识。
-- 非主人的微信消息不解析命令；对外发言、授权类动作永远由核心决策，桥只负责呈现与转发。
+- 非主人的微信消息不解析命令；对外发言、授权类动作永远由核心决策，桥只负责呈现与转发。例外只有独立模式（没有核心）：工具授权可以由主人在微信里回「批准/拒绝」，边界见 ADR-0023——只主人、只根会话、只认明确关键词、缺省失败关闭。
 - 协议实现只用官方 `openclaw-weixin` 定义的接口，不做逆向扩展、不携带凭据到第三方端点。
 - 出站入口（`/wechat` 命令、`dsh-wechat-send` 命令行、独立模式下 `present` 图片的自动转发）的收件人**恒为扫码登录的主人**，不提供指定收件人的参数：只解决「主人给自己发」，不新增「给第三方发言」的能力（ADR-0012、ADR-0019）。
 - 斜杠命令是给人用的（`dsh-commands` 契约：handler 不经过模型），**模型调不到**；要模型主动发只能走 CLI 或注册工具，别再试图用命令解决模型侧需求。

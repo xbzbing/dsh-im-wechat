@@ -37,6 +37,8 @@ export interface DirectController {
     request: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<{ items?: readonly { sessionId?: string; running?: boolean }[] }>;
+  /** 读宿主的模型目录（面板下拉与模型校验用；老宿主没有这个方法）。 */
+  modelCatalog?(): Promise<unknown>;
 }
 
 export interface DirectLogger {
@@ -58,6 +60,12 @@ export interface DirectChatOptions {
   isOwner: (sender: string) => boolean;
   /** 建会话用的标题后缀（主人账号尾号）。 */
   ownerLabel: () => string;
+  /**
+   * 提交前钉上配置的模型（ADR-0025）：新建会话与已绑定的会话都走这条，必须在
+   * `prompt` 之前——宿主按会话记着的选择决定这一轮用哪个模型。同一个会话同一个值
+   * 只钉一次（幂等交给回调实现）。回调不抛错。
+   */
+  applyModel?: (sessionId: string) => void;
   logger?: DirectLogger;
   now?: () => number;
   maxText?: number;
@@ -92,6 +100,7 @@ export class DirectChat {
   readonly #send: (text: string) => Promise<boolean>;
   readonly #isOwner: (sender: string) => boolean;
   readonly #ownerLabel: () => string;
+  readonly #applyModel: ((sessionId: string) => void) | undefined;
   readonly #logger: DirectLogger | undefined;
   readonly #now: () => number;
   readonly #maxText: number;
@@ -111,6 +120,7 @@ export class DirectChat {
     this.#send = options.send;
     this.#isOwner = options.isOwner;
     this.#ownerLabel = options.ownerLabel;
+    this.#applyModel = options.applyModel;
     this.#logger = options.logger;
     this.#now = options.now ?? Date.now;
     this.#maxText = options.maxText ?? MAX_TEXT_BYTES;
@@ -156,6 +166,8 @@ export class DirectChat {
       await this.#send(`没能建会话：${messageOf(error)}`);
       return 'failed';
     }
+    // 已绑定的会话可能还没被宿主 resume（重启后第一次发消息）：提交前补钉一次模型。
+    this.#applyModel?.(sessionId);
     const busy = await this.#isBusy(controller, sessionId);
     const mode: BusyMode = busy && this.#busyMode() === 'steer' ? 'steer' : 'queue';
     const requestId = randomUUID();

@@ -11,9 +11,10 @@ import type { ILinkApi } from './ilink/api.ts';
 import type { LoginSnapshot } from './ilink/login.ts';
 import type { BridgeHealth } from './superagent/protocol.ts';
 import type { BusyMode } from './config.ts';
+import type { ModelRef } from '../shared/models.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 4;
+export const HOST_CONTRACT = 5;
 
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {
@@ -58,6 +59,8 @@ export interface RuntimeStatus {
     busyMode: BusyMode;
     running: boolean;
     available: boolean;
+    /** 直连会话用哪个模型；`null` 表示跟随 DSH 的默认模型（ADR-0025）。 */
+    model: ModelRef | null;
   };
   loggedIn: boolean;
   accountTail?: string;
@@ -112,11 +115,57 @@ export function buildStatus(input: StatusInput): RuntimeStatus {
     ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
     login: input.loginSnapshot,
     health: input.health,
-    ...(input.bridge
-      ? { bridge: { ...input.bridge, features: [...input.bridge.features] } }
-      : { bridge: { registered: false, features: [] } }),
+    bridge: bridgeView(input.bridge),
     ...(lastError ? { lastError } : {}),
   };
+}
+
+/** 面板展示的一条最近错误。 */
+export interface RecentError {
+  at: number;
+  message: string;
+}
+
+/**
+ * 最近错误的环形缓冲：面板只显示最后几条。
+ *
+ * 唯一的消费者是面板的 `status.lastError`，容量规则放这里而不是散在运行期里；运行期
+ * 只负责 `add`，清空与按前缀清理由调用点说明原因。
+ */
+export class RecentErrors {
+  readonly #max: number;
+  #items: RecentError[] = [];
+
+  constructor(max = 5) {
+    this.#max = max;
+  }
+
+  add(at: number, message: string): void {
+    this.#items.push({ at, message });
+    if (this.#items.length > this.#max) this.#items.shift();
+  }
+
+  /** 清掉满足条件的记录（工作区恢复成功后清掉旧的失败横幅，别的错误留着）。 */
+  clearWhere(predicate: (message: string) => boolean): void {
+    this.#items = this.#items.filter((item) => !predicate(item.message));
+  }
+
+  clear(): void {
+    this.#items = [];
+  }
+
+  list(): readonly RecentError[] {
+    return this.#items;
+  }
+}
+
+/** 已注册的桥 → 状态视图里的那一项；没注册时给「未注册」。 */
+export function bridgeView(
+  bridge: { registered: boolean; id?: string; features: readonly string[] } | null,
+): RuntimeStatus['bridge'] {
+  return bridge === null
+    ? { registered: false, features: [] }
+    : { registered: bridge.registered, ...(bridge.id ? { id: bridge.id } : {}), features: [...bridge.features] };
 }
 
 export interface RuntimeDeps {

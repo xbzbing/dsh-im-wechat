@@ -16,10 +16,13 @@ import {
   isHostOlder,
   isLoginActive,
   isHttpsUrl,
+  modelRowId,
+  modelSelectionOf,
   qrImageUrl,
   validateMinutes,
   validateQuestionDelay,
 } from './logic.ts';
+import type { ModelCatalogView } from '../shared/models.ts';
 import type { Translate } from './locales.ts';
 import { h, useCallback, useEffect, useMemo, useRef, useState } from './platform.ts';
 import {
@@ -60,6 +63,14 @@ export function WeixinSettingsPanel(props: any) {
   /** 宿主给的工作区候选（官方目录）：面板只让选，不让手写路径。 */
   const [workspaces, setWorkspaces] = useState<{ id: string; title: string; path: string }[]>([]);
   const [workspacesReady, setWorkspacesReady] = useState(false);
+  /** 宿主的模型目录（`null` 表示还没读到）；读失败也要落到一个「不可用 + 原因」的形状。 */
+  const [models, setModels] = useState<ModelCatalogView | null>(null);
+  /** 模型下拉的草稿：行键给下拉用，`modelDraft` 是保存时的真值（`null` = 跟随 DSH 默认）。 */
+  const [modelValue, setModelValue] = useState('');
+  const [modelDraft, setModelDraft] = useState<{ provider: string; model: string } | null>(null);
+  const [modelDirty, setModelDirty] = useState(false);
+  /** 本次会话里刚清空过模型：只用来提示「已绑定的会话仍用旧模型」，不常显。 */
+  const [modelCleared, setModelCleared] = useState(false);
   /** 状态请求的单调序号：Host 慢时旧响应可能后到，绝不能覆盖新快照。 */
   const requestSeq = useRef(0);
   /** 单飞：慢宿主下轮询不叠加在途请求；在途期间的请求排队补一次。 */
@@ -211,10 +222,19 @@ export function WeixinSettingsPanel(props: any) {
     await applyAction('question', () => rpcCall(ENDPOINTS.setQuestion, { enabled }));
   }, [rpcCall, applyAction]);
 
-  /** 独立模式：保存工作区或提交方式，或重置绑定（ADR-0009）。 */
-  const saveDirect = useCallback(async (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean }) => {
+  /** 独立模式：保存工作区、提交方式、模型，或重置绑定（ADR-0009、ADR-0025）。 */
+  const saveDirect = useCallback(async (patch: {
+    workspaceId?: string;
+    busyMode?: 'queue' | 'steer';
+    reset?: boolean;
+    model?: { provider: string; model: string } | null;
+  }) => {
     await applyAction('direct', () => rpcCall(ENDPOINTS.setDirect, patch), () => {
       if (patch.workspaceId !== undefined) setWorkspaceDirty(false);
+      if (patch.model !== undefined) {
+        setModelDirty(false);
+        setModelCleared(patch.model === null);
+      }
     });
   }, [rpcCall, applyAction]);
 
@@ -234,12 +254,46 @@ export function WeixinSettingsPanel(props: any) {
     };
   }, [rpcCall]);
 
+  // 模型目录只拉一次：宿主比面板旧时端点可能还不存在，等状态到了再说。
+  const modelsRequested = useRef(false);
+  useEffect(() => {
+    if (status === null || hostOlder || modelsRequested.current) return;
+    modelsRequested.current = true;
+    let cancelled = false;
+    rpcCall(ENDPOINTS.models)
+      .then((value: ModelCatalogView) => {
+        if (!cancelled) setModels(value);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setModels({ available: false, reason: errorText(t, error), default: null, items: [], unavailableProviders: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status, hostOlder, rpcCall, t]);
+
   const direct = status?.direct ?? null;
   const directWorkspaceId = String(direct?.workspaceId ?? '');
   useEffect(() => {
     if (workspaceDirty || direct === null) return;
     setWorkspaceId(directWorkspaceId);
   }, [directWorkspaceId, direct, workspaceDirty]);
+
+  /** 已保存的模型：宿主回 `null` 表示跟随 DSH 默认；老宿主没有这个字段，同样按没配处理。 */
+  const savedProvider = direct?.model?.provider;
+  const savedModel = direct?.model?.model;
+  useEffect(() => {
+    if (modelDirty) return;
+    const known = typeof savedProvider === 'string' && typeof savedModel === 'string';
+    setModelValue(known ? modelRowId(savedProvider, savedModel) : '');
+    setModelDraft(known ? { provider: savedProvider, model: savedModel } : null);
+  }, [savedProvider, savedModel, modelDirty]);
+
+  /** 只改模型：把下拉里选中的那一行换算成选择再保存（清空就是跟随默认）。 */
+  const saveModel = useCallback(async () => {
+    await saveDirect({ model: modelDraft ?? null });
+  }, [modelDraft, saveDirect]);
 
   if (loading && !status) {
     return h('div', { className: 'wx-root wx-loading', 'data-plugin': 'dsh-im-wechat' },
@@ -327,6 +381,13 @@ export function WeixinSettingsPanel(props: any) {
       },
       onToggleExpand: () => setDirectOpen(!directExpanded),
       superagent, directExpanded, direct, workspaceId, workspaces, workspacesReady, hostOlder, busy,
+      models, modelValue, modelCleared,
+      onModelChange: (value: string) => {
+        setModelDirty(true);
+        setModelValue(value);
+        setModelDraft(modelSelectionOf(value, models));
+      },
+      saveModel,
     }),
     h(RuntimeSection, { t, status }),
     errorSection,

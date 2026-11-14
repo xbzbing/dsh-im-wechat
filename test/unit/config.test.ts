@@ -136,3 +136,29 @@ test('面板改的提醒设置会落盘并在下次加载时读回', async () =>
     assert.equal(again.questionDelayMinutes, 12);
   });
 });
+
+test('独立模式的模型：只认 provider 与 model 两个非空字符串，写坏就当没配', () => {
+  const config = normalizePluginConfig({ directModel: { provider: 'deepseek-account', model: 'deepseek-chat' } });
+  assert.deepEqual(config.directModel, { provider: 'deepseek-account', model: 'deepseek-chat' });
+  assert.equal('directModel' in normalizePluginConfig({ directModel: { provider: 'a' } }), false);
+  assert.equal('directModel' in normalizePluginConfig({ directModel: { provider: '', model: 'b' } }), false);
+  assert.equal('directModel' in normalizePluginConfig({ directModel: 'a/b' }), false);
+  assert.equal('directModel' in normalizePluginConfig({}), false);
+});
+
+test('面板选的模型落盘；清空后写 null，读回来不回落成 profile 配置', async () => {
+  await withDir(async (dir) => {
+    const store = new LocalConfigStore({ dir });
+    await store.load();
+    await store.save({ directModel: { provider: 'p', model: 'm' } });
+    assert.deepEqual((await new LocalConfigStore({ dir }).load()).directModel, { provider: 'p', model: 'm' });
+
+    const clearing = new LocalConfigStore({ dir });
+    await clearing.load();
+    await clearing.save({ directModel: null });
+    const document = await new LocalConfigStore({ dir }).load();
+    // 显式的 null 与「文件里没有这个字段」是两件事：前者表示主人清掉了配置。
+    assert.equal(document.directModel, null);
+    assert.equal(JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')).directModel, null);
+  });
+});

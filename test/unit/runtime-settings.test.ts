@@ -3,10 +3,21 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { WeixinRuntime } from '../../src/host/runtime.ts';
+import { RecentErrors } from '../../src/host/runtime-status.ts';
 import { saveEnabled, saveLongTask, saveSuperagent } from '../../src/host/panel-actions.ts';
 import { BridgeBinder } from '../../src/host/superagent/link.ts';
 import { LoginStateStore } from '../../src/host/state/login-state.ts';
 import { LOGIN, fakeApi, fakeSuperagent, waitFor, withDir } from './helpers/runtime-harness.ts';
+
+test('最近错误只留最后几条，可以按前缀清掉（工作区恢复后不留旧横幅）', () => {
+  const errors = new RecentErrors(3);
+  for (const message of ['a', 'b', '工作区失败', 'c']) errors.add(1, message);
+  assert.deepEqual(errors.list().map((item) => item.message), ['b', '工作区失败', 'c']);
+  errors.clearWhere((message) => message.startsWith('工作区'));
+  assert.deepEqual(errors.list().map((item) => item.message), ['b', 'c']);
+  errors.clear();
+  assert.deepEqual(errors.list(), []);
+});
 
 test('关掉「接入我的超级助理」会注销桥，并让自有功能生效', async () => {
   await withDir(async (dir) => {

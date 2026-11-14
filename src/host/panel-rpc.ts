@@ -8,6 +8,7 @@
 
 import { errorDetail, injectOptional } from './host-context.ts';
 import { saveDirect, saveEnabled, saveLongTask, saveQuestionSettings, saveSuperagent } from './panel-actions.ts';
+import { normalizeModelRef } from './direct-model.ts';
 import type { PanelRoute, PluginContext, PluginLogger } from './host-context.ts';
 import type { WeixinRuntime } from './runtime.ts';
 
@@ -26,6 +27,7 @@ export const ENDPOINTS = Object.freeze({
   QUESTION_SET: 'question.set',
   DIRECT_SET: 'direct.set',
   WORKSPACES_LIST: 'workspaces.list',
+  MODELS_LIST: 'models.list',
 } as const);
 
 export type Endpoint = (typeof ENDPOINTS)[keyof typeof ENDPOINTS];
@@ -98,6 +100,8 @@ async function handleEndpoint(
       return runtime.status();
     case ENDPOINTS.WORKSPACES_LIST:
       return await runtime.workspacesView();
+    case ENDPOINTS.MODELS_LIST:
+      return await runtime.panelActions().models();
     case ENDPOINTS.LOGIN_START:
       await runtime.startLogin();
       return runtime.status().login;
@@ -125,7 +129,7 @@ async function handleEndpoint(
     }
     case ENDPOINTS.DIRECT_SET: {
       const record = payloadOf(payload);
-      const patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean } = {};
+      const patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean; model?: { provider: string; model: string } | null } = {};
       if (record.workspaceId !== undefined) {
         if (typeof record.workspaceId !== 'string') throw codedError('workspaceId 必须是字符串', 'invalid-config');
         patch.workspaceId = record.workspaceId;
@@ -139,6 +143,17 @@ async function handleEndpoint(
       if (record.reset !== undefined) {
         if (typeof record.reset !== 'boolean') throw codedError('reset 必须是布尔值', 'invalid-config');
         patch.reset = record.reset;
+      }
+      if (record.model !== undefined) {
+        // null 是「跟随 DSH 默认」，与「没传」区分：手机端清空配置要靠它。
+        if (record.model === null) patch.model = null;
+        else {
+          const model = normalizeModelRef(record.model);
+          if (model === undefined) {
+            throw codedError('model 必须是 { provider, model } 两个非空字符串', 'invalid-config');
+          }
+          patch.model = model;
+        }
       }
       return saveDirect(runtime.panelActions(), patch);
     }

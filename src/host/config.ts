@@ -17,6 +17,8 @@ import { join, resolve } from 'node:path';
 import { readJsonIfPresent, writePrivateFile } from './state/files.ts';
 import type { StateLogger } from './state/files.ts';
 import { resolveDataDir } from './state/paths.ts';
+import { normalizeModelRef } from './direct-model.ts';
+import type { ModelRef } from '../shared/models.ts';
 import { normalizeLongTaskMinutes } from './long-tasks.ts';
 
 export interface PluginConfig {
@@ -61,6 +63,8 @@ export interface PluginConfig {
   directWorkspaceId?: string;
   /** 独立模式里回合正在跑时又来一条消息的提交方式：插话（默认，见 DEFAULT_DIRECT_BUSY_MODE）或排队（ADR-0009）。 */
   directBusyMode?: BusyMode;
+  /** 独立模式的微信会话用哪个模型；缺省跟随 DSH 的默认模型（ADR-0025）。 */
+  directModel?: ModelRef;
 }
 
 const MIN_MAX_TEXT = 200;
@@ -125,6 +129,8 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (directWorkspaceId !== undefined) config.directWorkspaceId = directWorkspaceId;
   const directBusyMode = normalizeBusyMode(record.directBusyMode);
   if (directBusyMode !== undefined) config.directBusyMode = directBusyMode;
+  const directModel = normalizeModelRef(record.directModel);
+  if (directModel !== undefined) config.directModel = directModel;
   const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
   const typingIndicator = asBoolean(record.typingIndicator);
@@ -162,6 +168,13 @@ export interface StoredConfig {
   directWorkspaceId?: string;
   /** 面板上改的独立模式提交方式。 */
   directBusyMode?: BusyMode;
+  /**
+   * 面板上选的独立模式模型；缺省沿用静态配置。
+   *
+   * `null` 是「主人显式清掉了」——与字段缺席区分开，否则清空后会回落到 profile 里
+   * 静态配置的值，看起来像没保存成功。
+   */
+  directModel?: ModelRef | null;
 }
 
 export const STORED_CONFIG_VERSION = 1;
@@ -198,6 +211,9 @@ export class LocalConfigStore {
     const questionDelay = normalizeQuestionDelayMinutes(record.questionDelayMinutes);
     const directWorkspaceId = asString(record.directWorkspaceId);
     const directBusyMode = normalizeBusyMode(record.directBusyMode);
+    const directModel = record.directModel === null
+      ? null
+      : normalizeModelRef(record.directModel) ?? undefined;
     this.#document = {
       version: STORED_CONFIG_VERSION,
       ...(enabled !== undefined ? { enabled } : {}),
@@ -207,6 +223,7 @@ export class LocalConfigStore {
       ...(questionDelay !== undefined ? { questionDelayMinutes: questionDelay } : {}),
       ...(directWorkspaceId !== undefined ? { directWorkspaceId } : {}),
       ...(directBusyMode !== undefined ? { directBusyMode } : {}),
+      ...(directModel !== undefined ? { directModel } : {}),
     };
     return this.#document;
   }
@@ -220,6 +237,7 @@ export class LocalConfigStore {
     questionDelayMinutes?: number;
     directWorkspaceId?: string;
     directBusyMode?: BusyMode;
+    directModel?: ModelRef | null;
   }): Promise<StoredConfig> {
     this.#document = { ...this.#document, ...patch, version: STORED_CONFIG_VERSION };
     await writePrivateFile(this.#path, `${JSON.stringify(this.#document, null, 2)}\n`);

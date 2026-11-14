@@ -11,13 +11,16 @@ import {
   describeLoginPhase,
   formatTime,
   healthText,
+  modelOptions,
   standaloneSettingsLocked,
   validateMinutes,
   validateQuestionDelay,
   workspaceOptions,
 } from './logic.ts';
 import { h } from './platform.ts';
-import { Button, IconCopy, IconLink, Input, MenuPicker, StateDot, Switch } from './ui.ts';
+import type { ModelCatalogView } from '../shared/models.ts';
+import { Fact, Metric, MinutesRow, PickerRow, SwitchRow } from './rows.ts';
+import { Button, IconCopy, IconLink, Input, StateDot } from './ui.ts';
 import type { Translate } from './locales.ts';
 
 type T = Translate;
@@ -30,32 +33,6 @@ export function healthDot(state: string): 'done' | 'warning' | 'error' | 'idle' 
   if (state === 'degraded') return 'warning';
   if (state === 'down') return 'error';
   return 'idle';
-}
-
-/** 带说明的开关行：标题 + 说明在左，开关在右。 */
-function SwitchRow({ title, description, checked, disabled, onChange }: any) {
-  return h('div', { className: 'wx-setting-row' },
-    h('div', { className: 'wx-setting-copy' },
-      h('span', { className: 'wx-setting-title' }, title),
-      description ? h('span', { className: 'wx-setting-description' }, description) : null),
-    h(Switch, {
-      checked,
-      disabled,
-      label: title,
-      onChange: (next: boolean) => onChange(next),
-    }));
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return h('div', { className: 'wx-fact' },
-    h('span', null, label),
-    h('strong', null, value));
-}
-
-function Metric({ value, label, wide }: { value: string; label: string; wide?: boolean }) {
-  return h('div', { className: `wx-metric${wide ? ' wx-metric-wide' : ''}` },
-    h('strong', null, value),
-    h('span', null, label));
 }
 
 /** 连接区：账号事实、登录/登出动作与扫码卡片。 */
@@ -188,47 +165,6 @@ export function ConnectionSection(props: {
         : null));
 }
 
-/** 分钟输入行：标题 + 说明 + 数字输入 + 单位 + 保存 + 校验/草稿提示。 */
-function MinutesRow(props: {
-  t: T;
-  title: string;
-  description: string;
-  value: string;
-  placeholder: string;
-  disabled: boolean;
-  canSave: boolean;
-  onChange: (value: string) => void;
-  onSave: () => Promise<void>;
-  error: string | null;
-  draftHint: string | null;
-}) {
-  const { t, title, description, value, placeholder, disabled, canSave, onChange, onSave, error, draftHint } = props;
-  return h('div', { className: 'wx-setting-group' },
-    h('div', { className: 'wx-setting-row wx-threshold-row' },
-      h('div', { className: 'wx-setting-copy' },
-        h('span', { className: 'wx-setting-title' }, title),
-        h('span', { className: 'wx-setting-description' }, description)),
-      h('div', { className: 'wx-threshold-control' },
-        h(Input, {
-          className: 'wx-minutes',
-          value,
-          placeholder,
-          'aria-label': title,
-          disabled,
-          onChange: (event: any) => onChange(String(event.target.value)),
-        }),
-        h('span', { className: 'wx-unit' }, t('common.minutes')),
-        h(Button, {
-          variant: 'outline',
-          size: 'sm',
-          disabled: disabled || !canSave,
-          onClick: () => void onSave(),
-        }, t('common.save')))),
-    // 校验不过就地说明：宿主会把值夹回区间，与其保存后被回读顶掉，不如先讲清楚。
-    error !== null ? h('p', { className: 'wx-error' }, error) : null,
-    draftHint !== null ? h('p', { className: 'wx-draft-hint' }, draftHint) : null);
-}
-
 /** 消息与提醒区：接入开关、提醒来源，以及独立模式才生效的提醒设置。 */
 export function ReminderSection(props: {
   t: T;
@@ -331,7 +267,7 @@ export function ReminderSection(props: {
         }))));
 }
 
-/** 独立模式区：插话、工作区与绑定（ADR-0009）。 */
+/** 独立模式区：插话、工作区、模型与绑定（ADR-0009、ADR-0025）。 */
 export function DirectSection(props: {
   t: T;
   saveDirect: (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean }) => Promise<void>;
@@ -343,11 +279,19 @@ export function DirectSection(props: {
   workspaceId: string;
   workspaces: { id: string; title: string; path: string }[];
   workspacesReady: boolean;
+  /** 宿主的模型目录（`null` 表示还没读到）。 */
+  models: ModelCatalogView | null;
+  modelValue: string;
+  /** 本次会话里刚清空过模型：提示「已绑定会话仍用旧模型」，不常显。 */
+  modelCleared: boolean;
+  onModelChange: (value: string) => void;
+  saveModel: () => Promise<void>;
   hostOlder: boolean;
   busy: string;
 }) {
   const { t, saveDirect, onWorkspaceChange, onToggleExpand } = props;
   const { superagent, directExpanded, direct, workspaceId, workspaces, workspacesReady, hostOlder, busy } = props;
+  const { models, modelValue, modelCleared, onModelChange, saveModel } = props;
   const directBusy = direct?.busyMode === 'steer';
   // 同形的禁用条件只算一次：四份拷贝已经漂移过（重置绑定曾少了 available 判断）。
   const directLocked = standaloneSettingsLocked({ superagent, hostOlder, busy }) || direct?.available === false;
@@ -386,26 +330,33 @@ export function DirectSection(props: {
             disabled: directLocked,
             onChange: (next: boolean) => void saveDirect({ busyMode: next ? 'steer' : 'queue' }),
           }),
-          h('div', { className: 'wx-field-block' },
-            h('div', { className: 'wx-setting-copy' },
-              h('span', { className: 'wx-setting-title' }, t('direct.workspace')),
-              h('span', { className: 'wx-setting-description' },
-                t('direct.workspaceDescription'))),
-            h('div', { className: 'wx-threshold-control' },
-              h(MenuPicker, {
-                label: t('direct.workspace'),
-                value: workspaceId,
-                items: workspaceOptions(workspaces, workspaceId, t('direct.defaultWorkspace')),
-                placeholder: t('direct.workspaceUnselected'),
-                disabled: directLocked || !workspacesReady,
-                onChange: (next: string) => onWorkspaceChange(next),
-              }),
-              h(Button, {
-                variant: 'outline',
-                size: 'sm',
-                disabled: directLocked,
-                onClick: () => void saveDirect({ workspaceId }),
-              }, t('common.save')))),
+          h(PickerRow, {
+            t,
+            title: t('direct.workspace'),
+            description: t('direct.workspaceDescription'),
+            value: workspaceId,
+            items: workspaceOptions(workspaces, workspaceId, t('direct.defaultWorkspace')),
+            placeholder: t('direct.workspaceUnselected'),
+            disabled: directLocked || !workspacesReady,
+            onChange: onWorkspaceChange,
+            onSave: () => saveDirect({ workspaceId }),
+          }),
+          h(PickerRow, {
+            t,
+            title: t('direct.model'),
+            description: t('direct.modelDescription'),
+            value: modelValue,
+            items: modelOptions(models, modelValue, {
+              followDefault: t('direct.modelFollowDefault'),
+              missing: t('direct.modelMissing'),
+              unverified: t('direct.modelUnverified'),
+            }),
+            placeholder: t('direct.modelUnselected'),
+            // 目录整体读不到时不让人乱选：能列出目录才谈「选目录里的模型」。
+            disabled: directLocked || models === null || models.available === false,
+            onChange: onModelChange,
+            onSave: saveModel,
+          }),
           direct?.bound
             ? h('div', { className: 'wx-setting-row' },
               h('div', { className: 'wx-setting-copy' },
@@ -421,6 +372,13 @@ export function DirectSection(props: {
               }, t('direct.resetBinding')))
             : h('p', { className: 'wx-draft-hint' },
               t('direct.noSession'))),
+        models !== null && models.available === false
+          ? h('p', { className: 'wx-draft-hint' },
+            t('direct.modelUnavailable', { reason: String(models.reason ?? '') }))
+          : null,
+        !hostOlder && modelCleared && direct?.bound === true
+          ? h('p', { className: 'wx-draft-hint' }, t('direct.modelResetHint'))
+          : null,
         direct?.available === false
           ? h('p', { className: 'wx-draft-hint' }, t('direct.unavailable'))
           : null)

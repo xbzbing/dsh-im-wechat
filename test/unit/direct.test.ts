@@ -69,6 +69,7 @@ async function setup(
     busyMode?: 'queue' | 'steer';
     controller?: FakeController | null;
     submitTimeoutMs?: number;
+    applyModel?: (sessionId: string) => void;
   } = {},
 ) {
   const dir = tempDir(t);
@@ -89,6 +90,7 @@ async function setup(
     ownerLabel: () => 'abc123',
     now: () => 1_700_000_000_000,
     ...(options.submitTimeoutMs !== undefined ? { submitTimeoutMs: options.submitTimeoutMs } : {}),
+    ...(options.applyModel !== undefined ? { applyModel: options.applyModel } : {}),
   });
   return { chat, store, sent, controller };
 }
@@ -321,4 +323,47 @@ test('独立模式：排队时图片被拒，说明并进同一条回执，不�
   assert.equal(sent.length, 1);
   assert.match(sent[0]!, /交给会话/);
   assert.match(sent[0]!, /图片没有发出去/);
+});
+
+test('独立模式：钉模型在提交之前，新建的会话与已绑定的会话都走这条', async (t) => {
+  // 顺序与「补钉」都是行为：宿主按会话记着的模型选择决定这一轮用哪个模型。
+  const events: string[] = [];
+  const dir = tempDir(t);
+  const base = fakeController();
+  const controller: FakeController = {
+    ...base,
+    created: base.created,
+    prompts: base.prompts,
+    renames: base.renames,
+    setRunning: base.setRunning,
+    async prompt(request, signal) {
+      events.push(`prompt:${request.sessionId}`);
+      return base.prompt(request, signal);
+    },
+  };
+  const chat = new DirectChat({
+    controller: () => controller,
+    store: new DirectBindingStore({ dir }),
+    workspaceId: () => '',
+    busyMode: () => 'queue',
+    send: async () => true,
+    isOwner: (sender) => sender === 'owner-1',
+    ownerLabel: () => 'abc123',
+    applyModel: (sessionId) => events.push(`model:${sessionId}`),
+  });
+
+  assert.equal(await chat.submit('owner-1', text('第一条')), 'queued');
+  assert.equal(await chat.submit('owner-1', text('第二条')), 'queued');
+  // 新建会话那条也是「先钉模型、再提交」；第二条走的是已绑定的会话，同样提交前补钉。
+  assert.deepEqual(events, ['model:s-1', 'prompt:s-1', 'model:s-1', 'prompt:s-1']);
+});
+
+test('独立模式：已有绑定时也会在提交前补钉（宿主重启后会话还没 resume 的情况）', async (t) => {
+  const applied: string[] = [];
+  const { chat, controller, store } = await setup(t, { applyModel: (sessionId) => applied.push(sessionId) });
+  await store.set('s-bound', '');
+  assert.equal(await chat.submit('owner-1', text('第一条')), 'queued');
+  // 幂等交给回调实现（同一个会话同一个值只钉一次），这里只保证「提交前调过」。
+  assert.deepEqual(applied, ['s-bound']);
+  assert.deepEqual((controller as FakeController).prompts.map((item) => item.sessionId), ['s-bound']);
 });

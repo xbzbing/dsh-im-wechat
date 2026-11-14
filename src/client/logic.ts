@@ -14,6 +14,7 @@ import {
   RPC_TIMEOUT_MS,
 } from './constants.ts';
 import { encodeQr, qrSvgDataUrl } from '../shared/qr.ts';
+import type { ModelCatalogView, ModelRef } from '../shared/models.ts';
 import type { Translate, WeChatKey } from './locales.ts';
 
 export interface CodedError extends Error {
@@ -216,12 +217,17 @@ function validateRange(
   return { ok: true, value };
 }
 
-/** 下拉菜单的一行：值、主标题与可选的说明（工作区路径）。 */
-export interface WorkspaceOption {
+/** 下拉菜单的一行：值、主标题与可选的说明（工作区路径、模型供应商）。 */
+export interface MenuOption {
   value: string;
   label: string;
   hint?: string;
 }
+
+export type WorkspaceOption = MenuOption;
+
+/** 模型下拉的一行：`value` 是 provider/model 拼出来的行键，只在本页面用。 */
+export type ModelOption = MenuOption;
 
 /**
  * 把宿主的工作区快照转成下拉选项。
@@ -246,6 +252,75 @@ export function workspaceOptions(
   }
   if (value === '') items.unshift({ value: '', label: fallbackLabel });
   return items;
+}
+
+/**
+ * 模型下拉的行键：`provider` 与 `model` 用 NUL 拼起来。
+ *
+ * 只在浏览器里当选中标记用（不发给宿主，保存时回传 `{provider, model}`）。用 NUL 而不是
+ * `/` 是因为 model id 里可能带斜杠，字符串拼接会撞行键（与宿主侧的拼法一致）。
+ */
+export function modelRowId(provider: string, model: string): string {
+  return `${provider}\u0000${model}`;
+}
+
+/** 行键 → 给人看的 `provider/model`：只用于「目录里已没有这一行」的兜底展示。 */
+export function modelRowLabel(value: string): string {
+  return value.split('\u0000').join('/');
+}
+
+/**
+ * 把宿主的模型目录转成下拉选项。
+ *
+ * 第一项固定是「跟随 DSH 默认」，说明里带上宿主当前的默认模型；其余按目录顺序列，
+ * 说明写 provider 名（同名模型分得清是谁家的）。已保存的值不在目录里时补一行原文，
+ * 免得下拉显示成「未选择」——那一行只能看，重新选一次仍会被宿主按目录拒掉。
+ *
+ * 目录整体读不到、或该 provider 自己读失败时，说明换成「未校验」：那不代表模型已下架。
+ */
+export function modelOptions(
+  catalog: ModelCatalogView | null,
+  value: string,
+  labels: { followDefault: string; missing: string; unverified: string },
+): ModelOption[] {
+  // 说明文字给人看，用 `provider/model` 而不是行键（行键里有 NUL）。
+  const fallback = typeof catalog?.default?.provider === 'string' && typeof catalog.default.model === 'string'
+    ? `${catalog.default.provider}/${catalog.default.model}`
+    : '';
+  const options: ModelOption[] = [{
+    value: '',
+    label: labels.followDefault,
+    ...(fallback !== '' ? { hint: fallback } : {}),
+  }];
+  const seen = new Set<string>(['']);
+  for (const item of Array.isArray(catalog?.items) ? catalog.items : []) {
+    if (typeof item?.provider !== 'string' || typeof item?.model !== 'string') continue;
+    const id = modelRowId(item.provider, item.model);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const label = typeof item.label === 'string' && item.label.trim() !== '' ? item.label.trim() : id;
+    const hint = typeof item.providerName === 'string' ? item.providerName.trim() : '';
+    options.push({ value: id, label, ...(hint !== '' && hint !== label ? { hint } : {}) });
+  }
+  if (value !== '' && !seen.has(value)) {
+    const complete = catalog?.available === true && catalog.unavailableProviders.length === 0;
+    options.push({
+      value,
+      label: modelRowLabel(value),
+      hint: complete ? labels.missing : labels.unverified,
+    });
+  }
+  return options;
+}
+
+/** 行键 → 选择：'' 与已下架的行都返回 null（表示跟随 DSH 默认）。 */
+export function modelSelectionOf(value: string, catalog: ModelCatalogView | null): ModelRef | null {
+  if (value === '') return null;
+  for (const item of Array.isArray(catalog?.items) ? catalog.items : []) {
+    if (typeof item?.provider !== 'string' || typeof item?.model !== 'string') continue;
+    if (modelRowId(item.provider, item.model) === value) return { provider: item.provider, model: item.model };
+  }
+  return null;
 }
 
 /** 下拉浮层的落点：视口内固定定位的 top/left/width/maxHeight。 */

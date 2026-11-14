@@ -12,6 +12,8 @@ import {
 } from './config.ts';
 import type { BusyMode, StoredConfig } from './config.ts';
 import { DEFAULT_LONG_TASK_MINUTES, normalizeLongTaskMinutes } from './long-tasks.ts';
+import { sameModelRef } from './direct-model.ts';
+import type { ModelCatalogView, ModelRef } from '../shared/models.ts';
 import type { RuntimeStatus, WorkspaceCatalog } from './runtime-status.ts';
 import type { ReminderCenter } from './reminder-center.ts';
 import type { LongTaskNotifier } from './long-tasks.ts';
@@ -34,6 +36,11 @@ export interface PanelActionHost {
   defaultWorkspaceId(): string;
   setDirectWorkspaceId(value: string): void;
   setDirectBusyMode(value: BusyMode): void;
+  setDirectModel(value: ModelRef | null): void;
+  /** 把刚保存的模型钉到已绑定的会话上（没有绑定或已清空时什么都不做）。 */
+  applyDirectModel(): void;
+  /** 宿主的模型目录：保存前校验，读不到时不可用（不拦保存）。 */
+  models(): Promise<ModelCatalogView>;
   resetDirect(): Promise<void>;
 }
 
@@ -88,10 +95,14 @@ export async function saveQuestionSettings(
   return host.status();
 }
 
-/** 保存独立模式设置：工作区、提交方式，或重置绑定（ADR-0009）。 */
+/**
+ * 保存独立模式设置：工作区、提交方式、模型，或重置绑定（ADR-0009、ADR-0025）。
+ *
+ * `model: null` 是「跟随 DSH 默认」，不是「没改」——两者靠 `undefined` 区分。
+ */
 export async function saveDirect(
   host: PanelActionHost,
-  patch: { workspaceId?: string; busyMode?: BusyMode; reset?: boolean },
+  patch: { workspaceId?: string; busyMode?: BusyMode; reset?: boolean; model?: ModelRef | null },
 ): Promise<RuntimeStatus> {
   const workspaceId = typeof patch.workspaceId === 'string' ? patch.workspaceId.trim() : undefined;
   // 工作区是外部输入：宿主能列出来就必须是其中的一个，避免绑定一个不存在的 id。
@@ -108,10 +119,34 @@ export async function saveDirect(
     : workspaceId;
   if (chosen !== undefined) host.setDirectWorkspaceId(chosen);
   if (busyMode !== undefined) host.setDirectBusyMode(busyMode);
+  if (patch.model !== undefined) {
+    await assertModel(host, patch.model);
+    host.setDirectModel(patch.model);
+  }
   if (patch.reset === true) await host.resetDirect();
   await host.save({
     ...(chosen !== undefined ? { directWorkspaceId: chosen } : {}),
     ...(busyMode !== undefined ? { directBusyMode: busyMode } : {}),
+    ...(patch.model !== undefined ? { directModel: patch.model } : {}),
   });
+  // 值已经落盘才去钉会话：钉不上（会话没起）只是这次没换，配置本身仍然有效。
+  if (patch.model !== undefined) host.applyDirectModel();
   return host.status();
+}
+
+/**
+ * 模型与工作区同一条规矩：宿主能列出目录时，选中的必须是其中之一。
+ *
+ * 两种情况放行：目录整体读不到，以及这个 provider 自己读失败（宿主只把失败的 provider
+ * 放进 failures，整体仍算可用）——那时「目录里没有」不代表模型已下架，拦下来只会把
+ * 一次无害的保存变成误报。
+ */
+async function assertModel(host: PanelActionHost, model: ModelRef | null): Promise<void> {
+  if (model === null) return;
+  const catalog = await host.models();
+  if (!catalog.available) return;
+  if (catalog.unavailableProviders.includes(model.provider)) return;
+  if (!catalog.items.some((item) => sameModelRef(item, model))) {
+    throw Object.assign(new Error('所选模型已不在宿主的模型目录里，请重新选择'), { code: 'invalid-config' });
+  }
 }

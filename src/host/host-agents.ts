@@ -9,6 +9,9 @@
  * 0.2.1 起 `AgentRegistry` 只剩 `get`/`list`，旧的 `roots()` 已删除，按它判定会得到
  * 恒空集合，把全部提醒静默关掉。
  *
+ * 同一份结构描述还声明了 Agent 上的会话模型入口（`model.select`）：宿主 `agents`
+ * 是唯一能按会话 id 取回活着 Agent 的服务，独立模式钉模型走它（ADR-0025）。
+ *
  * 两个语义不同的判据：
  * - `isRoot`（提问/长任务）：只排除**明确**是子代理的会话；拿不到来源时放行，宁可多
  *   提醒一条。
@@ -20,9 +23,18 @@ export interface HostAgentSession {
   readonly header?: { readonly origin?: unknown } | null;
 }
 
+/**
+ * Agent 自己的模型选择：只往这个会话追加一条 `model/selection` 事件，不改 DSH 的
+ * 全局默认模型（与 `sessionController.selectModel` 的区别见 ADR-0025）。
+ */
+export interface HostAgentModel {
+  select?(selection: { provider: string; model: string }): void;
+}
+
 export interface HostAgent {
   readonly id?: unknown;
   readonly session?: HostAgentSession | null;
+  readonly model?: HostAgentModel | null;
 }
 
 export interface HostAgents {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { en, fallbackTranslate, zh } from '../../src/client/locales.ts';
+import type { ModelCatalogView } from '../../src/shared/models.ts';
 import { MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES } from '../../src/client/constants.ts';
 import {
   createRpcCall,
@@ -19,6 +20,9 @@ import {
   MENU_SURFACE_CLASS,
   MENU_Z_INDEX,
   menuSurfaceStyle,
+  modelOptions,
+  modelRowId,
+  modelSelectionOf,
   placeMenu,
   standaloneSettingsLocked,
   unwrapResult,
@@ -224,7 +228,7 @@ test('文案：两种语言键集一致', () => {
 });
 
 test('文案：面板用到的文案都有翻译，且没有未使用的文案', () => {
-  const used = usedKeys(['index.ts', 'panel.ts', 'sections.ts']);
+  const used = usedKeys(['index.ts', 'panel.ts', 'sections.ts', 'rows.ts']);
   for (const label of dynamicLabels()) used.add(label);
   for (const label of used) {
     assert.equal(Object.hasOwn(en, label), true, `缺少文案：${label}`);
@@ -295,4 +299,65 @@ test('提醒等待时间：0 到 120 的整数分钟才通过，其余给出可�
     assert.equal(result.ok, false, bad);
     if (!result.ok) assert.deepEqual(result.params, { min: 0, max: 120 });
   }
+});
+
+const MODEL_CATALOG = {
+  available: true,
+  default: { provider: 'deepseek-account', model: 'deepseek-chat' },
+  items: [
+    { provider: 'deepseek-account', model: 'deepseek-chat', label: 'DeepSeek Chat', providerName: 'DeepSeek 账号' },
+    { provider: 'openrouter', model: 'x/y', label: 'X Y', providerName: 'OpenRouter' },
+  ],
+  unavailableProviders: [],
+};
+
+const MODEL_LABELS = { followDefault: '跟随 DSH 默认', missing: '已下架', unverified: '未校验' };
+
+test('模型下拉：第一项跟随 DSH 默认（说明写默认模型），其余带 provider 名', () => {
+  const options = modelOptions(MODEL_CATALOG, modelRowId('openrouter', 'x/y'), MODEL_LABELS);
+  assert.deepEqual(options, [
+    { value: '', label: '跟随 DSH 默认', hint: 'deepseek-account/deepseek-chat' },
+    { value: modelRowId('deepseek-account', 'deepseek-chat'), label: 'DeepSeek Chat', hint: 'DeepSeek 账号' },
+    { value: modelRowId('openrouter', 'x/y'), label: 'X Y', hint: 'OpenRouter' },
+  ]);
+  // 行键里带 / 的模型也能原样回查。
+  assert.deepEqual(
+    modelSelectionOf(modelRowId('openrouter', 'x/y'), MODEL_CATALOG),
+    { provider: 'openrouter', model: 'x/y' },
+  );
+});
+
+test('模型下拉：目录读不到时只留「跟随默认」，已保存的值补一行并标「未校验」', () => {
+  assert.deepEqual(modelOptions(null, '', MODEL_LABELS), [{ value: '', label: '跟随 DSH 默认' }]);
+  const gone = modelRowId('gone', 'model');
+  // 目录整体读不到：不能说它已下架。
+  assert.deepEqual(modelOptions(null, gone, MODEL_LABELS).at(-1), { value: gone, label: 'gone/model', hint: '未校验' });
+  // 目录读全了、就是没有这一个：可以标「已下架」。
+  assert.deepEqual(modelOptions(MODEL_CATALOG, gone, MODEL_LABELS).at(-1), { value: gone, label: 'gone/model', hint: '已下架' });
+  // provider 自己读失败：整体可用，但这一行仍未校验。
+  const partial = { ...MODEL_CATALOG, unavailableProviders: ['gone'] };
+  assert.deepEqual(modelOptions(partial, gone, MODEL_LABELS).at(-1)?.hint, '未校验');
+  // 认不出来的行键按「跟随默认」处理，不把脏值发给宿主。
+  assert.equal(modelSelectionOf(gone, MODEL_CATALOG), null);
+  assert.equal(modelSelectionOf('', MODEL_CATALOG), null);
+});
+
+test('模型下拉：形状不对的行丢掉，重复行只留一条', () => {
+  // 宿主返回的是外部输入：面板仍按字段类型逐行筛，脏行不该变成一行乱码。
+  const options = modelOptions({
+    available: true,
+    default: null,
+    unavailableProviders: [],
+    items: [
+      { provider: 'p', model: 'm', label: 'M', providerName: 'P' },
+      { provider: 'p', model: 'm', label: '重复', providerName: 'P' },
+      { provider: 'p' },
+      { model: 'm2' },
+      null,
+    ],
+  } as unknown as ModelCatalogView, '', { followDefault: '默认', missing: '已下架', unverified: '未校验' });
+  assert.deepEqual(options, [
+    { value: '', label: '默认' },
+    { value: modelRowId('p', 'm'), label: 'M', hint: 'P' },
+  ]);
 });

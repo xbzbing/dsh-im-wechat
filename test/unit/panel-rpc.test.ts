@@ -10,15 +10,20 @@ interface Harness {
   route: PanelRoute;
   calls: string[];
   warnings: unknown[][];
+  /** 面板动作端口：个别用例会替换某一项来模拟失败。 */
+  host: Record<string, unknown>;
 }
 
-function harness(): Harness {
+function harness(options: { recordSave?: boolean } = {}): Harness {
   const calls: string[] = [];
   const warnings: unknown[][] = [];
   /** 面板动作端口：记录真正落到宿主的那几个动作，`save`/`sync` 这类内部管道不记。 */
   const host = {
     status: () => ({ contract: 1, loggedIn: false, login: { phase: 'idle', refreshed: 0 } }),
-    save: async () => undefined,
+    save: async () => {
+      // 默认不记账（内部管道）；模型用例要断言「先落盘再钉会话」。
+      if (options.recordSave === true) calls.push('save');
+    },
     reminders: () => ({ configure: (patch: unknown) => calls.push(`question:${JSON.stringify(patch)}`) }),
     longTasks: () => ({ setThresholdMinutes: (minutes: number) => calls.push(`longtask:${minutes}`) }),
     setEnabled: (enabled: boolean) => calls.push(`enabled:${enabled}`),
@@ -32,6 +37,14 @@ function harness(): Harness {
     defaultWorkspaceId: () => '',
     setDirectWorkspaceId: (value: string) => calls.push(`directWorkspace:${value}`),
     setDirectBusyMode: (value: string) => calls.push(`directBusyMode:${value}`),
+    setDirectModel: (value: unknown) => calls.push(`directModel:${JSON.stringify(value)}`),
+    applyDirectModel: () => calls.push('applyDirectModel'),
+    models: async () => ({
+      available: true,
+      default: { provider: 'p1', model: 'm1' },
+      items: [{ provider: 'p1', model: 'm1', label: 'M1', providerName: 'P1' }],
+      unavailableProviders: [],
+    }),
     resetDirect: async () => {
       calls.push('resetDirect');
     },
@@ -76,7 +89,7 @@ function harness(): Harness {
   };
   registerPanelRpc(ctx, { runtime: runtime as never, logger: { warn: (...args: unknown[]) => warnings.push(args) } });
   assert.ok(route);
-  return { route, calls, warnings };
+  return { route, calls, warnings, host: host as unknown as Record<string, unknown> };
 }
 
 function envelope(method: unknown, payload: unknown = {}): string {
@@ -166,6 +179,46 @@ test('独立模式设置转发给运行期，非法值在边界挡住', async ()
   assert.equal(badWorkspace.result.error.code, 'invalid-config');
   const badReset = await call(h, envelope(ENDPOINTS.DIRECT_SET, { reset: 'yes' }));
   assert.equal(badReset.result.error.code, 'invalid-config');
+});
+
+test('独立模式的模型：能存、能清空（null），非法形状在边界挡住', async () => {
+  const h = harness({ recordSave: true });
+  const saved = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: { provider: 'p1', model: 'm1' } }));
+  assert.equal(saved.result.ok, true);
+  // 顺序：先落盘，再钉会话（落盘失败还去钉，重启后就对不上了）。
+  assert.deepEqual(h.calls, ['directModel:{"provider":"p1","model":"m1"}', 'save', 'applyDirectModel']);
+
+  // null 是「跟随 DSH 默认」，必须能存进去，不能被当成没填。
+  h.calls.length = 0;
+  const cleared = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: null }));
+  assert.equal(cleared.result.ok, true);
+  assert.deepEqual(h.calls, ['directModel:null', 'save', 'applyDirectModel']);
+
+  const catalog = await call(h, envelope(ENDPOINTS.MODELS_LIST));
+  assert.deepEqual((catalog.result as { value: { items: unknown[] } }).value.items.length, 1);
+
+  // 目录里没有的模型：宿主不接受，面板要重新选。
+  h.calls.length = 0;
+  const missing = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: { provider: 'p9', model: 'm9' } }));
+  assert.equal(missing.result.error.code, 'invalid-config');
+  assert.deepEqual(h.calls, []);
+
+  const badShape = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: { provider: 'p1' } }));
+  assert.equal(badShape.result.error.code, 'invalid-config');
+  const badType = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: 'p1/m1' }));
+  assert.equal(badType.result.error.code, 'invalid-config');
+  const emptyHalf = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: { provider: ' ', model: 'm1' } }));
+  assert.equal(emptyHalf.result.error.code, 'invalid-config');
+});
+
+test('独立模式的模型：落盘失败就不去钉会话，错误照常回给面板', async () => {
+  const h = harness();
+  h.host.save = async () => {
+    throw new Error('disk full');
+  };
+  const result = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: { provider: 'p1', model: 'm1' } }));
+  assert.equal(result.result.ok, false);
+  assert.deepEqual(h.calls, ['directModel:{"provider":"p1","model":"m1"}']);
 });
 
 test('入参校验：验证码不能为空、enabled 必须是布尔', async () => {

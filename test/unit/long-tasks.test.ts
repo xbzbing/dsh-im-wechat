@@ -266,25 +266,49 @@ test('只取可见文本块', () => {
   assert.equal(textFromAssistantMessage(null), '');
 });
 
-test('根会话识别：未知服务放行，已知服务按 roots 判断', () => {
+test('根会话按会话来源判定，不依赖已删除的 agents.roots()', () => {
   const roots = new RootAgents();
-  assert.equal(roots.isRoot('any'), true);
-  roots.attach({ roots: () => [{ id: 's1' }] });
-  assert.equal(roots.isRoot('s1'), true);
-  assert.equal(roots.isRoot('s2'), false);
-  assert.equal(roots.isRoot(null), false);
+  const rootAgent = { id: 's1', session: { header: { origin: undefined } } };
+  const childAgent = { id: 's2', session: { header: { origin: 'subagent' } } };
+  // 真实 0.2.2 的 AgentRegistry 只有 get/list：按旧 roots() 判定会得到恒空集合。
+  const service = {
+    get: (id: string) => [rootAgent, childAgent].find((agent) => agent.id === id),
+    list: () => [rootAgent, childAgent],
+  };
+
+  // 拿不到来源时：提醒类放行，授权类拒绝（失败关闭）。
+  assert.equal(roots.isRoot(rootAgent), true);
+  assert.equal(roots.isRoot({ id: 'x' }), true);
+  assert.equal(roots.canApprove({ id: 'x' }), false);
+  assert.equal(roots.canApprove(rootAgent), true);
+
+  roots.attach(service);
+  assert.equal(roots.isRoot(rootAgent), true);
+  assert.equal(roots.isRoot(childAgent), false);
+  assert.equal(roots.canApprove(rootAgent), true);
+  assert.equal(roots.canApprove(childAgent), false);
+  assert.equal(roots.isRootSession('s1'), true);
+  assert.equal(roots.isRootSession('s2'), false);
+  // 取不到会话（已销毁）不据此拦截提醒。
+  assert.equal(roots.isRootSession('gone'), true);
+  assert.equal(roots.isRootSession(null), false);
+
   roots.attach(null);
-  assert.equal(roots.isRoot('s2'), true);
+  // 判据读的是请求自带的会话来源，不依赖服务：服务解挂后结论不变。
+  assert.equal(roots.isRoot(childAgent), false);
+  assert.equal(roots.canApprove(rootAgent), true);
+  assert.equal(roots.canApprove(null), false);
 });
 
-test('agents 服务抛错时退化成放行而不是崩溃', () => {
+test('agents 服务抛错时：提醒放行、授权拒绝，都不崩溃', () => {
   const roots = new RootAgents();
   roots.attach({
-    roots: () => {
+    get: () => {
       throw new Error('boom');
     },
   });
-  assert.equal(roots.isRoot('x'), true);
+  assert.equal(roots.isRootSession('x'), true);
+  assert.equal(roots.canApprove({ id: 'x' }), false);
 });
 
 test('失败原因带进提醒：额度用尽这类原文照发', async () => {

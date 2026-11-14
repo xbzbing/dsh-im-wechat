@@ -144,7 +144,8 @@ export class WeixinRuntime {
     this.#reminders = new ReminderCenter({
       send: (text) => this.#owner.send(text),
       recipient: () => this.#owner.recipient(),
-      isRoot: (agentId) => this.#roots.isRoot(agentId),
+      isRoot: (agent) => this.#roots.isRoot(agent),
+      canApprove: (agent) => this.#roots.canApprove(agent),
       isActive: () => this.#ownFeaturesActive(),
       logger: this.#logger,
       now: this.#now,
@@ -154,7 +155,7 @@ export class WeixinRuntime {
     this.#longTasks = new LongTaskNotifier({
       send: (text) => this.#owner.send(text),
       recipient: () => this.#owner.recipient(),
-      isRoot: (sessionId) => this.#roots.isRoot(sessionId),
+      isRoot: (sessionId) => this.#roots.isRootSession(sessionId),
       now: this.#now,
       logger: this.#logger,
       thresholdMinutes: this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
@@ -267,13 +268,9 @@ export class WeixinRuntime {
     return this.#dir;
   }
 
-  /** `agents` 服务接入（index.ts 的子 fiber）：根会话集合随服务就绪与 agent 生命周期刷新。 */
+  /** `agents` 服务接入（index.ts 的子 fiber）：根会话按会话来源判定，不缓存集合。 */
   attachAgents(agents: HostAgents | null): void {
     this.#roots.attach(agents);
-  }
-
-  refreshRoots(): void {
-    this.#roots.refresh();
   }
 
   /** `sessionController` 服务接入（index.ts 的子 fiber）：独立模式直接往会话里提交消息。 */

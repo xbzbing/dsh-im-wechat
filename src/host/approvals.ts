@@ -26,7 +26,8 @@ export type ApprovalNext = () => Promise<unknown>;
 export interface ApprovalBrokerOptions {
   send: (text: string) => Promise<boolean>;
   recipient: () => string | null;
-  isRoot: (agentId: string | null) => boolean;
+  /** 授权只认根会话；**拿不到来源时拒绝**（安全边界，缺省失败关闭）。 */
+  canApprove: (agent: unknown) => boolean;
   isActive?: () => boolean;
   enabled?: () => boolean;
   delayMs?: () => number;
@@ -83,8 +84,7 @@ export class ApprovalBroker {
   async handle(request: ApprovalRequest, next: ApprovalNext, active: boolean): Promise<unknown> {
     if (!active || this.#closed || !this.#takesOver()) return next();
     if (this.#options.recipient() === null) return next();
-    const agentId = typeof request.agent?.id === 'string' ? request.agent.id : null;
-    if (!this.#options.isRoot(agentId)) return next();
+    if (!this.#options.canApprove(request.agent)) return next();
 
     const original = request.signal;
     const local = new AbortController();

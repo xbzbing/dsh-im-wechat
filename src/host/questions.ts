@@ -36,8 +36,8 @@ export interface QuestionBrokerOptions {
   send: (text: string) => Promise<boolean>;
   /** 收件人（主人）；未登录/停用时应返回 null，此时完全不接管。 */
   recipient: () => string | null;
-  /** 只提醒根会话（子代理的提问不打扰主人）。 */
-  isRoot: (agentId: string | null) => boolean;
+  /** 只提醒根会话（子代理的提问不打扰主人）；拿不到来源时放行。 */
+  isRoot: (agent: unknown) => boolean;
   /** 当前是否仍然允许接管；发送提醒期间可能被停用/切到核心。 */
   isActive?: () => boolean;
   /** 面板上的「问题与审批提醒」开关：关掉后一律交回 Web。 */
@@ -150,8 +150,7 @@ export class QuestionBroker {
     if (questions.length === 0) return next();
     const recipient = this.#options.recipient();
     if (recipient === null) return next();
-    const agentId = typeof request.agent?.id === 'string' ? request.agent.id : null;
-    if (!this.#options.isRoot(agentId)) return next();
+    if (!this.#options.isRoot(request.agent)) return next();
 
     // 先把信号换成 union：Web 端与宿主拿到的是同一个可被我们撤销的信号。
     const original = request.signal;

@@ -100,6 +100,4 @@ function registerHostListeners(ctx: PluginContext, runtime: WeixinRuntime): void
     runtime.handleApproval(request as Parameters<WeixinRuntime['handleApproval']>[0], next)) as (...args: never[]) => unknown, { prepend: true });
   ctx.on('session/event', ((session: unknown, event: unknown) =>
     runtime.handleSessionEvent(session, event)) as (...args: never[]) => unknown, { global: true });
-  ctx.on('agent/created', (() => runtime.refreshRoots()) as (...args: never[]) => unknown, { global: true });
-  ctx.on('agent/disposed', (() => runtime.refreshRoots()) as (...args: never[]) => unknown, { global: true });
 }

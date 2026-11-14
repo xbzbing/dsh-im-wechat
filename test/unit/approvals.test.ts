@@ -16,7 +16,7 @@ function harness(options: { sent?: boolean; delayMs?: number; enabled?: boolean;
       return options.sent !== false;
     },
     recipient: () => 'owner-1',
-    isRoot: () => true,
+    canApprove: () => true,
     now: () => 1_000,
     ...(options.delayMs !== undefined ? { delayMs: () => options.delayMs! } : {}),
     ...(options.enabled !== undefined ? { enabled: () => options.enabled! } : {}),
@@ -100,7 +100,7 @@ test('非根会话不接管', async () => {
       return true;
     },
     recipient: () => 'owner-1',
-    isRoot: () => false,
+    canApprove: () => false,
   });
   const outcome = await broker.handle(request(), async () => 'unavailable', true);
   assert.equal(outcome, 'unavailable');

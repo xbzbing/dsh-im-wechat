@@ -16,7 +16,10 @@ import { DEFAULT_QUESTION_DELAY_MINUTES } from './config.ts';
 export interface ReminderCenterOptions {
   send: (text: string) => Promise<boolean>;
   recipient: () => string | null;
-  isRoot: (agentId: string | null) => boolean;
+  /** 提醒类根会话判据（提问）：拿不准时放行。 */
+  isRoot: (agent: unknown) => boolean;
+  /** 授权类根会话判据：拿不准时拒绝（失败关闭）。 */
+  canApprove: (agent: unknown) => boolean;
   isActive: () => boolean;
   logger?: QuestionLogger;
   now: () => number;
@@ -37,15 +40,14 @@ export class ReminderCenter {
     const shared = {
       send: options.send,
       recipient: options.recipient,
-      isRoot: options.isRoot,
       isActive: options.isActive,
       enabled: () => this.#enabled,
       delayMs: () => this.#delayMinutes * 60_000,
       logger: options.logger,
       now: options.now,
     };
-    this.#questions = new QuestionBroker(shared);
-    this.#approvals = new ApprovalBroker(shared);
+    this.#questions = new QuestionBroker({ ...shared, isRoot: options.isRoot });
+    this.#approvals = new ApprovalBroker({ ...shared, canApprove: options.canApprove });
   }
 
   get enabled(): boolean {

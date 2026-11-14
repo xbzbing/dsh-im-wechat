@@ -144,7 +144,7 @@ export class QuestionBroker {
         if (early.kind === 'aborted') throw cancellation(request);
       }
 
-      const sent = await this.#send(text).catch(() => false);
+      const sent = await this.#options.send(text).catch(() => false);
       // 发送是异步的；这期间可能已经停用/切到核心，cancelAll 看不到尚不存在的 pending。
       // 这里再判一次，避免给已关闭的插件挂一条待答。
       if (this.#closed || (this.#options.isActive !== undefined && !this.#options.isActive())) {
@@ -267,10 +267,6 @@ export class QuestionBroker {
   close(): void {
     this.#closed = true;
     this.cancelAll();
-  }
-
-  async #send(text: string): Promise<boolean> {
-    return this.#options.send(text);
   }
 
   /** 面板开关：关掉就完全不接管，与没装插件一致。 */

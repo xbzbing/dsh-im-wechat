@@ -166,7 +166,7 @@ export interface StoredConfig {
 
 export const STORED_CONFIG_VERSION = 1;
 
-/** 面板设置的持久化：只存面板能改的三项，其余配置归 profile 管。 */
+/** 面板设置的持久化：只存面板能改的几项，其余配置归 profile 管。 */
 export class LocalConfigStore {
   readonly #path: string;
   readonly #logger: StateLogger | undefined;

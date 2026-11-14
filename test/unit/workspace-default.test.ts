@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { WeixinRuntime } from '../../src/host/runtime.ts';
+import { saveDirect } from '../../src/host/panel-actions.ts';
 import type { WorkspaceRegistry } from '../../src/host/runtime-status.ts';
 import { LoginStateStore } from '../../src/host/state/login-state.ts';
 import { LOGIN, OWNER, fakeApi, waitFor, withDir } from './helpers/runtime-harness.ts';
@@ -109,7 +110,7 @@ test('独立模式：清空工作区选择后回到默认的「微信会话」',
     await runtime.start();
     await waitFor(() => runtime.status().direct.workspaceId === 'ws-1', '默认工作区生效');
 
-    const cleared = await runtime.setDirect({ workspaceId: '' });
+    const cleared = await saveDirect(runtime.panelActions(), { workspaceId: '' });
     assert.equal(cleared.direct.workspaceId, 'ws-1');
     await runtime.stop();
   });
@@ -141,7 +142,7 @@ test('独立模式：面板保存默认工作区时落成空值，重建后仍�
     await runtime.start();
     await waitFor(() => runtime.status().direct.workspaceId === 'ws-1', '默认工作区生效');
 
-    const saved = await runtime.setDirect({ workspaceId: 'ws-1' });
+    const saved = await saveDirect(runtime.panelActions(), { workspaceId: 'ws-1' });
     assert.equal(saved.direct.workspaceId, 'ws-1');
     const stored = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8'));
     assert.equal(stored.directWorkspaceId, '', '默认工作区不写成显式 id，换 id 后仍跟随默认');

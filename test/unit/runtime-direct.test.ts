@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { WeixinRuntime } from '../../src/host/runtime.ts';
+import { saveDirect } from '../../src/host/panel-actions.ts';
 import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
 import { LoginStateStore } from '../../src/host/state/login-state.ts';
 import type { PromptPart } from '../../src/host/prompt-parts.ts';
@@ -171,7 +172,7 @@ test('独立模式：回合在跑时的新消息默认插队，面板改过就�
   await withDir(async (dir) => {
     const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: fakeApi().createApi });
     assert.equal(runtime.status().direct?.busyMode, 'steer');
-    await runtime.setDirect({ busyMode: 'queue' });
+    await saveDirect(runtime.panelActions(), { busyMode: 'queue' });
     assert.equal(runtime.status().direct?.busyMode, 'queue');
     await runtime.stop();
   });

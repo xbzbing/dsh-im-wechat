@@ -15,6 +15,27 @@ interface Harness {
 function harness(): Harness {
   const calls: string[] = [];
   const warnings: unknown[][] = [];
+  /** 面板动作端口：记录真正落到宿主的那几个动作，`save`/`sync` 这类内部管道不记。 */
+  const host = {
+    status: () => ({ contract: 1, loggedIn: false, login: { phase: 'idle', refreshed: 0 } }),
+    save: async () => undefined,
+    reminders: () => ({ configure: (patch: unknown) => calls.push(`question:${JSON.stringify(patch)}`) }),
+    longTasks: () => ({ setThresholdMinutes: (minutes: number) => calls.push(`longtask:${minutes}`) }),
+    setEnabled: (enabled: boolean) => calls.push(`enabled:${enabled}`),
+    setSuperagent: (enabled: boolean) => calls.push(`superagent:${enabled}`),
+    startPipeline: () => undefined,
+    stopPipeline: async () => undefined,
+    stopTyping: () => undefined,
+    bindBridge: () => undefined,
+    syncOwnFeatures: () => undefined,
+    catalog: () => ({ items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true }),
+    defaultWorkspaceId: () => '',
+    setDirectWorkspaceId: (value: string) => calls.push(`directWorkspace:${value}`),
+    setDirectBusyMode: (value: string) => calls.push(`directBusyMode:${value}`),
+    resetDirect: async () => {
+      calls.push('resetDirect');
+    },
+  };
   const runtime = {
     status: () => ({ contract: 1, loggedIn: false, login: { phase: 'idle', refreshed: 0 } }),
     startLogin: async () => {
@@ -33,26 +54,7 @@ function harness(): Harness {
       calls.push('logout');
       return { contract: 1, loggedIn: false };
     },
-    setEnabled: async (enabled: boolean) => {
-      calls.push(`enabled:${enabled}`);
-      return { contract: 1, enabled };
-    },
-    setSuperagent: async (enabled: boolean) => {
-      calls.push(`superagent:${enabled}`);
-      return { contract: 1, superagent: enabled };
-    },
-    setLongTaskThreshold: async (minutes: number) => {
-      calls.push(`longtask:${minutes}`);
-      return { contract: 2, longTaskThresholdMinutes: minutes };
-    },
-    setQuestionSettings: async (patch: { enabled?: boolean; delayMinutes?: number }) => {
-      calls.push(`question:${JSON.stringify(patch)}`);
-      return { contract: 4, questionReminders: patch.enabled ?? true, questionDelayMinutes: patch.delayMinutes ?? 5 };
-    },
-    setDirect: async (patch: { workspaceId?: string; busyMode?: string; reset?: boolean }) => {
-      calls.push(`direct:${JSON.stringify(patch)}`);
-      return { contract: 3, direct: { bound: false, workspaceId: patch.workspaceId ?? '', busyMode: patch.busyMode ?? 'queue', running: false, available: true } };
-    },
+    panelActions: () => host,
     workspaces: () => ({ items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true }),
     workspacesView: async () => ({ items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true }),
   };
@@ -153,11 +155,9 @@ test('登出与取消登录两个端点也转发给运行期', async () => {
 test('独立模式设置转发给运行期，非法值在边界挡住', async () => {
   const h = harness();
   await call(h, envelope(ENDPOINTS.DIRECT_SET, { workspaceId: 'w1', busyMode: 'steer' }));
+  assert.deepEqual(h.calls, ['directWorkspace:w1', 'directBusyMode:steer']);
   await call(h, envelope(ENDPOINTS.DIRECT_SET, { reset: true }));
-  assert.deepEqual(h.calls, [
-    'direct:{"workspaceId":"w1","busyMode":"steer"}',
-    'direct:{"reset":true}',
-  ]);
+  assert.deepEqual(h.calls, ['directWorkspace:w1', 'directBusyMode:steer', 'resetDirect']);
   const list = await call(h, envelope(ENDPOINTS.WORKSPACES_LIST));
   assert.deepEqual((list.result as { value: unknown }).value, { items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true });
   const badMode = await call(h, envelope(ENDPOINTS.DIRECT_SET, { busyMode: 'interrupt' }));

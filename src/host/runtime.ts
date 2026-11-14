@@ -26,7 +26,6 @@ import { DefaultWorkspace, WORKSPACE_ERROR_PREFIX } from './workspace-default.ts
 import type { RuntimeDeps, RuntimeLogger, RuntimeStatus, WorkspaceCatalog, WorkspaceRegistry } from './runtime-status.ts';
 import { TypingIndicator } from './typing.ts';
 import { ReminderCenter } from './reminder-center.ts';
-import { saveDirect, saveEnabled, saveLongTask, saveQuestionSettings, saveSuperagent } from './panel-actions.ts';
 import type { PanelActionHost } from './panel-actions.ts';
 import type { QuestionNext, QuestionRequest } from './questions.ts';
 import type { ApprovalNext, ApprovalRequest } from './approvals.ts';
@@ -249,8 +248,12 @@ export class WeixinRuntime {
       save: (patch) => this.#localConfig.save(patch),
       reminders: () => this.#reminders,
       longTasks: () => this.#longTasks,
-      enabled: (value) => (value === undefined ? this.#enabled : (this.#enabled = value)),
-      superagent: (value) => (value === undefined ? this.#superagent : (this.#superagent = value)),
+      setEnabled: (value) => {
+        this.#enabled = value;
+      },
+      setSuperagent: (value) => {
+        this.#superagent = value;
+      },
       startPipeline: () => this.#pipeline.start(),
       stopPipeline: () => this.#pipeline.stop(),
       stopTyping: () => this.#typing.stopAll(),
@@ -258,12 +261,12 @@ export class WeixinRuntime {
       syncOwnFeatures: (reason) => this.#syncOwnFeatures(reason),
       catalog: () => listWorkspaces(this.#workspaceRegistry),
       defaultWorkspaceId: () => this.#defaultWorkspace.id,
-      directWorkspaceId: (value) => (value === undefined
-        ? this.#directWorkspaceId
-        : (this.#directWorkspaceId = value)),
-      directBusyMode: (value) => (value === undefined
-        ? this.#directBusyMode
-        : (this.#directBusyMode = value)),
+      setDirectWorkspaceId: (value) => {
+        this.#directWorkspaceId = value;
+      },
+      setDirectBusyMode: (value) => {
+        this.#directBusyMode = value;
+      },
       resetDirect: () => this.#direct.reset(),
     };
   }
@@ -439,29 +442,9 @@ export class WeixinRuntime {
     return this.status();
   }
 
-  /** 保存「接入我的超级助理」开关：立即切换，不重连微信。 */
-  async setSuperagent(enabled: boolean): Promise<RuntimeStatus> {
-    return saveSuperagent(this.#panel, enabled);
-  }
-
-  /** 面板保存「问题与审批提醒」开关与等待时间：立即生效，不重连微信。 */
-  async setQuestionSettings(patch: { enabled?: boolean; delayMinutes?: number }): Promise<RuntimeStatus> {
-    return saveQuestionSettings(this.#panel, patch);
-  }
-
-  /** 保存长任务阈值（分钟）：就地生效，不重连微信。 */
-  async setLongTaskThreshold(minutes: number): Promise<RuntimeStatus> {
-    return saveLongTask(this.#panel, minutes);
-  }
-
-  /** 面板保存独立模式设置：工作区、提交方式，或重置绑定（ADR-0009）。 */
-  async setDirect(patch: { workspaceId?: string; busyMode?: BusyMode; reset?: boolean }): Promise<RuntimeStatus> {
-    return saveDirect(this.#panel, patch);
-  }
-
-  /** 面板开关：停用后不再收消息，桥也向核心报告不可用。 */
-  async setEnabled(enabled: boolean): Promise<RuntimeStatus> {
-    return saveEnabled(this.#panel, enabled);
+  /** 面板动作的端口：RPC 层把请求交给 `panel-actions.ts`，这里只提供状态与副作用。 */
+  panelActions(): PanelActionHost {
+    return this.#panel;
   }
 
   async #handleConfirmed(state: LoginState): Promise<void> {

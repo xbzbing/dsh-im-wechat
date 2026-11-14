@@ -7,6 +7,7 @@
  */
 
 import { errorDetail, injectOptional } from './host-context.ts';
+import { saveDirect, saveEnabled, saveLongTask, saveQuestionSettings, saveSuperagent } from './panel-actions.ts';
 import type { PanelRoute, PluginContext, PluginLogger } from './host-context.ts';
 import type { WeixinRuntime } from './runtime.ts';
 
@@ -115,12 +116,12 @@ async function handleEndpoint(
     case ENDPOINTS.ENABLED_SET: {
       const enabled = payloadOf(payload).enabled;
       if (typeof enabled !== 'boolean') throw codedError('enabled 必须是布尔值', 'invalid-config');
-      return runtime.setEnabled(enabled);
+      return saveEnabled(runtime.panelActions(), enabled);
     }
     case ENDPOINTS.SUPERAGENT_SET: {
       const enabled = payloadOf(payload).enabled;
       if (typeof enabled !== 'boolean') throw codedError('enabled 必须是布尔值', 'invalid-config');
-      return runtime.setSuperagent(enabled);
+      return saveSuperagent(runtime.panelActions(), enabled);
     }
     case ENDPOINTS.DIRECT_SET: {
       const record = payloadOf(payload);
@@ -139,7 +140,7 @@ async function handleEndpoint(
         if (typeof record.reset !== 'boolean') throw codedError('reset 必须是布尔值', 'invalid-config');
         patch.reset = record.reset;
       }
-      return runtime.setDirect(patch);
+      return saveDirect(runtime.panelActions(), patch);
     }
     case ENDPOINTS.QUESTION_SET: {
       const record = payloadOf(payload);
@@ -157,14 +158,14 @@ async function handleEndpoint(
       if (patch.enabled === undefined && patch.delayMinutes === undefined) {
         throw codedError('没有要保存的设置', 'invalid-config');
       }
-      return runtime.setQuestionSettings(patch);
+      return saveQuestionSettings(runtime.panelActions(), patch);
     }
     case ENDPOINTS.LONG_TASK_SET: {
       const minutes = payloadOf(payload).minutes;
       if (typeof minutes !== 'number' || !Number.isFinite(minutes)) {
         throw codedError('minutes 必须是数字', 'invalid-config');
       }
-      return runtime.setLongTaskThreshold(minutes);
+      return saveLongTask(runtime.panelActions(), minutes);
     }
     default:
       throw codedError(`未知的面板端点：${endpoint}`, 'unknown-endpoint');

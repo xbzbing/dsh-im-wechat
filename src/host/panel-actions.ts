@@ -22,8 +22,8 @@ export interface PanelActionHost {
   save(patch: Partial<StoredConfig>): Promise<unknown>;
   reminders(): ReminderCenter;
   longTasks(): LongTaskNotifier;
-  enabled(value?: boolean): boolean;
-  superagent(value?: boolean): boolean;
+  setEnabled(value: boolean): void;
+  setSuperagent(value: boolean): void;
   startPipeline(): void;
   stopPipeline(): Promise<void>;
   stopTyping(): void;
@@ -32,14 +32,14 @@ export interface PanelActionHost {
   syncOwnFeatures(reason: string): void;
   catalog(): WorkspaceCatalog;
   defaultWorkspaceId(): string;
-  directWorkspaceId(value?: string): string;
-  directBusyMode(value?: BusyMode): BusyMode;
+  setDirectWorkspaceId(value: string): void;
+  setDirectBusyMode(value: BusyMode): void;
   resetDirect(): Promise<void>;
 }
 
 /** 面板开关：停用后不再收消息，桥也向核心报告不可用。 */
 export async function saveEnabled(host: PanelActionHost, enabled: boolean): Promise<RuntimeStatus> {
-  host.enabled(enabled);
+  host.setEnabled(enabled);
   await host.save({ enabled });
   if (enabled) host.startPipeline();
   else {
@@ -52,7 +52,7 @@ export async function saveEnabled(host: PanelActionHost, enabled: boolean): Prom
 
 /** 保存「接入我的超级助理」开关：立即切换，不重连微信。 */
 export async function saveSuperagent(host: PanelActionHost, enabled: boolean): Promise<RuntimeStatus> {
-  host.superagent(enabled);
+  host.setSuperagent(enabled);
   // 切出核心接入后不会再有交付进来收尾，先把在途的输入状态取消。
   if (!enabled) host.stopTyping();
   await host.save({ superagent: enabled });
@@ -106,8 +106,8 @@ export async function saveDirect(
   const chosen = workspaceId !== undefined && workspaceId === host.defaultWorkspaceId() && workspaceId !== ''
     ? ''
     : workspaceId;
-  if (chosen !== undefined) host.directWorkspaceId(chosen);
-  if (busyMode !== undefined) host.directBusyMode(busyMode);
+  if (chosen !== undefined) host.setDirectWorkspaceId(chosen);
+  if (busyMode !== undefined) host.setDirectBusyMode(busyMode);
   if (patch.reset === true) await host.resetDirect();
   await host.save({
     ...(chosen !== undefined ? { directWorkspaceId: chosen } : {}),

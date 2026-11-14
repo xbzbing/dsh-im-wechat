@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { ILinkError } from '../../src/host/ilink/api.ts';
@@ -9,115 +6,8 @@ import type { ILinkApi } from '../../src/host/ilink/api.ts';
 import { SessionGuard } from '../../src/host/ilink/session-guard.ts';
 import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
 import { MESSAGES_PER_WINDOW, TOKEN_WINDOW_MS, WeixinBridge } from '../../src/host/superagent/bridge.ts';
-import type { BridgeHandle, Delivery } from '../../src/host/superagent/protocol.ts';
-
-interface Sent {
-  to: string;
-  text: string;
-}
-
-const ACCOUNT = 'bot@im.bot';
-const OWNER = 'owner-1';
-
-function delivery(overrides: Partial<Delivery> = {}): Delivery {
-  return {
-    protocol: 'my-superagent/v1',
-    id: 'delivery-1',
-    recipient: OWNER,
-    intent: 'result',
-    title: '完成',
-    body: '正文',
-    ...overrides,
-  };
-}
-
-interface Harness {
-  dir: string;
-  bridge: WeixinBridge;
-  sent: Sent[];
-  guard: SessionGuard;
-  tokens: ContextTokenStore;
-  images: Record<string, unknown>[];
-  uploads: string[];
-  warnings: string[];
-}
-
-async function harness(
-  options: {
-    failAt?: number[];
-    error?: Error;
-    withToken?: boolean;
-    noApi?: boolean;
-    noOwner?: boolean;
-    onDelivered?: (recipient: string) => void;
-    uploadStatus?: number;
-    uploadParam?: string;
-    uploadFails?: boolean;
-    maxText?: number;
-    // 模拟平台不回 message_id：回执不能编造一个。
-    noMessageId?: boolean;
-    sleep?: (ms: number) => Promise<void>;
-  } = {},
-): Promise<Harness> {
-  const dir = await mkdtemp(join(tmpdir(), 'dsh-im-wechat-bridge-'));
-  const sent: Sent[] = [];
-  const warnings: string[] = [];
-  const tokens = new ContextTokenStore({ dir });
-  if (options.withToken !== false) tokens.set(ACCOUNT, OWNER, 'ctx-1');
-  const guard = new SessionGuard();
-  let calls = 0;
-  const images: Record<string, unknown>[] = [];
-  const uploads: string[] = [];
-  const api = {
-    async sendMessage(message: { to_user_id: string; item_list?: Record<string, unknown>[] }) {
-      calls += 1;
-      if (options.failAt?.includes(calls)) throw options.error ?? new Error('boom');
-      const item = message.item_list?.[0];
-      if (item?.image_item !== undefined) {
-        images.push(item.image_item as Record<string, unknown>);
-        return options.noMessageId ? {} : { message_id: `wm-${calls}` };
-      }
-      sent.push({
-        to: message.to_user_id,
-        text: (item?.text_item as { text?: string } | undefined)?.text ?? '',
-      });
-      return options.noMessageId ? {} : { message_id: `wm-${calls}` };
-    },
-    async getUploadUrl() {
-      if (options.uploadFails) throw new ILinkError('api', 'getuploadurl 失败 ret=-1', { ret: -1 });
-      uploads.push('getuploadurl');
-      return { uploadParam: 'up', uploadFullUrl: 'https://novac2c.cdn.weixin.qq.com/c2c/upload?x=1' };
-    },
-  } as unknown as ILinkApi;
-  const uploadFetch = (async () => new Response('', { status: options.uploadStatus ?? 200, headers: { 'x-encrypted-param': options.uploadParam ?? 'dl-1' } })) as unknown as typeof globalThis.fetch;
-  const bridge = new WeixinBridge({
-    account: ACCOUNT,
-    api: () => (options.noApi ? null : api),
-    contextTokens: tokens,
-    guard,
-    maxText: options.maxText ?? 20,
-    ownerId: () => (options.noOwner ? undefined : OWNER),
-    ...(options.sleep ? { sleep: options.sleep } : {}),
-    uploadFetch,
-    logger: { warn: (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); } },
-    ...(options.onDelivered ? { onDelivered: options.onDelivered } : {}),
-  });
-  return { dir, bridge, sent, guard, tokens, images, uploads, warnings };
-}
-
-async function withHarness(
-  options: Parameters<typeof harness>[0],
-  run: (h: Harness) => Promise<void>,
-): Promise<void> {
-  const h = await harness(options);
-  try {
-    await run(h);
-  } finally {
-    // 等 context_token 的写盘队排空，否则删目录会与落盘撞上（ENOTEMPTY）。
-    await h.tokens.flush();
-    await rm(h.dir, { recursive: true, force: true });
-  }
-}
+import type { BridgeHandle } from '../../src/host/superagent/protocol.ts';
+import { ACCOUNT, OWNER, delivery, withHarness, withImage } from './bridge-harness.ts';
 
 test('正常交付：发出文本，回 sent 与平台消息 id', async () => {
   await withHarness({}, async (h) => {
@@ -181,7 +71,13 @@ test('闸门内不发送，回 auth-expired', async () => {
 test('单交付内分条按声明配额节流：每 10 条等一个窗口', async () => {
   // 核心只见一次 deliver，分条扇出发生在桥内部——配额必须由桥自己执行。
   const sleeps: number[] = [];
-  await withHarness({ maxText: 10, sleep: async (ms) => { sleeps.push(ms); } }, async (h) => {
+  let clock = 1_000_000;
+  await withHarness({
+    maxText: 10,
+    now: () => clock,
+    // 假时钟跟着等待前进，否则窗口永远不会滑出。
+    sleep: async (ms) => { sleeps.push(ms); clock += ms; },
+  }, async (h) => {
     const receipt = await h.bridge.deliver(delivery({ id: 'paced', title: '', body: 'x'.repeat(120) }));
     assert.equal(receipt.status, 'sent');
     assert.equal(h.sent.length, 12, '120 字按 10 字分 12 条');
@@ -352,12 +248,6 @@ test('交付进入投递流程就回调 onDelivered（收起正在输入）', as
     },
   );
 });
-
-const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]).toString('base64');
-
-function withImage(overrides: Partial<Delivery> = {}): Delivery {
-  return delivery({ title: '', body: 'A · Q 版抱鲸鱼', images: [{ mediaType: 'image/png', data: PNG_BASE64, name: 'a.png' }], ...overrides });
-}
 
 test('交付带图：先上传再发 image_item，然后才发文字', async () => {
   await withHarness({}, async (h) => {

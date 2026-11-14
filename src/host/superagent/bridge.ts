@@ -13,6 +13,7 @@ import { classifySendFailure, sendImage, sendText } from '../ilink/send.ts';
 import { DEFAULT_CDN_BASE_URL } from '../ilink/api.ts';
 import { CdnUploadError, uploadImage } from '../ilink/upload.ts';
 import type { ILinkApi } from '../ilink/api.ts';
+import type { SendFailure } from '../ilink/send.ts';
 import type { SessionGuard } from '../ilink/session-guard.ts';
 import type { ContextTokenStore } from '../state/context-tokens.ts';
 import {
@@ -29,6 +30,8 @@ import type {
   Receipt,
 } from './protocol.ts';
 import { MAX_TEXT_BYTES, composeDeliveryText, splitText } from './render.ts';
+import { SendQuota } from './quota.ts';
+import { healthWeight, sendHealthFor } from './send-health.ts';
 
 export const WEIXIN_PLATFORM = 'weixin';
 
@@ -83,10 +86,21 @@ export interface WeixinBridgeOptions {
   sleep?: (ms: number) => Promise<void>;
   /** 当前时刻（毫秒）；测试注入，生产用 Date.now。 */
   now?: () => number;
+  /**
+   * 一次交付的总截止时间，默认 10 分钟。
+   *
+   * 单条请求已有 30 秒超时，但图片上传是 3 次重试、分条还要等 60 秒配额窗口；没有
+   * 总截止时，一条注定失败的交付可以无限拖延并让核心的重试复用同一个未完成 promise。
+   * 到点后按「已发部分」回 `uncertain`、一条没发回 `failed`。
+   */
+  deliverDeadlineMs?: number;
 }
 
 /** 进度表只放最近 100 条，避免长时间运行后无界增长。 */
 const PROGRESS_LIMIT = 100;
+
+/** 交付级总截止：覆盖最坏的 4 张图 × 3 次 × 60 秒上传 + 分条配额等待。 */
+const DEFAULT_DELIVER_DEADLINE_MS = 10 * 60_000;
 
 function rememberBounded<T>(map: Map<string, T>, key: string, value: T): void {
   map.set(key, value);
@@ -120,6 +134,15 @@ export class WeixinBridge implements BridgeProvider {
   readonly #imageProgress = new Map<string, number>();
   /** 最后一张图发出去得到的平台消息 id：图片-only 交付的回执要用，断点续发时复用。 */
   readonly #imageMessageIds = new Map<string, string>();
+  /** 已成功或结果未知的交付：同一 id 再来一次时直接回旧回执，不再发第二遍。 */
+  readonly #receipts = new Map<string, Receipt>();
+  /** 每路流见过的最高修订号：低于它的交付一律不作任何平台操作。 */
+  readonly #streamRevisions = new Map<string, number>();
+  /** 发送侧观察到的健康状态；与轮询状态合并，成功交付后清除。 */
+  #sendHealth: { health: BridgeHealth; until?: number } | undefined;
+  /** bridge 级发送节奏：图片与文字、不同交付共用一个窗口。 */
+  readonly #quota: SendQuota | null;
+  readonly #deadlineMs: number;
   /** 平台没回 message_id 的告警节流：协议漂移只需要看见一次。 */
   #noIdWarnedAt: number | undefined;
   readonly #cdnBaseUrl: string;
@@ -144,6 +167,7 @@ export class WeixinBridge implements BridgeProvider {
     this.#uploadFetch = options.uploadFetch;
     this.#sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     this.#now = options.now ?? Date.now;
+    this.#deadlineMs = options.deliverDeadlineMs ?? DEFAULT_DELIVER_DEADLINE_MS;
     this.capabilities = {
       // 微信客户端原生渲染 Markdown（表格、代码块、标题都支持），见 ADR-0008。
       markdown: 'full',
@@ -164,6 +188,10 @@ export class WeixinBridge implements BridgeProvider {
         images: true,
       },
     };
+    const quota = this.capabilities.quotas?.[0];
+    this.#quota = quota === undefined
+      ? null
+      : new SendQuota({ max: quota.max, windowMs: quota.windowMs, now: this.#now, sleep: this.#sleep });
   }
 
   /** 注册成功后由装配层挂上句柄与核心能力声明。 */
@@ -201,14 +229,17 @@ export class WeixinBridge implements BridgeProvider {
     if (!this.#api()) {
       return { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
     }
-    return this.#health?.() ?? { state: 'ok' };
+    const reported = this.#health?.() ?? { state: 'ok' as const };
+    const send = this.#activeSendHealth();
+    // 发送侧只能补充、不能覆盖轮询已经看到的更重状态（例如被踢下线）。
+    return send !== undefined && healthWeight(send.state) > healthWeight(reported.state) ? send : reported;
   }
 
   async deliver(delivery: Delivery): Promise<Receipt> {
-    // 交付一进投递流程，模型的产出就要到微信了，输入状态失去意义（ADR-0007）。
-    this.#onDelivered?.(delivery.recipient);
     const existing = this.#inflight.get(delivery.id);
     if (existing) return existing;
+    const cached = this.#receipts.get(delivery.id);
+    if (cached) return { ...cached };
     const task = this.#deliverOnce(delivery).finally(() => {
       this.#inflight.delete(delivery.id);
     });
@@ -223,10 +254,14 @@ export class WeixinBridge implements BridgeProvider {
     recipient: string,
     contextToken: string | undefined,
     remember: (messageId: string | undefined) => void,
+    deadlineAt: number,
   ): Promise<Pick<Receipt, 'status' | 'error' | 'errorCode'> | undefined> {
     const images = delivery.images ?? [];
     let sent = this.#imageProgress.get(delivery.id) ?? 0;
     for (; sent < images.length; sent += 1) {
+      if (this.#now() >= deadlineAt) return this.#timeoutFailure(delivery, sent > 0);
+      const blocked = this.#blockedFailure();
+      if (blocked !== undefined) return blocked;
       const image = images[sent]!;
       try {
         const upload = await uploadImage(
@@ -234,18 +269,25 @@ export class WeixinBridge implements BridgeProvider {
           { data: Buffer.from(image.data, 'base64'), toUserId: recipient },
           { cdnBaseUrl: this.#cdnBaseUrl, ...(this.#uploadFetch ? { fetch: this.#uploadFetch } : {}) },
         );
+        // 上传不是平台消息，不占配额；真正发出去之前才占一个窗口名额。
+        await this.#quota?.take();
+        if (this.#now() >= deadlineAt) return this.#timeoutFailure(delivery, sent > 0);
+        const paused = this.#blockedFailure();
+        if (paused !== undefined) return paused;
         const result = await sendImage(api, { to: recipient, upload, contextToken });
         if (result.messageId !== undefined) rememberBounded(this.#imageMessageIds, delivery.id, result.messageId);
         remember(result.messageId);
         rememberBounded(this.#imageProgress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
+        this.#recordSendFailure(error, failure);
         if (failure.certainty === 'uncertain') {
           this.#imageProgress.delete(delivery.id);
           this.#logger?.warn?.(`微信图片发送结果未知（${delivery.id}）`, failure.message);
           return { status: 'uncertain', error: failure.message };
         }
         const message = error instanceof CdnUploadError ? `图片上传失败：${error.message}` : failure.message;
+        if (failure.code === 'window-closed') this.#logWindowClosed(delivery.recipient);
         this.#logger?.warn?.(`微信图片发送失败（${delivery.id}）`, message);
         return { status: 'failed', errorCode: failure.code, error: message };
       }
@@ -280,52 +322,87 @@ export class WeixinBridge implements BridgeProvider {
       return { ...base, status: 'failed', errorCode: 'other', error: '收件人不是登录主人' };
     }
 
+    // 同一路流的低修订是过期内容：核心自己会丢，桥再兜一层，绝不产生平台操作。
+    const stream = delivery.stream;
+    if (stream !== undefined) {
+      const highest = this.#streamRevisions.get(stream.id);
+      if (highest !== undefined && stream.revision < highest) {
+        const stale: Receipt = { ...base, status: 'sent', messagesSent: 0 };
+        rememberBounded(this.#receipts, delivery.id, stale);
+        return { ...stale };
+      }
+      if (highest === undefined || stream.revision > highest) {
+        rememberBounded(this.#streamRevisions, stream.id, stream.revision);
+      }
+    }
+
+    // 交付一进投递流程，模型的产出就要到微信了，输入状态失去意义（ADR-0007）。
+    this.#onDelivered?.(recipient);
+
     const text = composeDeliveryText(delivery);
     const parts = splitText(text, this.#maxText);
     const images = delivery.images ?? [];
     // 没有正文也没有图：一条都没发出去，如实报 0 条，别让核心把这条算进额度。
-    if (parts.length === 0 && images.length === 0) return { ...base, status: 'sent', messagesSent: 0 };
+    if (parts.length === 0 && images.length === 0) {
+      const empty: Receipt = { ...base, status: 'sent', messagesSent: 0 };
+      rememberBounded(this.#receipts, delivery.id, empty);
+      return { ...empty };
+    }
 
     const contextToken = this.#contextTokens.get(this.account, recipient);
+    // 没有 token 时发送必然失败；先判空，别把图片一张张传上 CDN 再被拒。
+    if ((contextToken ?? '').trim() === '') {
+      this.#setSendHealth({ state: 'degraded', code: 'other', reason: '缺少 context_token，24 小时窗口已关闭' }, 300_000);
+      this.#logWindowClosed(recipient);
+      return { ...base, status: 'failed', errorCode: 'window-closed', error: '缺少 context_token：主人最近没有发过消息' };
+    }
 
+    const deadlineAt = this.#now() + this.#deadlineMs;
     // 每条发出去的消息的平台 id：引用其中任意一条都应认回这次交付（分条也不例外）。
     const messageIds: string[] = [];
     const remember = (id: string | undefined): void => { if (id !== undefined) messageIds.push(id); };
     // 图片先发：文字里通常写着「图见上」，图没到就发文字会让人以为没发。
     if (images.length > 0) {
-      const failure = await this.#sendImages(api, delivery, recipient, contextToken, remember);
-      if (failure) return { ...base, ...failure };
+      const failure = await this.#sendImages(api, delivery, recipient, contextToken, remember, deadlineAt);
+      if (failure) {
+        if (failure.status === 'uncertain') rememberBounded(this.#receipts, delivery.id, { ...base, ...failure });
+        return { ...base, ...failure };
+      }
       // 断点续发时图片阶段直接跳过，从上次记住的最后一张补回来。
       if (messageIds.length === 0) remember(this.#imageMessageIds.get(delivery.id));
     }
     let sent = this.#progress.get(delivery.id) ?? 0;
-    // 桥自己执行自己声明的配额：核心只见一次 deliver，按交付节流管不到分条扇出。
-    const quota = this.capabilities.quotas?.[0];
 
     for (; sent < parts.length; sent += 1) {
-      if (quota !== undefined && sent > 0 && sent % quota.max === 0) {
-        await this.#sleep(quota.windowMs);
-        // 等待期间可能被停用/暂停：复查，进度保留，核心重试时断点续发。
-        if (this.#isEnabled && !this.#isEnabled()) {
-          return { ...base, status: 'failed', errorCode: 'other', error: '插件已停用' };
-        }
-        if (this.#guard.isPaused(this.account)) {
-          return { ...base, status: 'failed', errorCode: 'auth-expired', error: 'token 已失效，已暂停发送' };
-        }
+      if (this.#now() >= deadlineAt) {
+        return { ...base, ...this.#timeoutFailure(delivery, sent > 0 || images.length > 0) };
       }
+      const blocked = this.#blockedFailure();
+      if (blocked !== undefined) return { ...base, ...blocked };
       try {
+        // 图片与文字共用一个 bridge 级窗口：核心看不到分条扇出，配额只能桥自己执行。
+        await this.#quota?.take();
+        if (this.#now() >= deadlineAt) {
+          return { ...base, ...this.#timeoutFailure(delivery, sent > 0 || images.length > 0) };
+        }
+        // 等待期间可能被停用/暂停：复查，进度保留，核心重试时断点续发。
+        const paused = this.#blockedFailure();
+        if (paused !== undefined) return { ...base, ...paused };
         const result = await sendText(api, { to: recipient, text: parts[sent], contextToken });
         remember(result.messageId);
         rememberBounded(this.#progress, delivery.id, sent + 1);
       } catch (error) {
         const failure = classifySendFailure(error);
+        this.#recordSendFailure(error, failure);
         if (failure.certainty === 'uncertain') {
           // 结果未知：核心不重发，进度与图片断点都已无意义，清掉不留死条目。
           this.#progress.delete(delivery.id);
           this.#imageProgress.delete(delivery.id);
           this.#imageMessageIds.delete(delivery.id);
           this.#logger?.warn?.(`微信发送结果未知（${delivery.id}）`, failure.message);
-          return { ...base, status: 'uncertain', error: failure.message };
+          const uncertain: Receipt = { ...base, status: 'uncertain', error: failure.message };
+          rememberBounded(this.#receipts, delivery.id, uncertain);
+          return uncertain;
         }
         // 确定失败：保留进度，核心重试时从断点续发。
         this.#logger?.warn?.(`微信发送失败（${delivery.id}）`, failure.message);
@@ -338,9 +415,11 @@ export class WeixinBridge implements BridgeProvider {
     this.#progress.delete(delivery.id);
     this.#imageProgress.delete(delivery.id);
     this.#imageMessageIds.delete(delivery.id);
+    // 有实际消息发出去，说明发送链路恢复；发送侧的降级状态可以清掉。
+    this.#sendHealth = undefined;
     // 平台没回 message_id：不编造，但让它在面板上留下一次痕迹（协议漂移探针）。
     if (messageIds.length === 0) this.#warnMissingMessageId(delivery.id);
-    return {
+    const receipt: Receipt = {
       ...base,
       status: 'sent',
       // 整条交付一共占了几条额度：中途失败的那几次回执是 failed，核心不据此记账，
@@ -348,6 +427,56 @@ export class WeixinBridge implements BridgeProvider {
       messagesSent: images.length + parts.length,
       ...(messageIds.length > 0 ? { bridgeMessageId: messageIds[messageIds.length - 1]!, bridgeMessageIds: messageIds } : {}),
     };
+    rememberBounded(this.#receipts, delivery.id, receipt);
+    return receipt;
+  }
+
+  /** 停用/登出期间的统一失败回执：调用方保留进度，核心重试时断点续发。 */
+  #blockedFailure(): Pick<Receipt, 'status' | 'error' | 'errorCode'> | undefined {
+    if (this.#isEnabled && !this.#isEnabled()) {
+      return { status: 'failed', errorCode: 'other', error: '插件已停用' };
+    }
+    if (this.#guard.isPaused(this.account)) {
+      return { status: 'failed', errorCode: 'auth-expired', error: 'token 已失效，已暂停发送' };
+    }
+    return undefined;
+  }
+
+  /**
+   * 交付级总截止到了：发过一部分就不能让核心重试（会重复打扰），回 `uncertain`；
+   * 一条都没发出去才回 `failed` 让核心重试。
+   */
+  #timeoutFailure(delivery: Delivery, sentAny: boolean): Pick<Receipt, 'status' | 'error' | 'errorCode'> {
+    this.#progress.delete(delivery.id);
+    this.#imageProgress.delete(delivery.id);
+    this.#imageMessageIds.delete(delivery.id);
+    this.#logger?.warn?.(`微信交付超时（${delivery.id}）`);
+    return sentAny
+      ? { status: 'uncertain', error: '发送超时：已发出的部分可能已送达' }
+      : { status: 'failed', errorCode: 'other', error: '发送超时：还没有发出任何消息' };
+  }
+
+  /** 发送失败回写健康状态：429/401 不再只在日志里，核心与面板都能看到。 */
+  #recordSendFailure(error: unknown, failure: SendFailure): void {
+    const mapped = sendHealthFor(error, failure);
+    if (mapped !== undefined) this.#setSendHealth(mapped.health, mapped.ttlMs);
+  }
+
+  #setSendHealth(health: BridgeHealth, ttlMs: number | undefined): void {
+    const current = this.#activeSendHealth();
+    // 已经确认下线（例如被踢）时，不被一次轻量的 degraded 覆盖。
+    if (current?.state === 'down' && health.state !== 'down') return;
+    this.#sendHealth = { health, ...(ttlMs === undefined ? {} : { until: this.#now() + ttlMs }) };
+  }
+
+  #activeSendHealth(): BridgeHealth | undefined {
+    const entry = this.#sendHealth;
+    if (entry === undefined) return undefined;
+    if (entry.until !== undefined && this.#now() >= entry.until) {
+      this.#sendHealth = undefined;
+      return undefined;
+    }
+    return entry.health;
   }
 
   /** 平台没回 message_id 时按小时告警一次：让协议漂移在面板上可见，而不是静默少一个 id。 */

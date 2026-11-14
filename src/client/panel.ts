@@ -140,6 +140,23 @@ export function WeixinSettingsPanel(props: any) {
     }
   }, [refresh, t]);
 
+  /** 面板动作模板：busy/错误/回读快照都一致，差异只在请求与成功后的草稿清理。 */
+  const applyAction = useCallback(async (name: string, call: () => Promise<any>, after?: (next: any) => void) => {
+    setBusy(name);
+    setActionError('');
+    try {
+      const next = await call();
+      requestSeq.current += 1;
+      setStatus(next);
+      after?.(next);
+    } catch (error) {
+      setActionError(errorText(t, error));
+      await refresh();
+    } finally {
+      setBusy('');
+    }
+  }, [refresh, t]);
+
   const login = status?.login ?? { phase: 'idle', refreshed: 0 };
   const qrData = useMemo(
     () => qrImageUrl(typeof login.qrContent === 'string' ? login.qrContent : ''),
@@ -175,22 +192,9 @@ export function WeixinSettingsPanel(props: any) {
       setActionError(t(check.key, check.params));
       return;
     }
-    setBusy('longtask');
-    setActionError('');
-    try {
-      const next = await rpcCall(ENDPOINTS.setLongTask, { minutes: check.value });
-      // 直接用 Host 返回的快照回显：等下一轮轮询再来，输入框会先跳回旧值。
-      // 顺带作废在途的状态请求，否则它可能把刚保存的值覆盖回去。
-      requestSeq.current += 1;
-      setStatus(next);
-      setMinutesDirty(false);
-    } catch (error) {
-      setActionError(errorText(t, error));
-      await refresh();
-    } finally {
-      setBusy('');
-    }
-  }, [minutes, rpcCall, refresh, t]);
+    // 直接用 Host 返回的快照回显：等下一轮轮询再来，输入框会先跳回旧值。
+    await applyAction('longtask', () => rpcCall(ENDPOINTS.setLongTask, { minutes: check.value }), () => setMinutesDirty(false));
+  }, [minutes, rpcCall, applyAction]);
 
   /** 保存提醒等待时间：0 表示立即提醒。 */
   const saveQuestionDelay = useCallback(async () => {
@@ -199,53 +203,20 @@ export function WeixinSettingsPanel(props: any) {
       setActionError(t(check.key, check.params));
       return;
     }
-    setBusy('question');
-    setActionError('');
-    try {
-      const next = await rpcCall(ENDPOINTS.setQuestion, { delayMinutes: check.value });
-      requestSeq.current += 1;
-      setStatus(next);
-      setQuestionDelayDirty(false);
-    } catch (error) {
-      setActionError(errorText(t, error));
-      await refresh();
-    } finally {
-      setBusy('');
-    }
-  }, [questionDelay, rpcCall, refresh, t]);
+    await applyAction('question', () => rpcCall(ENDPOINTS.setQuestion, { delayMinutes: check.value }), () => setQuestionDelayDirty(false));
+  }, [questionDelay, rpcCall, applyAction]);
 
   /** 问题与审批提醒开关：立即生效。 */
   const toggleQuestionReminders = useCallback(async (enabled: boolean) => {
-    setBusy('question');
-    setActionError('');
-    try {
-      const next = await rpcCall(ENDPOINTS.setQuestion, { enabled });
-      requestSeq.current += 1;
-      setStatus(next);
-    } catch (error) {
-      setActionError(errorText(t, error));
-      await refresh();
-    } finally {
-      setBusy('');
-    }
-  }, [rpcCall, refresh, t]);
+    await applyAction('question', () => rpcCall(ENDPOINTS.setQuestion, { enabled }));
+  }, [rpcCall, applyAction]);
 
   /** 独立模式：保存工作区或提交方式，或重置绑定（ADR-0009）。 */
   const saveDirect = useCallback(async (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean }) => {
-    setBusy('direct');
-    setActionError('');
-    try {
-      const next = await rpcCall(ENDPOINTS.setDirect, patch);
-      requestSeq.current += 1;
-      setStatus(next);
+    await applyAction('direct', () => rpcCall(ENDPOINTS.setDirect, patch), () => {
       if (patch.workspaceId !== undefined) setWorkspaceDirty(false);
-    } catch (error) {
-      setActionError(errorText(t, error));
-      await refresh();
-    } finally {
-      setBusy('');
-    }
-  }, [rpcCall, refresh, t]);
+    });
+  }, [rpcCall, applyAction]);
 
   useEffect(() => {
     let cancelled = false;

@@ -187,7 +187,48 @@ export function ConnectionSection(props: {
         : null));
 }
 
-/** 消息与提醒区：两个接入开关与长任务阈值。 */
+/** 分钟输入行：标题 + 说明 + 数字输入 + 单位 + 保存 + 校验/草稿提示。 */
+function MinutesRow(props: {
+  t: T;
+  title: string;
+  description: string;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  canSave: boolean;
+  onChange: (value: string) => void;
+  onSave: () => Promise<void>;
+  error: string | null;
+  draftHint: string | null;
+}) {
+  const { t, title, description, value, placeholder, disabled, canSave, onChange, onSave, error, draftHint } = props;
+  return h('div', { className: 'wx-setting-group' },
+    h('div', { className: 'wx-setting-row wx-threshold-row' },
+      h('div', { className: 'wx-setting-copy' },
+        h('span', { className: 'wx-setting-title' }, title),
+        h('span', { className: 'wx-setting-description' }, description)),
+      h('div', { className: 'wx-threshold-control' },
+        h(Input, {
+          className: 'wx-minutes',
+          value,
+          placeholder,
+          'aria-label': title,
+          disabled,
+          onChange: (event: any) => onChange(String(event.target.value)),
+        }),
+        h('span', { className: 'wx-unit' }, t('common.minutes')),
+        h(Button, {
+          variant: 'outline',
+          size: 'sm',
+          disabled: disabled || !canSave,
+          onClick: () => void onSave(),
+        }, t('common.save')))),
+    // 校验不过就地说明：宿主会把值夹回区间，与其保存后被回读顶掉，不如先讲清楚。
+    error !== null ? h('p', { className: 'wx-error' }, error) : null,
+    draftHint !== null ? h('p', { className: 'wx-draft-hint' }, draftHint) : null);
+}
+
+/** 消息与提醒区：两个接入开关、提醒开关与两个分钟阈值。 */
 export function ReminderSection(props: {
   t: T;
   rpcCall: RpcCall;
@@ -247,69 +288,42 @@ export function ReminderSection(props: {
         disabled: busy !== '' || hostOlder,
         onChange: (next: boolean) => void toggleQuestionReminders(next),
       }),
-      h('div', { className: 'wx-setting-row wx-threshold-row' },
-        h('div', { className: 'wx-setting-copy' },
-          h('span', { className: 'wx-setting-title' }, t('reminder.questionDelayTitle')),
-          h('span', { className: 'wx-setting-description' }, t('reminder.questionDelayDescription'))),
-        h('div', { className: 'wx-threshold-control' },
-          h(Input, {
-            className: 'wx-minutes',
-            value: questionDelay,
-            placeholder: '5',
-            'aria-label': t('reminder.questionDelayTitle'),
-            disabled: busy !== '' || hostOlder || !questionReminders,
-            onChange: (event: any) => onQuestionDelayChange(String(event.target.value)),
-          }),
-          h('span', { className: 'wx-unit' }, t('common.minutes')),
-          h(Button, {
-            variant: 'outline',
-            size: 'sm',
-            disabled: busy !== '' || hostOlder || !questionReminders || !canSaveQuestionDelay,
-            onClick: () => void saveQuestionDelay(),
-          }, t('common.save')))),
-      // 提醒关掉时等待时间不会立刻生效：置灰而不是藏起来，切回来还能看到当前值。
-      !questionCheck.ok && questionDelay.trim() !== ''
-        ? h('p', { className: 'wx-error' }, t(questionCheck.key, questionCheck.params))
-        : null,
-      questionDelayDirty
-        ? h('p', { className: 'wx-draft-hint' },
-          t('reminder.questionDelayValue', {
+      h(MinutesRow, {
+        t,
+        title: t('reminder.questionDelayTitle'),
+        description: t('reminder.questionDelayDescription'),
+        value: questionDelay,
+        placeholder: '5',
+        disabled: busy !== '' || hostOlder || !questionReminders,
+        canSave: canSaveQuestionDelay,
+        onChange: onQuestionDelayChange,
+        onSave: saveQuestionDelay,
+        error: !questionCheck.ok && questionDelay.trim() !== '' ? t(questionCheck.key, questionCheck.params) : null,
+        draftHint: questionDelayDirty
+          ? t('reminder.questionDelayValue', {
             value: typeof questionDelayValue === 'number' ? questionDelayValue : '—',
             unit: t('common.minutes'),
-          }))
-        : null,
-      h('div', { className: 'wx-setting-row wx-threshold-row' },
-        h('div', { className: 'wx-setting-copy' },
-          h('span', { className: 'wx-setting-title' }, t('reminder.thresholdTitle')),
-          h('span', { className: 'wx-setting-description' },
-            t('reminder.thresholdDescription'))),
-        h('div', { className: 'wx-threshold-control' },
-          h(Input, {
-            className: 'wx-minutes',
-            value: minutes,
-            placeholder: '30',
-            'aria-label': t('reminder.thresholdTitle'),
-            disabled: busy !== '' || hostOlder,
-            onChange: (event: any) => onMinutesChange(String(event.target.value)),
-          }),
-          h('span', { className: 'wx-unit' }, t('common.minutes')),
-          h(Button, {
-            variant: 'outline',
-            size: 'sm',
-            disabled: busy !== '' || !canSaveMinutes || hostOlder,
-            onClick: () => void saveMinutes(),
-          }, t('common.save')))),
-      // 校验不过就地说明：宿主会把值夹回 1..1440，与其保存后被回读顶掉，不如先讲清楚。
-      !check.ok && minutes.trim() !== ''
-        ? h('p', { className: 'wx-error' }, t(check.key, check.params))
-        : null,
-      minutesDirty
-        ? h('p', { className: 'wx-draft-hint' },
-          t('reminder.thresholdValue', {
+          })
+          : null,
+      }),
+      h(MinutesRow, {
+        t,
+        title: t('reminder.thresholdTitle'),
+        description: t('reminder.thresholdDescription'),
+        value: minutes,
+        placeholder: '30',
+        disabled: busy !== '' || hostOlder,
+        canSave: canSaveMinutes,
+        onChange: onMinutesChange,
+        onSave: saveMinutes,
+        error: !check.ok && minutes.trim() !== '' ? t(check.key, check.params) : null,
+        draftHint: minutesDirty
+          ? t('reminder.thresholdValue', {
             value: typeof threshold === 'number' ? threshold : '—',
             unit: t('common.minutes'),
-          }))
-        : null));
+          })
+          : null,
+      })));
 }
 
 /** 独立模式区：插话、工作区与绑定（ADR-0009）。 */
@@ -418,6 +432,7 @@ export function RuntimeSection(props: { t: T; status: any }) {
         h('h4', { className: 'wx-section-title' }, t('runtime.title')))),
     h('div', { className: 'wx-metrics' },
       h(Metric, { value: String(status?.pendingQuestions ?? 0), label: t('runtime.pendingQuestions') }),
+      h(Metric, { value: String(status?.pendingApprovals ?? 0), label: t('runtime.pendingApprovals') }),
       h(Metric, { value: String(status?.trackingTasks ?? 0), label: t('runtime.trackingTasks') }),
       h(Metric, {
         value: status?.ownFeatures ? t('reminder.sourcePlugin') : t('reminder.sourceCore'),

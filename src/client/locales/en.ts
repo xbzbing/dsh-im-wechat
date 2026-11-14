@@ -87,7 +87,7 @@ export const en: Record<WeChatKey, string> = {
   'reminder.questionDelayTitle': 'Wait before reminding (minutes)',
   'reminder.questionDelayDescription': 'Answering in the Web UI during this window means no WeChat message; after it, the reminder is sent.',
   'reminder.questionDelayValue': 'Current wait: {value} {unit}',
-  'reminder.invalid': 'The threshold must be a whole number of minutes between {min} and {max}',
+  'reminder.invalid': 'Must be a whole number of minutes between {min} and {max}',
   'reminder.source': 'Reminder source',
   'reminder.sourcePlugin': 'Sent by this plugin',
   'reminder.sourceCore': 'Sent by My Superagent',
@@ -115,6 +115,7 @@ export const en: Record<WeChatKey, string> = {
   'runtime.eyebrow': 'Runtime',
   'runtime.title': 'Runtime overview',
   'runtime.pendingQuestions': 'Questions awaiting an answer',
+  'runtime.pendingApprovals': 'Tool approvals pending',
   'runtime.trackingTasks': 'Long tasks being tracked',
   'runtime.ownerUnknown': 'The signed-in state has no WeChat user recorded, so reminders cannot be sent. Please sign in again.',
 };

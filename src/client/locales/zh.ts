@@ -85,7 +85,7 @@ export const zh = {
   'reminder.questionDelayTitle': '提醒前等待（分钟）',
   'reminder.questionDelayDescription': '这段时间里在 Web 端答完就不打扰；到点还没答才发到微信。',
   'reminder.questionDelayValue': '当前等待：{value} {unit}',
-  'reminder.invalid': '阈值需为 {min} 到 {max} 的整数分钟',
+  'reminder.invalid': '需为 {min} 到 {max} 的整数分钟',
   'reminder.source': '提醒来源',
   'reminder.sourcePlugin': '由本插件发送',
   'reminder.sourceCore': '由超级助理发送',
@@ -113,6 +113,7 @@ export const zh = {
   'runtime.eyebrow': '运行状态',
   'runtime.title': '运行概览',
   'runtime.pendingQuestions': '等待作答的问题',
+  'runtime.pendingApprovals': '等待授权的工具',
   'runtime.trackingTasks': '跟踪中的长任务',
   'runtime.ownerUnknown': '登录态里没有记录扫码的微信用户，提醒无法发出：请重新扫码登录。',
 };

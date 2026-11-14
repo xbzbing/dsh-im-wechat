@@ -228,14 +228,14 @@ test('文案：没有 Host 文案服务时回落到中文，占位符按宿主�
   assert.equal(fallbackTranslate('login.phase.waiting'), '等待扫码');
   assert.equal(
     fallbackTranslate('reminder.invalid', { min: MIN_LONG_TASK_MINUTES, max: MAX_LONG_TASK_MINUTES }),
-    '阈值需为 1 到 1440 的整数分钟',
+    '需为 1 到 1440 的整数分钟',
   );
   assert.equal(
     fallbackTranslate('reminder.thresholdValue', { value: 30, unit: fallbackTranslate('common.minutes') }),
     '当前阈值：30 分钟',
   );
   // 缺参数时保留占位符，与宿主的插值实现一致。
-  assert.equal(fallbackTranslate('reminder.invalid', { min: 1 }), '阈值需为 1 到 {max} 的整数分钟');
+  assert.equal(fallbackTranslate('reminder.invalid', { min: 1 }), '需为 1 到 {max} 的整数分钟');
 });
 
 test('动态文案先落到字典键或宿主原文，不把运行期文本当键', () => {

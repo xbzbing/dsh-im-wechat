@@ -45,6 +45,10 @@ function harness(): Harness {
       calls.push(`longtask:${minutes}`);
       return { contract: 2, longTaskThresholdMinutes: minutes };
     },
+    setQuestionSettings: async (patch: { enabled?: boolean; delayMinutes?: number }) => {
+      calls.push(`question:${JSON.stringify(patch)}`);
+      return { contract: 4, questionReminders: patch.enabled ?? true, questionDelayMinutes: patch.delayMinutes ?? 5 };
+    },
     setDirect: async (patch: { workspaceId?: string; busyMode?: string; reset?: boolean }) => {
       calls.push(`direct:${JSON.stringify(patch)}`);
       return { contract: 3, direct: { bound: false, workspaceId: patch.workspaceId ?? '', busyMode: patch.busyMode ?? 'queue', running: false, available: true } };
@@ -244,4 +248,23 @@ test('热重载重叠：同路径只注册一次，旧实例清理不摘新实�
   assert.equal(activeRoute, null);
   const fallback = await route.fetch(request(envelope(ENDPOINTS.STATUS)));
   assert.equal(fallback.status, 503);
+});
+
+test('question.set：开关与等待时间分开校验，非法值回 invalid-config', async () => {
+  const h = harness();
+  const ok = await call(h, envelope(ENDPOINTS.QUESTION_SET, { enabled: false, delayMinutes: 12 }));
+  assert.equal(ok.result.ok, true);
+  assert.deepEqual(h.calls.at(-1), 'question:{"enabled":false,"delayMinutes":12}');
+
+  const badEnabled = await call(h, envelope(ENDPOINTS.QUESTION_SET, { enabled: 'no' }));
+  assert.equal(badEnabled.result.ok, false);
+  assert.equal(badEnabled.result.error.code, 'invalid-config');
+
+  const badDelay = await call(h, envelope(ENDPOINTS.QUESTION_SET, { delayMinutes: 'soon' }));
+  assert.equal(badDelay.result.ok, false);
+  assert.equal(badDelay.result.error.code, 'invalid-config');
+
+  const empty = await call(h, envelope(ENDPOINTS.QUESTION_SET, {}));
+  assert.equal(empty.result.ok, false);
+  assert.equal(empty.result.error.code, 'invalid-config');
 });

@@ -106,3 +106,31 @@ test('typingIndicator 只收布尔值，缺省视为开启', () => {
   assert.equal('typingIndicator' in normalizePluginConfig({ typingIndicator: 'no' }), false);
   assert.equal('typingIndicator' in normalizePluginConfig({}), false);
 });
+
+test('提醒开关与等待时间：收窄到 0–120 分钟，非数字丢掉交给默认', () => {
+  assert.equal(normalizePluginConfig({ questionReminders: false }).questionReminders, false);
+  assert.equal('questionReminders' in normalizePluginConfig({ questionReminders: 'no' }), false);
+  assert.equal(normalizePluginConfig({ questionDelayMinutes: 5 }).questionDelayMinutes, 5);
+  assert.equal(normalizePluginConfig({ questionDelayMinutes: 0 }).questionDelayMinutes, 0);
+  assert.equal(normalizePluginConfig({ questionDelayMinutes: -3 }).questionDelayMinutes, 0);
+  assert.equal(normalizePluginConfig({ questionDelayMinutes: 1e6 }).questionDelayMinutes, 120);
+  assert.equal('questionDelayMinutes' in normalizePluginConfig({ questionDelayMinutes: '5' }), false);
+});
+
+test('面板改的提醒设置会落盘并在下次加载时读回', async () => {
+  await withDir(async (dir) => {
+    const store = new LocalConfigStore({ dir });
+    await store.load();
+    await store.save({ questionReminders: false, questionDelayMinutes: 12 });
+    const reloaded = await new LocalConfigStore({ dir }).load();
+    assert.equal(reloaded.questionReminders, false);
+    assert.equal(reloaded.questionDelayMinutes, 12);
+    // 只改开关时，等待时间要保留（先 load 再 save，与运行期一致）。
+    const partial = new LocalConfigStore({ dir });
+    await partial.load();
+    await partial.save({ questionReminders: true });
+    const again = await new LocalConfigStore({ dir }).load();
+    assert.equal(again.questionReminders, true);
+    assert.equal(again.questionDelayMinutes, 12);
+  });
+});

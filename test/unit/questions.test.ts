@@ -80,7 +80,14 @@ test('题目转交互形状时保留 plan-review 意图', () => {
 // ---------------------------------------------------------------- broker
 
 function harness(
-  options: { sent?: boolean; root?: boolean; recipient?: string | null; waitMs?: number } = {},
+  options: {
+    sent?: boolean;
+    root?: boolean;
+    recipient?: string | null;
+    waitMs?: number;
+    delayMs?: number;
+    enabled?: boolean;
+  } = {},
 ) {
   const sent: string[] = [];
   const broker = new QuestionBroker({
@@ -92,6 +99,8 @@ function harness(
     isRoot: () => options.root !== false,
     now: () => 1_000,
     ...(options.waitMs !== undefined ? { waitMs: options.waitMs } : {}),
+    ...(options.delayMs !== undefined ? { delayMs: () => options.delayMs! } : {}),
+    ...(options.enabled !== undefined ? { enabled: () => options.enabled! } : {}),
   });
   return { broker, sent };
 }
@@ -357,4 +366,42 @@ test('发送提醒期间关闭插件：发送返回后不再挂待答，直接�
   assert.deepEqual(await result, { answers: [{ id: 'q1', selected: [] }] });
   assert.equal(nextCalls, 1, '交回 Web 端');
   assert.equal(broker.snapshot().pending, 0, '没有留下永远等不到的待答');
+});
+
+test('等待窗口内 Web 先答：一条微信都不发', async () => {
+  const { broker, sent } = harness({ delayMs: 50 });
+  const answer = await broker.handle(
+    { questions: SINGLE },
+    async () => ({ answers: [{ id: 'q1', selected: ['面'] }] }),
+    true,
+  );
+  assert.deepEqual(answer, { answers: [{ id: 'q1', selected: ['面'] }] });
+  assert.deepEqual(sent, []);
+  assert.equal(broker.snapshot().pending, 0);
+});
+
+test('等待到点还没人答：发提醒，之后微信作答生效', async () => {
+  const { broker, sent } = harness({ delayMs: 10 });
+  const result = broker.handle({ questions: SINGLE }, async () => new Promise(() => {}), true);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!, /去哪吃饭/);
+  assert.equal(broker.reply('1'), true);
+  assert.deepEqual(await result, { answers: [{ id: 'q1', selected: ['面'] }] });
+});
+
+test('提醒开关关掉：完全不接管，直接交回 Web', async () => {
+  const { broker, sent } = harness({ enabled: false });
+  let calls = 0;
+  const answer = await broker.handle(
+    { questions: SINGLE },
+    async () => {
+      calls += 1;
+      return { answers: [] };
+    },
+    true,
+  );
+  assert.deepEqual(answer, { answers: [] });
+  assert.equal(calls, 1);
+  assert.deepEqual(sent, []);
 });

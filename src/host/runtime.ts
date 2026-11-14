@@ -25,9 +25,12 @@ import { buildStatus, listWorkspaces } from './runtime-status.ts';
 import { DefaultWorkspace, WORKSPACE_ERROR_PREFIX } from './workspace-default.ts';
 import type { RuntimeDeps, RuntimeLogger, RuntimeStatus, WorkspaceCatalog, WorkspaceRegistry } from './runtime-status.ts';
 import { TypingIndicator } from './typing.ts';
-import { QuestionBroker } from './questions.ts';
+import { ReminderCenter } from './reminder-center.ts';
+import { saveDirect, saveEnabled, saveLongTask, saveQuestionSettings, saveSuperagent } from './panel-actions.ts';
+import type { PanelActionHost } from './panel-actions.ts';
 import type { QuestionNext, QuestionRequest } from './questions.ts';
-import { DEFAULT_LONG_TASK_MINUTES, LongTaskNotifier, normalizeLongTaskMinutes } from './long-tasks.ts';
+import type { ApprovalNext, ApprovalRequest } from './approvals.ts';
+import { DEFAULT_LONG_TASK_MINUTES, LongTaskNotifier } from './long-tasks.ts';
 import { RootAgents } from './host-agents.ts';
 import type { HostAgents } from './host-agents.ts';
 import { DirectChat } from './direct.ts';
@@ -43,8 +46,8 @@ import { SyncCursorStore } from './state/sync-cursor.ts';
 import { resolveWorkspaceDir } from './state/paths.ts';
 import {
   DEFAULT_DIRECT_BUSY_MODE,
+  DEFAULT_QUESTION_DELAY_MINUTES,
   LocalConfigStore,
-  normalizeBusyMode,
   normalizePluginConfig,
   resolveConfigDir,
 } from './config.ts';
@@ -83,7 +86,9 @@ export class WeixinRuntime {
   #superagent = true;
   #started = false;
   readonly #roots = new RootAgents();
-  readonly #questions: QuestionBroker;
+  readonly #reminders: ReminderCenter;
+  /** 面板设置动作的端口：五个 setter 都走 `panel-actions.ts`。 */
+  readonly #panel: PanelActionHost;
   readonly #longTasks: LongTaskNotifier;
   readonly #directStore: DirectBindingStore;
   readonly #direct: DirectChat;
@@ -136,13 +141,15 @@ export class WeixinRuntime {
       logger: this.#logger,
       now: this.#now,
     });
-    this.#questions = new QuestionBroker({
+    this.#reminders = new ReminderCenter({
       send: (text) => this.#owner.send(text),
       recipient: () => this.#owner.recipient(),
       isRoot: (agentId) => this.#roots.isRoot(agentId),
       isActive: () => this.#ownFeaturesActive(),
       logger: this.#logger,
       now: this.#now,
+      ...(this.#config.questionReminders !== undefined ? { enabled: this.#config.questionReminders } : {}),
+      ...(this.#config.questionDelayMinutes !== undefined ? { delayMinutes: this.#config.questionDelayMinutes } : {}),
     });
     this.#longTasks = new LongTaskNotifier({
       send: (text) => this.#owner.send(text),
@@ -214,7 +221,7 @@ export class WeixinRuntime {
       binder: () => this.#binder,
       ownFeaturesActive: () => this.#ownFeaturesActive(),
       isOwner: (sender) => this.#owner.isOwner(sender),
-      replyQuestion: (text) => this.#questions.reply(text),
+      replyQuestion: (text) => this.#reminders.reply(text),
       superagentEnabled: () => this.#superagent,
       directAvailable: () => this.#direct.status().available,
       typingStart: (sender) => this.#typing.start(sender),
@@ -232,6 +239,28 @@ export class WeixinRuntime {
       },
       noteError: (message) => this.#noteError(message),
     });
+    this.#panel = {
+      status: () => this.status(),
+      save: (patch) => this.#localConfig.save(patch),
+      reminders: () => this.#reminders,
+      longTasks: () => this.#longTasks,
+      enabled: (value) => (value === undefined ? this.#enabled : (this.#enabled = value)),
+      superagent: (value) => (value === undefined ? this.#superagent : (this.#superagent = value)),
+      startPipeline: () => this.#pipeline.start(),
+      stopPipeline: () => this.#pipeline.stop(),
+      stopTyping: () => this.#typing.stopAll(),
+      bindBridge: () => this.#binder?.bind(this.#superagent ? this.#bridge : null),
+      syncOwnFeatures: (reason) => this.#syncOwnFeatures(reason),
+      catalog: () => listWorkspaces(this.#workspaceRegistry),
+      defaultWorkspaceId: () => this.#defaultWorkspace.id,
+      directWorkspaceId: (value) => (value === undefined
+        ? this.#directWorkspaceId
+        : (this.#directWorkspaceId = value)),
+      directBusyMode: (value) => (value === undefined
+        ? this.#directBusyMode
+        : (this.#directBusyMode = value)),
+      resetDirect: () => this.#direct.reset(),
+    };
   }
 
   get dir(): string {
@@ -268,7 +297,12 @@ export class WeixinRuntime {
 
   /** `user-questions/request` 监听器。 */
   handleQuestion(request: QuestionRequest, next: QuestionNext): Promise<unknown> {
-    return this.#questions.handle(request, next, this.#ownFeaturesActive());
+    return this.#reminders.handleQuestion(request, next, this.#ownFeaturesActive());
+  }
+
+  /** `approval/request` 监听器：只提醒与收集决定，不代答。 */
+  handleApproval(request: ApprovalRequest, next: ApprovalNext): Promise<unknown> {
+    return this.#reminders.handleApproval(request, next, this.#ownFeaturesActive());
   }
 
   handleSessionEvent(session: unknown, event: unknown): void {
@@ -292,6 +326,10 @@ export class WeixinRuntime {
     this.#longTasks.setThresholdMinutes(
       stored.longTaskThresholdMinutes ?? this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
     );
+    this.#reminders.configure({
+      enabled: stored.questionReminders ?? this.#config.questionReminders ?? true,
+      delayMinutes: stored.questionDelayMinutes ?? this.#config.questionDelayMinutes ?? DEFAULT_QUESTION_DELAY_MINUTES,
+    });
     this.#directWorkspaceId = stored.directWorkspaceId ?? this.#config.directWorkspaceId ?? '';
     this.#directBusyMode = stored.directBusyMode ?? this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE;
     await this.#directStore.hydrate();
@@ -314,7 +352,7 @@ export class WeixinRuntime {
     await this.#loginController.cancel();
     const api = this.#api;
     this.#typing.stopAll();
-    this.#questions.close();
+    this.#reminders.close();
     this.#longTasks.configure(false);
     await this.#pipeline.stop();
     this.#api = null;
@@ -330,7 +368,9 @@ export class WeixinRuntime {
       enabled: this.#enabled,
       superagent: this.#superagent,
       ownFeatures: this.#ownFeaturesActive(),
-      pendingQuestions: this.#questions.snapshot().pending,
+      ...this.#reminders.status(),
+      questionReminders: this.#reminders.enabled,
+      questionDelayMinutes: this.#reminders.delayMinutes,
       trackingTasks: this.#longTasks.tracking,
       direct: this.#direct.status(),
       longTaskThresholdMinutes: this.#longTasks.thresholdMinutes,
@@ -344,25 +384,19 @@ export class WeixinRuntime {
     });
   }
 
-  /**
-   * 自有功能是否生效：插件在跑（启用 + 已登录）且**没有**接入超级助理。
-   *
-   * 核心接管后问题与长任务提醒由核心发交付，插件自己那份要停掉，否则同一条提醒来两遍。
-   */
+  /** 自有功能是否生效：启用 + 已登录 + 未接核心 + 未停机（核心接管后同一提醒会来两遍）。 */
   #ownFeaturesActive(): boolean {
     return this.#enabled && !this.#superagent && this.#loginState !== null && !this.#stopped;
   }
 
   /**
-   * 自有功能的开合跟着启停/登录/接入开关走。
-   *
-   * 关掉时把在等的问题交回，`reason` 由调用点给出真实原因（登出、停用、切出接入），
-   * 让工具调用拿到可读的话而不是挂在那里（Web 那边本来也在等同一份请求）。
+   * 自有功能的开合跟着启停/登录/接入开关走；关掉时把在等的请求按真实原因交回 Web，
+   * 别让工具调用挂在那里（Web 那边本来也在等同一份请求）。
    */
   #syncOwnFeatures(reason: string): void {
     const active = this.#ownFeaturesActive();
     this.#longTasks.configure(active);
-    if (!active) this.#questions.cancelAll(reason);
+    if (!active) this.#reminders.cancelAll(reason);
   }
 
   /** 开始扫码登录；返回初始快照（含二维码内容）。 */
@@ -404,61 +438,27 @@ export class WeixinRuntime {
 
   /** 保存「接入我的超级助理」开关：立即切换，不重连微信。 */
   async setSuperagent(enabled: boolean): Promise<RuntimeStatus> {
-    this.#superagent = enabled;
-    // 切出核心接入后不会再有交付进来收尾，先把在途的输入状态取消。
-    if (!enabled) this.#typing.stopAll();
-    await this.#localConfig.save({ superagent: enabled });
-    this.#binder?.bind(enabled ? this.#bridge : null);
-    this.#syncOwnFeatures('已切换为接入我的超级助理，提问交回 Web 端');
-    return this.status();
+    return saveSuperagent(this.#panel, enabled);
+  }
+
+  /** 面板保存「问题与审批提醒」开关与等待时间：立即生效，不重连微信。 */
+  async setQuestionSettings(patch: { enabled?: boolean; delayMinutes?: number }): Promise<RuntimeStatus> {
+    return saveQuestionSettings(this.#panel, patch);
   }
 
   /** 保存长任务阈值（分钟）：就地生效，不重连微信。 */
   async setLongTaskThreshold(minutes: number): Promise<RuntimeStatus> {
-    const next = normalizeLongTaskMinutes(minutes) ?? DEFAULT_LONG_TASK_MINUTES;
-    this.#longTasks.setThresholdMinutes(next);
-    await this.#localConfig.save({ longTaskThresholdMinutes: next });
-    return this.status();
+    return saveLongTask(this.#panel, minutes);
   }
 
   /** 面板保存独立模式设置：工作区、提交方式，或重置绑定（ADR-0009）。 */
   async setDirect(patch: { workspaceId?: string; busyMode?: BusyMode; reset?: boolean }): Promise<RuntimeStatus> {
-    const workspaceId = typeof patch.workspaceId === 'string' ? patch.workspaceId.trim() : undefined;
-    // 工作区是外部输入：宿主能列出来就必须是其中的一个，避免绑定一个不存在的 id。
-    if (workspaceId !== undefined && workspaceId !== '') {
-      const catalog = listWorkspaces(this.#workspaceRegistry);
-      if (catalog.available && !catalog.items.some((item) => item.id === workspaceId)) {
-        throw Object.assign(new Error('所选工作区已不存在，请重新选择'), { code: 'invalid-config' });
-      }
-    }
-    const busyMode = normalizeBusyMode(patch.busyMode);
-    // 选中的就是自动创建的默认工作区时落成空值：宿主重建工作区换了 id 也仍跟随默认。
-    const chosen = workspaceId !== undefined
-      && this.#defaultWorkspace.id !== ''
-      && workspaceId === this.#defaultWorkspace.id
-      ? ''
-      : workspaceId;
-    if (chosen !== undefined) this.#directWorkspaceId = chosen;
-    if (busyMode !== undefined) this.#directBusyMode = busyMode;
-    if (patch.reset === true) await this.#direct.reset();
-    await this.#localConfig.save({
-      ...(chosen !== undefined ? { directWorkspaceId: chosen } : {}),
-      ...(busyMode !== undefined ? { directBusyMode: busyMode } : {}),
-    });
-    return this.status();
+    return saveDirect(this.#panel, patch);
   }
 
   /** 面板开关：停用后不再收消息，桥也向核心报告不可用。 */
   async setEnabled(enabled: boolean): Promise<RuntimeStatus> {
-    this.#enabled = enabled;
-    await this.#localConfig.save({ enabled });
-    if (enabled) this.#pipeline.start();
-    else {
-      await this.#pipeline.stop();
-      this.#typing.stopAll();
-    }
-    this.#syncOwnFeatures(enabled ? '插件已启用，提问交回 Web 端' : '插件已停用，提问交回 Web 端');
-    return this.status();
+    return saveEnabled(this.#panel, enabled);
   }
 
   async #handleConfirmed(state: LoginState): Promise<void> {

@@ -21,7 +21,7 @@ export const PANEL_ID = 'dsh-im-wechat';
 export const BUNDLE_CONFIG_SLOT = 'plugins.bundle.config';
 
 /** 与 host 半 `HOST_CONTRACT` 一致；对不上就提示重启。 */
-export const REQUIRED_CONTRACT = 3;
+export const REQUIRED_CONTRACT = 4;
 
 /** 静默时的自动刷新周期。 */
 export const REFRESH_INTERVAL_MS = 15_000;
@@ -36,6 +36,10 @@ export const RPC_TIMEOUT_MS = 20_000;
 export const MIN_LONG_TASK_MINUTES = 1;
 export const MAX_LONG_TASK_MINUTES = 24 * 60;
 
+/** 提醒等待时间的合法区间：与 host 半 `normalizeQuestionDelayMinutes` 一致。 */
+export const MIN_QUESTION_DELAY_MINUTES = 0;
+export const MAX_QUESTION_DELAY_MINUTES = 120;
+
 export const ENDPOINTS = Object.freeze({
   status: 'status',
   loginStart: 'login.start',
@@ -45,6 +49,7 @@ export const ENDPOINTS = Object.freeze({
   setEnabled: 'enabled.set',
   setSuperagent: 'superagent.set',
   setLongTask: 'longtask.set',
+  setQuestion: 'question.set',
   setDirect: 'direct.set',
   workspaces: 'workspaces.list',
 } as const);

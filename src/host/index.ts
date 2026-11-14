@@ -95,6 +95,9 @@ function registerHostListeners(ctx: PluginContext, runtime: WeixinRuntime): void
   type QuestionNext = () => Promise<unknown>;
   ctx.on('user-questions/request', ((request: unknown, next: QuestionNext) =>
     runtime.handleQuestion(request as Parameters<WeixinRuntime['handleQuestion']>[0], next)) as (...args: never[]) => unknown, { prepend: true });
+  // 审批同样 prepend：排在 Web 端之前才轮得到我们；不接管时原样 next()（失败关闭）。
+  ctx.on('approval/request', ((request: unknown, next: () => Promise<unknown>) =>
+    runtime.handleApproval(request as Parameters<WeixinRuntime['handleApproval']>[0], next)) as (...args: never[]) => unknown, { prepend: true });
   ctx.on('session/event', ((session: unknown, event: unknown) =>
     runtime.handleSessionEvent(session, event)) as (...args: never[]) => unknown, { global: true });
   ctx.on('agent/created', (() => runtime.refreshRoots()) as (...args: never[]) => unknown, { global: true });

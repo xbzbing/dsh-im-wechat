@@ -405,6 +405,8 @@ test('登出时在等的提问按真实原因交回，不套用接入切换的�
     const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: api.createApi });
     await runtime.start();
     await runtime.setSuperagent(false);
+    // 默认等 5 分钟才提醒；这条用例要看的是登出时的取消，先关掉等待。
+    await runtime.setQuestionSettings({ delayMinutes: 0 });
 
     const result = runtime.handleQuestion(
       { questions: [{ id: 'q1', question: '去哪', options: [{ label: '面' }] }] },
@@ -476,3 +478,23 @@ test('桥注册失败后，下次入站自动补注册并当条交付', async ()
   });
 });
 
+test('提醒设置：默认等 5 分钟，保存后落盘并在重启后沿用', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const make = () => new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
+    const runtime = make();
+    await runtime.start();
+    const first = runtime.status();
+    assert.deepEqual([first.questionReminders, first.questionDelayMinutes], [true, 5]);
+
+    const next = await runtime.setQuestionSettings({ enabled: false, delayMinutes: 12 });
+    assert.deepEqual([next.questionReminders, next.questionDelayMinutes], [false, 12]);
+    await runtime.stop();
+
+    const again = make();
+    await again.start();
+    const second = again.status();
+    assert.deepEqual([second.questionReminders, second.questionDelayMinutes], [false, 12]);
+    await again.stop();
+  });
+});

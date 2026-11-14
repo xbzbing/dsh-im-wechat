@@ -39,6 +39,20 @@ export interface PluginConfig {
   /** 是否发「正在输入」状态，默认开；真机行为不符预期时可关（ADR-0007）。 */
   typingIndicator?: boolean;
   /**
+   * 问题与审批提醒：默认开。
+   *
+   * 关掉后 `user-questions/request` 与 `approval/request` 一律 `next()`，全部交回 Web 端，
+   * 与没装插件一致；不影响收消息与交付。
+   */
+  questionReminders?: boolean;
+  /**
+   * 提醒前的等待时间（分钟），默认 5。
+   *
+   * 这段时间里主人在 Web 端答完就完全不打扰；到点还没答才推到微信。
+   * 0 表示立刻提醒。
+   */
+  questionDelayMinutes?: number;
+  /**
    * 取码时要求服务端强制出 PIN，仅用于提前验证 PIN 交互（3.0.0 起）。
    * 默认关闭；关闭它不能阻止服务端自行要求 PIN。
    */
@@ -73,6 +87,17 @@ export type BusyMode = 'queue' | 'steer';
 
 export const DEFAULT_DIRECT_BUSY_MODE: BusyMode = 'steer';
 
+/** 提醒前的默认等待时间：够主人在 Web 端答完，又不至于让提问等太久。 */
+export const DEFAULT_QUESTION_DELAY_MINUTES = 5;
+export const MIN_QUESTION_DELAY_MINUTES = 0;
+export const MAX_QUESTION_DELAY_MINUTES = 120;
+
+/** 等待时间收窄到 0–120 分钟；非数字交给调用方回落到默认值。 */
+export function normalizeQuestionDelayMinutes(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.min(MAX_QUESTION_DELAY_MINUTES, Math.max(MIN_QUESTION_DELAY_MINUTES, Math.round(value)));
+}
+
 /** 只认 queue / steer；其余一律回落到默认（插队）。 */
 export function normalizeBusyMode(value: unknown): BusyMode | undefined {
   return value === 'queue' || value === 'steer' ? value : undefined;
@@ -104,6 +129,10 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
   const typingIndicator = asBoolean(record.typingIndicator);
   if (typingIndicator !== undefined) config.typingIndicator = typingIndicator;
+  const questionReminders = asBoolean(record.questionReminders);
+  if (questionReminders !== undefined) config.questionReminders = questionReminders;
+  const questionDelay = normalizeQuestionDelayMinutes(record.questionDelayMinutes);
+  if (questionDelay !== undefined) config.questionDelayMinutes = questionDelay;
   const verifyPin = asBoolean(record.verifyPin);
   if (verifyPin !== undefined) config.verifyPin = verifyPin;
   return config;
@@ -123,6 +152,10 @@ export interface StoredConfig {
   superagent?: boolean;
   /** 面板上改的长任务阈值（分钟）；缺省用静态配置或默认值。 */
   longTaskThresholdMinutes?: number;
+  /** 面板上改的问题与审批提醒开关；缺省视为开。 */
+  questionReminders?: boolean;
+  /** 面板上改的提醒等待时间（分钟）；缺省用静态配置或默认值。 */
+  questionDelayMinutes?: number;
   /** 面板上改的独立模式工作区 id；空串表示默认的「微信会话」工作区。 */
   directWorkspaceId?: string;
   /** 面板上改的独立模式提交方式。 */
@@ -157,6 +190,8 @@ export class LocalConfigStore {
     const enabled = asBoolean(record.enabled);
     const superagent = asBoolean(record.superagent);
     const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
+    const questionReminders = asBoolean(record.questionReminders);
+    const questionDelay = normalizeQuestionDelayMinutes(record.questionDelayMinutes);
     const directWorkspaceId = asString(record.directWorkspaceId);
     const directBusyMode = normalizeBusyMode(record.directBusyMode);
     this.#document = {
@@ -164,6 +199,8 @@ export class LocalConfigStore {
       ...(enabled !== undefined ? { enabled } : {}),
       ...(superagent !== undefined ? { superagent } : {}),
       ...(longTaskMinutes !== undefined ? { longTaskThresholdMinutes: longTaskMinutes } : {}),
+      ...(questionReminders !== undefined ? { questionReminders } : {}),
+      ...(questionDelay !== undefined ? { questionDelayMinutes: questionDelay } : {}),
       ...(directWorkspaceId !== undefined ? { directWorkspaceId } : {}),
       ...(directBusyMode !== undefined ? { directBusyMode } : {}),
     };
@@ -175,6 +212,8 @@ export class LocalConfigStore {
     enabled?: boolean;
     superagent?: boolean;
     longTaskThresholdMinutes?: number;
+    questionReminders?: boolean;
+    questionDelayMinutes?: number;
     directWorkspaceId?: string;
     directBusyMode?: BusyMode;
   }): Promise<StoredConfig> {

@@ -22,6 +22,7 @@ export const ENDPOINTS = Object.freeze({
   ENABLED_SET: 'enabled.set',
   SUPERAGENT_SET: 'superagent.set',
   LONG_TASK_SET: 'longtask.set',
+  QUESTION_SET: 'question.set',
   DIRECT_SET: 'direct.set',
   WORKSPACES_LIST: 'workspaces.list',
 } as const);
@@ -139,6 +140,24 @@ async function handleEndpoint(
         patch.reset = record.reset;
       }
       return runtime.setDirect(patch);
+    }
+    case ENDPOINTS.QUESTION_SET: {
+      const record = payloadOf(payload);
+      const patch: { enabled?: boolean; delayMinutes?: number } = {};
+      if (record.enabled !== undefined) {
+        if (typeof record.enabled !== 'boolean') throw codedError('enabled 必须是布尔值', 'invalid-config');
+        patch.enabled = record.enabled;
+      }
+      if (record.delayMinutes !== undefined) {
+        if (typeof record.delayMinutes !== 'number' || !Number.isFinite(record.delayMinutes)) {
+          throw codedError('delayMinutes 必须是数字', 'invalid-config');
+        }
+        patch.delayMinutes = record.delayMinutes;
+      }
+      if (patch.enabled === undefined && patch.delayMinutes === undefined) {
+        throw codedError('没有要保存的设置', 'invalid-config');
+      }
+      return runtime.setQuestionSettings(patch);
     }
     case ENDPOINTS.LONG_TASK_SET: {
       const minutes = payloadOf(payload).minutes;

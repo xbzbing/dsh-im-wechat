@@ -13,7 +13,7 @@ import type { BridgeHealth } from './superagent/protocol.ts';
 import type { BusyMode } from './config.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 3;
+export const HOST_CONTRACT = 4;
 
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {
@@ -40,6 +40,12 @@ export interface RuntimeStatus {
   ownerKnown: boolean;
   /** 等待主人作答的问题数。 */
   pendingQuestions: number;
+  /** 等待主人决定的工具授权数。 */
+  pendingApprovals: number;
+  /** 面板上的「问题与审批提醒」开关。 */
+  questionReminders: boolean;
+  /** 提醒前等多久（分钟）：这段时间在 Web 端答完就不打扰。 */
+  questionDelayMinutes: number;
   /** 正在跟踪的回合数（长任务提醒用）。 */
   trackingTasks: number;
   /** 长任务提醒阈值（分钟）：回合超过它才提醒。 */
@@ -70,6 +76,9 @@ export interface StatusInput {
   superagent: boolean;
   ownFeatures: boolean;
   pendingQuestions: number;
+  pendingApprovals: number;
+  questionReminders: boolean;
+  questionDelayMinutes: number;
   trackingTasks: number;
   direct: RuntimeStatus['direct'];
   longTaskThresholdMinutes: number;
@@ -93,6 +102,9 @@ export function buildStatus(input: StatusInput): RuntimeStatus {
     ownFeatures: input.ownFeatures,
     ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
     pendingQuestions: input.pendingQuestions,
+    pendingApprovals: input.pendingApprovals,
+    questionReminders: input.questionReminders,
+    questionDelayMinutes: input.questionDelayMinutes,
     trackingTasks: input.trackingTasks,
     direct: input.direct,
     longTaskThresholdMinutes: input.longTaskThresholdMinutes,

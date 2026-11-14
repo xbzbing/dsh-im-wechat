@@ -40,6 +40,10 @@ export interface QuestionBrokerOptions {
   isRoot: (agentId: string | null) => boolean;
   /** 当前是否仍然允许接管；发送提醒期间可能被停用/切到核心。 */
   isActive?: () => boolean;
+  /** 面板上的「问题与审批提醒」开关：关掉后一律交回 Web。 */
+  enabled?: () => boolean;
+  /** 提醒前的等待时间（毫秒）：这段时间在 Web 端答完就不打扰。 */
+  delayMs?: () => number;
   now?: () => number;
   newId?: () => string;
   logger?: QuestionLogger;
@@ -57,13 +61,13 @@ interface Pending {
   reject(error: unknown): void;
 }
 
-interface Deferred<T> {
+export interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
   reject(error: unknown): void;
 }
 
-function deferred<T>(): Deferred<T> {
+export function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
   const promise = new Promise<T>((onResolve, onReject) => {
@@ -111,6 +115,9 @@ export class QuestionBroker {
   readonly #pending = new Map<string, Pending>();
   #lastError: { at: number; message: string } | undefined;
   #closed = false;
+  /** 最近一次发出提醒的序号：入站文本先给「最后发的那条」认领。 */
+  #seq = 0;
+  #lastSent = 0;
 
   constructor(options: QuestionBrokerOptions) {
     this.#options = options;
@@ -118,6 +125,11 @@ export class QuestionBroker {
     let counter = 0;
     this.#newId = options.newId ?? (() => `wx-q-${++counter}`);
     this.#waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
+  }
+
+  /** 最近一次提醒的序号（跨提问与审批比较，谁的提醒更晚谁先认领）。 */
+  lastSentSeq(): number {
+    return this.#lastSent;
   }
 
   snapshot(): QuestionSnapshot {
@@ -133,7 +145,7 @@ export class QuestionBroker {
    * 不接管时（插件停用、没登录、不是根会话）原样 `next()`，行为与没装插件一致。
    */
   async handle(request: QuestionRequest, next: QuestionNext, active: boolean): Promise<unknown> {
-    if (!active || this.#closed) return next();
+    if (!active || this.#closed || !this.#takesOver()) return next();
     const questions = normalizeQuestions(request.questions);
     if (questions.length === 0) return next();
     const recipient = this.#options.recipient();
@@ -141,96 +153,117 @@ export class QuestionBroker {
     const agentId = typeof request.agent?.id === 'string' ? request.agent.id : null;
     if (!this.#options.isRoot(agentId)) return next();
 
-    const text = renderInteraction(questionsToInteraction(questions));
-    const sent = await this.#send(text).catch(() => false);
-    // 发送是异步的；这期间可能已经停用/切到核心，cancelAll 看不到尚不存在的 pending。
-    // 这里再判一次，避免给已关闭的插件挂一条 30 分钟的待答。
-    if (this.#closed || (this.#options.isActive !== undefined && !this.#options.isActive())) {
-      this.#noteError('问题提醒发送期间插件状态已变化，已交回 Web 端');
-      return next();
-    }
-    if (!sent) {
-      // 发不出去就别接管：交给 Web，主人在 Web 端作答。
-      this.#noteError('问题提醒发送失败，已交回 Web 端');
-      return next();
-    }
-
-    this.#sweep();
-    const pendingId = this.#newId();
-    const answer = deferred<Answer>();
-    const local = new AbortController();
-    const pending: Pending = {
-      id: pendingId,
-      questions,
-      createdAt: this.#now(),
-      cancel: local,
-      resolve: (value) => answer.resolve(value),
-      reject: (error) => answer.reject(error),
-    };
-    this.#pending.set(pendingId, pending);
+    // 先把信号换成 union：Web 端与宿主拿到的是同一个可被我们撤销的信号。
     const original = request.signal;
+    const local = new AbortController();
     request.signal = original ? AbortSignal.any([original, local.signal]) : local.signal;
+    // Web 端先拿到请求：等待窗口内答完就一条微信都不发。
+    const web = next();
+    const webSettled: Promise<WebOutcome> = web.then(
+      (value) => ({ kind: 'web', value }),
+      (error: unknown) => (isNoProvider(error) ? { kind: 'none' } : { kind: 'web-error', error }),
+    );
     const aborted = whenAborted(request.signal);
 
-    const web = next();
-    const webSettled: Promise<{ kind: 'web'; value: unknown } | { kind: 'none' } | { kind: 'web-error'; error: unknown }> =
-      web.then(
-        (value) => ({ kind: 'web', value }),
-        (error: unknown) => (isNoProvider(error) ? { kind: 'none' } : { kind: 'web-error', error }),
-      );
-    const im: Promise<{ kind: 'im'; value: Answer } | { kind: 'im-error'; error: unknown }> = answer.promise.then(
-      (value) => ({ kind: 'im', value }),
-      (error: unknown) => ({ kind: 'im-error', error }),
-    );
-    const timeout = deferred<{ kind: 'wechat-timeout' }>();
-
-    // 超时只放弃微信这一路：不动 union signal，Web 端还等着，交回给它继续等。
-    const timer = setTimeout(() => {
-      this.#pending.delete(pendingId);
-      timeout.resolve({ kind: 'wechat-timeout' });
-    }, this.#waitMs);
-    timer.unref?.();
+    const delay = this.#delayMs();
+    const waited = deferred<void>();
+    const delayTimer = delay > 0 ? setTimeout(() => waited.resolve(), delay) : null;
+    delayTimer?.unref?.();
+    const text = renderInteraction(questionsToInteraction(questions));
 
     try {
-      let outcome = await Promise.race([
-        webSettled,
-        im,
-        aborted.promise.then(() => ({ kind: 'aborted' as const })),
-        timeout.promise,
-      ]);
-      if (outcome.kind === 'none') {
-        // Web 不在：只等主人作答、请求取消或超时。
-        outcome = await Promise.race([
+      if (delay > 0) {
+        const early = await Promise.race([
+          webSettled,
+          aborted.promise.then(() => ({ kind: 'aborted' as const })),
+          waited.promise.then(() => ({ kind: 'go' as const })),
+        ]);
+        if (early.kind === 'web') return early.value;
+        if (early.kind === 'web-error') throw early.error;
+        // Web 不在（none）或等到点：继续发提醒，不白等满窗口。
+        if (early.kind === 'aborted') throw cancellation(request);
+      }
+
+      const sent = await this.#send(text).catch(() => false);
+      // 发送是异步的；这期间可能已经停用/切到核心，cancelAll 看不到尚不存在的 pending。
+      // 这里再判一次，避免给已关闭的插件挂一条待答。
+      if (this.#closed || (this.#options.isActive !== undefined && !this.#options.isActive())) {
+        this.#noteError('问题提醒发送期间插件状态已变化，已交回 Web 端');
+        return web;
+      }
+      if (!sent) {
+        // 发不出去就别接管：交给 Web，主人在 Web 端作答。
+        this.#noteError('问题提醒发送失败，已交回 Web 端');
+        return web;
+      }
+
+      this.#sweep();
+      const pendingId = this.#newId();
+      const answer = deferred<Answer>();
+      const pending: Pending = {
+        id: pendingId,
+        questions,
+        createdAt: this.#now(),
+        cancel: local,
+        resolve: (value) => answer.resolve(value),
+        reject: (error) => answer.reject(error),
+      };
+      this.#pending.set(pendingId, pending);
+      this.#lastSent = ++this.#seq;
+      const im: Promise<{ kind: 'im'; value: Answer } | { kind: 'im-error'; error: unknown }> = answer.promise.then(
+        (value) => ({ kind: 'im', value }),
+        (error: unknown) => ({ kind: 'im-error', error }),
+      );
+      const timeout = deferred<{ kind: 'wechat-timeout' }>();
+
+      // 超时只放弃微信这一路：不动 union signal，Web 端还等着，交回给它继续等。
+      const timer = setTimeout(() => {
+        this.#pending.delete(pendingId);
+        timeout.resolve({ kind: 'wechat-timeout' });
+      }, this.#waitMs);
+      timer.unref?.();
+
+      try {
+        let outcome = await Promise.race([
+          webSettled,
           im,
           aborted.promise.then(() => ({ kind: 'aborted' as const })),
           timeout.promise,
         ]);
+        if (outcome.kind === 'none') {
+          // Web 不在：只等主人作答、请求取消或超时。
+          outcome = await Promise.race([
+            im,
+            aborted.promise.then(() => ({ kind: 'aborted' as const })),
+            timeout.promise,
+          ]);
+        }
+        if (outcome.kind === 'im') {
+          local.abort(abortReason('已在微信作答'));
+          this.#options.logger?.info?.('问题已在微信作答，Web 端投递作废');
+          return outcome.value;
+        }
+        if (outcome.kind === 'web') return outcome.value;
+        if (outcome.kind === 'web-error' || outcome.kind === 'im-error') throw outcome.error;
+        if (outcome.kind === 'wechat-timeout') {
+          // 微信这路到点放弃：Web 还在就真正交回，由它接着等作答。
+          const webOutcome = await Promise.race([
+            webSettled,
+            aborted.promise.then(() => ({ kind: 'aborted' as const })),
+          ]);
+          if (webOutcome.kind === 'web') return webOutcome.value;
+          if (webOutcome.kind === 'web-error') throw webOutcome.error;
+          if (webOutcome.kind === 'none') throw abortReason('等待微信作答超时');
+        }
+        // 带上取消方的原因：停机、切换接入方式、宿主自己取消，各自有可读的话。
+        throw cancellation(request);
+      } finally {
+        clearTimeout(timer);
+        this.#pending.delete(pendingId);
       }
-      if (outcome.kind === 'im') {
-        local.abort(abortReason('已在微信作答'));
-        this.#options.logger?.info?.('问题已在微信作答，Web 端投递作废');
-        return outcome.value;
-      }
-      if (outcome.kind === 'web') return outcome.value;
-      if (outcome.kind === 'web-error' || outcome.kind === 'im-error') throw outcome.error;
-      if (outcome.kind === 'wechat-timeout') {
-        // 微信这路到点放弃：Web 还在就真正交回，由它接着等作答。
-        const webOutcome = await Promise.race([
-          webSettled,
-          aborted.promise.then(() => ({ kind: 'aborted' as const })),
-        ]);
-        if (webOutcome.kind === 'web') return webOutcome.value;
-        if (webOutcome.kind === 'web-error') throw webOutcome.error;
-        if (webOutcome.kind === 'none') throw abortReason('等待微信作答超时');
-        // 请求被取消：走下面统一的取消原因。
-      }
-      // 带上取消方的原因：停机、切换接入方式、宿主自己取消，各自有可读的话。
-      const reason = request.signal?.reason as unknown;
-      throw reason instanceof Error ? reason : abortReason('提问已取消');
     } finally {
-      clearTimeout(timer);
+      if (delayTimer !== null) clearTimeout(delayTimer);
       aborted.dispose();
-      this.#pending.delete(pendingId);
     }
   }
 
@@ -271,6 +304,17 @@ export class QuestionBroker {
 
   async #send(text: string): Promise<boolean> {
     return this.#options.send(text);
+  }
+
+  /** 面板开关：关掉就完全不接管，与没装插件一致。 */
+  #takesOver(): boolean {
+    return this.#options.enabled === undefined || this.#options.enabled();
+  }
+
+  /** 提醒前的等待时间；非法值当作不等。 */
+  #delayMs(): number {
+    const value = this.#options.delayMs?.() ?? 0;
+    return Number.isFinite(value) && value > 0 ? value : 0;
   }
 
   #sweep(): void {
@@ -335,4 +379,16 @@ function abortReason(message: string): Error {
   error.name = 'UserQuestionError';
   (error as { code?: string }).code = 'ASK_ABORTED';
   return error;
+}
+
+/** Web 端那一路的结果：答了、没有监听者、或者它自己出错。 */
+export type WebOutcome =
+  | { kind: 'web'; value: unknown }
+  | { kind: 'none' }
+  | { kind: 'web-error'; error: unknown };
+
+/** 取消原因：优先用请求信号上那句可读的话（停机、切换接入方式、宿主取消）。 */
+export function cancellation(request: { signal?: AbortSignal }): Error {
+  const reason = request.signal?.reason as unknown;
+  return reason instanceof Error ? reason : abortReason('提问已取消');
 }

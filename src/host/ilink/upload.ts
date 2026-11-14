@@ -58,6 +58,15 @@ export function isAllowedUploadUrl(url: string): boolean {
   return host === 'weixin.qq.com' || host.endsWith('.weixin.qq.com') || host === 'qq.com' || host.endsWith('.qq.com');
 }
 
+/** 错误文案里的主机名：地址本身不可解析时也不能再抛一次 TypeError。 */
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '非法地址';
+  }
+}
+
 function buildUploadUrl(cdnBaseUrl: string, uploadParam: string, filekey: string): string {
   const base = cdnBaseUrl.endsWith('/') ? cdnBaseUrl.slice(0, -1) : cdnBaseUrl;
   return `${base}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`;
@@ -142,7 +151,7 @@ export async function uploadImage(
   });
   const full = response.uploadFullUrl?.trim();
   const url = full !== undefined && full !== '' ? full : buildUploadUrl(options.cdnBaseUrl, response.uploadParam ?? '', filekey);
-  if (!isAllowedUploadUrl(url)) throw new CdnUploadError(`上传地址不在微信域名内：${new URL(url).hostname}`);
+  if (!isAllowedUploadUrl(url)) throw new CdnUploadError(`上传地址不在微信域名内：${safeHostname(url)}`);
   const ciphertext = encryptAesEcb(raw, Buffer.from(aesKeyHex, 'hex'));
   const encryptQueryParam = await postCiphertext(url, ciphertext, options);
   return { encryptQueryParam, aesKeyHex, ciphertextSize, rawMd5 };

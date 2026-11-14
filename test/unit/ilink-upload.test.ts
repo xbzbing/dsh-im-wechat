@@ -92,6 +92,16 @@ test('上传：只允许微信域名，别的地址一律不发', async () => {
   assert.equal(posts.length, 0);
 });
 
+test('上传：畸形 CDN 基址回 CdnUploadError，不再抛原始 TypeError', async () => {
+  const client = api({ uploadParam: 'p' });
+  const { fn, posts } = fetchStub(200, { 'x-encrypted-param': 'x' });
+  await assert.rejects(
+    uploadImage(client, { data: PNG, toUserId: 'u1' }, { cdnBaseUrl: 'not a url', fetch: fn }),
+    (error: unknown) => error instanceof CdnUploadError && /不在微信域名内：非法地址/.test(error.message),
+  );
+  assert.equal(posts.length, 0);
+});
+
 test('上传：服务端没回上传参数时 getuploadurl 就报错，不会拿空参数去拼地址', async () => {
   // 真实 api.getUploadUrl 在两个字段都缺时抛 ILinkError；这里照它的行为打桩。
   const client = {

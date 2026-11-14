@@ -26,9 +26,11 @@ export interface HostAgentSession {
 /**
  * Agent 自己的模型选择：只往这个会话追加一条 `model/selection` 事件，不改 DSH 的
  * 全局默认模型（与 `sessionController.selectModel` 的区别见 ADR-0025）。
+ *
+ * `reasoningEffort` 与宿主 `ModelSelection` 同名同义，缺省表示用模型自己的默认推理等级。
  */
 export interface HostAgentModel {
-  select?(selection: { provider: string; model: string }): void;
+  select?(selection: { provider: string; model: string; reasoningEffort?: string }): void;
 }
 
 export interface HostAgent {

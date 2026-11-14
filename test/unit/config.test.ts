@@ -137,21 +137,41 @@ test('面板改的提醒设置会落盘并在下次加载时读回', async () =>
   });
 });
 
-test('独立模式的模型：只认 provider 与 model 两个非空字符串，写坏就当没配', () => {
+test('独立模式的模型：provider 与 model 必填，推理等级可选，写坏就当没配', () => {
   const config = normalizePluginConfig({ directModel: { provider: 'deepseek-account', model: 'deepseek-chat' } });
   assert.deepEqual(config.directModel, { provider: 'deepseek-account', model: 'deepseek-chat' });
+  assert.deepEqual(
+    normalizePluginConfig({
+      directModel: { provider: 'deepseek-account', model: 'deepseek-reasoner', reasoningEffort: ' high ' },
+    }).directModel,
+    { provider: 'deepseek-account', model: 'deepseek-reasoner', reasoningEffort: 'high' },
+  );
+  assert.deepEqual(
+    normalizePluginConfig({
+      directModel: { provider: 'deepseek-account', model: 'deepseek-chat', reasoningEffort: '' },
+    }).directModel,
+    { provider: 'deepseek-account', model: 'deepseek-chat' },
+  );
   assert.equal('directModel' in normalizePluginConfig({ directModel: { provider: 'a' } }), false);
   assert.equal('directModel' in normalizePluginConfig({ directModel: { provider: '', model: 'b' } }), false);
   assert.equal('directModel' in normalizePluginConfig({ directModel: 'a/b' }), false);
   assert.equal('directModel' in normalizePluginConfig({}), false);
+  // 说不清的推理等级整条不认：会话里写进一个适配器不认识的 id 没有兜底。
+  assert.equal('directModel' in normalizePluginConfig({
+    directModel: { provider: 'a', model: 'b', reasoningEffort: 3 },
+  }), false);
 });
 
 test('面板选的模型落盘；清空后写 null，读回来不回落成 profile 配置', async () => {
   await withDir(async (dir) => {
     const store = new LocalConfigStore({ dir });
     await store.load();
-    await store.save({ directModel: { provider: 'p', model: 'm' } });
-    assert.deepEqual((await new LocalConfigStore({ dir }).load()).directModel, { provider: 'p', model: 'm' });
+    await store.save({ directModel: { provider: 'p', model: 'm', reasoningEffort: 'high' } });
+    assert.deepEqual((await new LocalConfigStore({ dir }).load()).directModel, {
+      provider: 'p',
+      model: 'm',
+      reasoningEffort: 'high',
+    });
 
     const clearing = new LocalConfigStore({ dir });
     await clearing.load();

@@ -4,13 +4,13 @@ import { test } from 'node:test';
 import {
   DirectModelChoice,
   applySessionModel,
-  parseModelCatalog,
   normalizeModelRef,
+  parseModelCatalog,
   readModelCatalog,
   sameModelRef,
 } from '../../src/host/direct-model.ts';
 
-test('独立模式的模型：只认 provider 与 model 两个非空字符串', () => {
+test('独立模式的模型：认 provider、model，以及可选的推理等级', () => {
   assert.deepEqual(
     normalizeModelRef({ provider: 'deepseek-account', model: 'deepseek-chat' }),
     { provider: 'deepseek-account', model: 'deepseek-chat' },
@@ -31,20 +31,37 @@ test('独立模式的模型：只认 provider 与 model 两个非空字符串', 
     provider: 'p'.repeat(200),
     model: 'm'.repeat(200),
   });
-  // 只取这两个字段：将来的 reasoningEffort 之类不会被悄悄带进配置。
-  assert.deepEqual(normalizeModelRef({ provider: 'p', model: 'm', reasoningEffort: 'high' }), { provider: 'p', model: 'm' });
+  // 第三层：空白与 null 都表示「模型默认」，不写进配置。
+  assert.deepEqual(normalizeModelRef({ provider: 'p', model: 'm', reasoningEffort: ' high ' }), {
+    provider: 'p',
+    model: 'm',
+    reasoningEffort: 'high',
+  });
+  assert.deepEqual(normalizeModelRef({ provider: 'p', model: 'm', reasoningEffort: '' }), { provider: 'p', model: 'm' });
+  assert.deepEqual(normalizeModelRef({ provider: 'p', model: 'm', reasoningEffort: '  ' }), { provider: 'p', model: 'm' });
+  assert.deepEqual(normalizeModelRef({ provider: 'p', model: 'm', reasoningEffort: null }), { provider: 'p', model: 'm' });
+  // 给了说不清的推理等级就整条不认：适配器拿到表外 id 没有兜底。
+  assert.equal(normalizeModelRef({ provider: 'p', model: 'm', reasoningEffort: 3 }), undefined);
+  assert.equal(normalizeModelRef({ provider: 'p', model: 'm', reasoningEffort: 'x'.repeat(201) }), undefined);
+  // 其它字段忽略。
+  assert.deepEqual(normalizeModelRef({ provider: 'p', model: 'm', extra: 1 }), { provider: 'p', model: 'm' });
 });
 
-test('独立模式的模型：比较只看 provider 与 model', () => {
+test('独立模式的模型：比较看 provider、model 与推理等级', () => {
   assert.equal(sameModelRef({ provider: 'p', model: 'm' }, { provider: 'p', model: 'm' }), true);
   assert.equal(sameModelRef({ provider: 'p', model: 'm' }, { provider: 'p', model: 'n' }), false);
+  assert.equal(sameModelRef({ provider: 'p', model: 'm' }, { provider: 'p', model: 'm', reasoningEffort: 'high' }), false);
+  assert.equal(
+    sameModelRef({ provider: 'p', model: 'm', reasoningEffort: 'high' }, { provider: 'p', model: 'm', reasoningEffort: 'high' }),
+    true,
+  );
   assert.equal(sameModelRef({ provider: 'p', model: 'm' }, null), false);
   assert.equal(sameModelRef(null, null), false);
 });
 
-test('模型目录：provider 分组拍平成下拉行，保留宿主的默认模型', () => {
+test('模型目录：provider 分组拍平成下拉行，带上推理等级与宿主默认值', () => {
   const view = parseModelCatalog({
-    default: { provider: 'deepseek-account', model: 'deepseek-chat' },
+    default: { provider: 'deepseek-account', model: 'deepseek-reasoner', reasoningEffort: 'high' },
     routableProviders: ['deepseek-account', 'openrouter'],
     groups: [
       {
@@ -52,7 +69,17 @@ test('模型目录：provider 分组拍平成下拉行，保留宿主的默认�
         name: 'DeepSeek 账号',
         models: [
           { id: 'deepseek-chat', name: 'DeepSeek Chat' },
-          { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+          {
+            id: 'deepseek-reasoner',
+            name: 'DeepSeek Reasoner',
+            reasoning: {
+              efforts: [
+                { id: 'low', name: '低' },
+                { id: 'high', name: '高' },
+              ],
+              defaultEffort: 'low',
+            },
+          },
         ],
       },
       { id: 'openrouter', name: 'OpenRouter', models: [{ id: 'x/y', name: 'X Y' }] },
@@ -60,28 +87,90 @@ test('模型目录：provider 分组拍平成下拉行，保留宿主的默认�
     failures: [{ id: 'broken', name: 'Broken', message: 'no key' }],
   });
   assert.equal(view.available, true);
-  assert.deepEqual(view.default, { provider: 'deepseek-account', model: 'deepseek-chat' });
+  assert.deepEqual(view.default, { provider: 'deepseek-account', model: 'deepseek-reasoner', reasoningEffort: 'high' });
   // provider 读失败只标成「目录不完整」，不是「模型已下架」。
   assert.deepEqual(view.unavailableProviders, ['broken']);
   assert.deepEqual(view.items, [
-    { provider: 'deepseek-account', model: 'deepseek-chat', label: 'DeepSeek Chat', providerName: 'DeepSeek 账号' },
-    { provider: 'deepseek-account', model: 'deepseek-reasoner', label: 'DeepSeek Reasoner', providerName: 'DeepSeek 账号' },
-    { provider: 'openrouter', model: 'x/y', label: 'X Y', providerName: 'OpenRouter' },
+    { provider: 'deepseek-account', model: 'deepseek-chat', label: 'DeepSeek Chat', providerName: 'DeepSeek 账号', efforts: [] },
+    {
+      provider: 'deepseek-account',
+      model: 'deepseek-reasoner',
+      label: 'DeepSeek Reasoner',
+      providerName: 'DeepSeek 账号',
+      efforts: [
+        { id: 'low', label: '低' },
+        { id: 'high', label: '高' },
+      ],
+      defaultEffort: 'low',
+    },
+    { provider: 'openrouter', model: 'x/y', label: 'X Y', providerName: 'OpenRouter', efforts: [] },
   ]);
 });
 
 test('模型目录：形状不对的行丢掉，缺名字时退回 id，重复行只留一条', () => {
   const view = parseModelCatalog({
     groups: [
-      { id: 'p1', models: [{ id: 'm1' }, { id: 'm1', name: '重复' }, { name: '没有 id' }, null] },
+      {
+        id: 'p1',
+        models: [
+          { id: 'm1' },
+          { id: 'm1', name: '重复' },
+          { id: 'm2', reasoning: { efforts: [{ id: 'high' }, { id: 'high', name: '重复' }, { name: '没有 id' }, null] } },
+          { name: '没有 id' },
+          null,
+        ],
+      },
       { models: [{ id: 'm2' }] },
       { id: 'p2', models: [] },
       null,
     ],
   });
-  assert.deepEqual(view.items, [{ provider: 'p1', model: 'm1', label: 'm1', providerName: 'p1' }]);
+  assert.deepEqual(view.items, [
+    { provider: 'p1', model: 'm1', label: 'm1', providerName: 'p1', efforts: [] },
+    {
+      provider: 'p1',
+      model: 'm2',
+      label: 'm2',
+      providerName: 'p1',
+      efforts: [{ id: 'high', label: 'high' }],
+    },
+  ]);
   assert.equal(view.default, null);
   assert.deepEqual(view.unavailableProviders, []);
+});
+
+test('模型目录：超长的 id 丢掉，展示名截断，档位数量封顶', () => {
+  const long = 'x'.repeat(201);
+  const view = parseModelCatalog({
+    groups: [
+      { id: long, models: [{ id: 'm' }] },
+      {
+        id: 'p',
+        name: 'n'.repeat(300),
+        models: [
+          { id: long, name: 'gone' },
+          {
+            id: 'm',
+            name: 'm'.repeat(300),
+            reasoning: {
+              efforts: [
+                { id: long, name: '超长 id' },
+                ...Array.from({ length: 40 }, (_, index) => ({ id: `e${index}`, name: 'e'.repeat(300) })),
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+  // provider 与模型 id 存不进去的（>200）不进下拉；展示名只截断。
+  assert.deepEqual(view.items.map((item) => item.model), ['m']);
+  assert.equal(view.items[0]?.providerName.length, 200);
+  assert.equal(view.items[0]?.label.length, 200);
+  // 一模型最多 32 档，超长 id 的档位先被丢掉，展示名截断。
+  assert.equal(view.items[0]?.efforts.length, 32);
+  assert.equal(view.items[0]?.efforts[0]?.id, 'e0');
+  assert.equal(view.items[0]?.efforts[0]?.label.length, 200);
 });
 
 test('模型目录：不是对象、没有分组都算空目录，不是不可用', () => {
@@ -92,6 +181,8 @@ test('模型目录：不是对象、没有分组都算空目录，不是不可�
 
 test('模型目录：宿主的默认模型形状不对就当没有默认', () => {
   assert.equal(parseModelCatalog({ groups: [], default: { provider: 'p' } }).default, null);
+  // 默认值上的推理等级跟模型选择同一套规则：坏推理等级整条当没配。
+  assert.equal(parseModelCatalog({ groups: [], default: { provider: 'p', model: 'm', reasoningEffort: 3 } }).default, null);
 });
 
 test('模型目录：没有会话服务时不可用并给出原因，不当成空目录', async () => {
@@ -125,8 +216,8 @@ test('模型目录：读成功就按目录拍平', async () => {
 });
 
 interface FakeAgent {
-  selected: { provider: string; model: string }[];
-  model: { select(selection: { provider: string; model: string }): void };
+  selected: { provider: string; model: string; reasoningEffort?: string }[];
+  model: { select(selection: { provider: string; model: string; reasoningEffort?: string }): void };
 }
 
 function fakeLookup(agent: FakeAgent | undefined, options: { throws?: boolean } = {}) {
@@ -139,7 +230,7 @@ function fakeLookup(agent: FakeAgent | undefined, options: { throws?: boolean } 
 }
 
 function fakeAgent(options: { throws?: boolean } = {}): FakeAgent {
-  const selected: { provider: string; model: string }[] = [];
+  const selected: { provider: string; model: string; reasoningEffort?: string }[] = [];
   return {
     selected,
     model: {
@@ -153,7 +244,7 @@ function fakeAgent(options: { throws?: boolean } = {}): FakeAgent {
 
 interface LoggedAgent {
   sessionId: string;
-  selected: { provider: string }[];
+  selected: { provider: string; model: string; reasoningEffort?: string }[];
 }
 
 function loggedLookup(events: string[], agent: LoggedAgent | undefined) {
@@ -162,7 +253,7 @@ function loggedLookup(events: string[], agent: LoggedAgent | undefined) {
       return sessionId === agent?.sessionId
         ? {
           model: {
-            select(selection: { provider: string; model: string }) {
+            select(selection: { provider: string; model: string; reasoningEffort?: string }) {
               events.push(`select:${sessionId}`);
               agent.selected.push(selection);
             },
@@ -174,7 +265,7 @@ function loggedLookup(events: string[], agent: LoggedAgent | undefined) {
 }
 
 function choice(options: {
-  initial: { provider: string; model: string } | null;
+  initial: { provider: string; model: string; reasoningEffort?: string } | null;
   agents: { get?(sessionId: string): any } | null;
   bound?: string;
 }): DirectModelChoice {
@@ -186,30 +277,37 @@ function choice(options: {
   });
 }
 
-test('钉模型：同一个会话同一个值只钉一次，换值或换会话再钉', () => {
+test('钉模型：同一个会话同一个值只钉一次，换值（含只换推理等级）或换会话再钉', () => {
   const events: string[] = [];
-  const agent = { sessionId: 's-1', selected: [] as { provider: string }[] };
+  const agent = { sessionId: 's-1', selected: [] as { provider: string; model: string; reasoningEffort?: string }[] };
   const model = choice({ initial: { provider: 'p', model: 'm' }, agents: loggedLookup(events, agent), bound: 's-1' });
 
   assert.equal(model.applyToSession('s-1'), true);
   assert.equal(model.applyToSession('s-1'), true);
   assert.deepEqual(events, ['select:s-1']);
+  assert.deepEqual(agent.selected, [{ provider: 'p', model: 'm' }]);
 
   // 换值：需要重新钉（面板刚改过）。
-  model.use({ provider: 'p2', model: 'm2' });
+  model.use({ provider: 'p2', model: 'm2', reasoningEffort: 'high' });
   assert.equal(model.applyToSession('s-1'), true);
   assert.deepEqual(events, ['select:s-1', 'select:s-1']);
+  assert.deepEqual(agent.selected.at(-1), { provider: 'p2', model: 'm2', reasoningEffort: 'high' });
+
+  // 只换推理等级也是新值：再钉一���。
+  model.use({ provider: 'p2', model: 'm2', reasoningEffort: 'low' });
+  assert.equal(model.applyToSession('s-1'), true);
+  assert.deepEqual(events, ['select:s-1', 'select:s-1', 'select:s-1']);
 
   // 换会话（重置绑定后新建）：也要钉。
   assert.equal(model.applyToSession('s-2'), false);
-  assert.deepEqual(events, ['select:s-1', 'select:s-1']);
+  assert.deepEqual(events, ['select:s-1', 'select:s-1', 'select:s-1']);
 });
 
 test('钉模型：会话还没起时不记「已钉」，下一次提交会再试一次', () => {
   const events: string[] = [];
   let lookup: { get?(sessionId: string): any } | null = null;
   const model = new DirectModelChoice({
-    initial: { provider: 'p', model: 'm' },
+    initial: { provider: 'p', model: 'm', reasoningEffort: 'high' },
     agents: () => lookup,
     boundSession: () => 's-1',
     catalog: () => null,
@@ -227,7 +325,7 @@ test('钉模型：会话还没起时不记「已钉」，下一次提交会再�
 
 test('钉模型：清空后不再钉，也不影响已有记录', () => {
   const events: string[] = [];
-  const agent = { sessionId: 's-1', selected: [] as { provider: string }[] };
+  const agent = { sessionId: 's-1', selected: [] as { provider: string; model: string }[] };
   const model = choice({ initial: { provider: 'p', model: 'm' }, agents: loggedLookup(events, agent), bound: 's-1' });
   assert.equal(model.applyToSession('s-1'), true);
   model.use(null);
@@ -237,10 +335,17 @@ test('钉模型：清空后不再钉，也不影响已有记录', () => {
   assert.equal(model.snapshot(), null);
 });
 
-test('钉模型：活着的 Agent 上追加一条会话自己的选择', () => {
+test('钉模型：活着的 Agent 上追加一条会话自己的选择（推理等级一并带上）', () => {
   const agent = fakeAgent();
   assert.equal(applySessionModel(fakeLookup(agent), 'sess-1', { provider: 'p', model: 'm' }), true);
-  assert.deepEqual(agent.selected, [{ provider: 'p', model: 'm' }]);
+  assert.equal(
+    applySessionModel(fakeLookup(agent), 'sess-1', { provider: 'p', model: 'm', reasoningEffort: 'high' }),
+    true,
+  );
+  assert.deepEqual(agent.selected, [
+    { provider: 'p', model: 'm' },
+    { provider: 'p', model: 'm', reasoningEffort: 'high' },
+  ]);
 });
 
 test('钉模型：没配、会话取不到、Agent 没有模型入口时什么都不做', () => {

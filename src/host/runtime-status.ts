@@ -14,7 +14,7 @@ import type { BusyMode } from './config.ts';
 import type { ModelRef } from '../shared/models.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 5;
+export const HOST_CONTRACT = 6;
 
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {
@@ -59,7 +59,7 @@ export interface RuntimeStatus {
     busyMode: BusyMode;
     running: boolean;
     available: boolean;
-    /** 直连会话用哪个模型；`null` 表示跟随 DSH 的默认模型（ADR-0025）。 */
+    /** 直连会话用哪个模型与推理等级；`null` 表示跟随 DSH 的默认模型（ADR-0025、ADR-0026）。 */
     model: ModelRef | null;
   };
   loggedIn: boolean;

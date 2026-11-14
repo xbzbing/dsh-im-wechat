@@ -5,9 +5,11 @@
  * 判据留在这份，加新设置项时不用再动整张卡。
  */
 
+import { catalogModel, effortOptions, modelOptions, modelRowId, modelRowName, providerOptions } from './model-route.ts';
 import { h } from './platform.ts';
 import { Button, Input, MenuPicker, Switch } from './ui.ts';
 import type { Translate } from './locales.ts';
+import type { ModelCatalogView } from '../shared/models.ts';
 
 type T = Translate;
 
@@ -115,4 +117,88 @@ export function MinutesRow(props: {
     // 校验不过就地说明：宿主会把值夹回区间，与其保存后被回读顶掉，不如先讲清楚。
     error !== null ? h('p', { className: 'wx-error' }, error) : null,
     draftHint !== null ? h('p', { className: 'wx-draft-hint' }, draftHint) : null);
+}
+
+/**
+ * 模型三级选择行：provider → model → 推理等级，选完一起保存。
+ *
+ * 三级各自是官方的下拉（`MenuPicker`），级联规则由 `model-route.ts` 的纯函数决定：
+ * 换 provider 时同名模型留下、换模型时模型仍声明的推理等级留下。空白推理等级表示用
+ * 模型自己的默认，所以第三级始终留一行「模型默认」。
+ */
+export function ModelRouteRow(props: {
+  t: T;
+  title: string;
+  description: string;
+  catalog: ModelCatalogView | null;
+  provider: string;
+  model: string;
+  effort: string;
+  disabled: boolean;
+  canSave: boolean;
+  onChangeProvider: (value: string) => void;
+  onChangeModel: (value: string) => void;
+  onChangeEffort: (value: string) => void;
+  onSave: () => Promise<void>;
+}) {
+  const { t, title, description, catalog, provider, model, effort, disabled, canSave } = props;
+  const activeModel = catalogModel(catalog, provider, model);
+  const efforts = Array.isArray(activeModel?.efforts) ? activeModel.efforts : [];
+  // 半截选择（有来源没模型）与「模型没有推理等级」是两种提示，都只在这里算一次。
+  const hint = provider !== '' && model === ''
+    ? t('direct.modelIncomplete')
+    : activeModel !== undefined && efforts.length === 0
+      ? t('direct.effortNone')
+      : null;
+  const modelValue = model === '' ? '' : modelRowId(provider, model);
+  // 没有推理等级可选的模型禁用第三级；但已保存的旧推理等级要留着能清回默认，不能一起锁死。
+  const effortDisabled = disabled || model === '' || (efforts.length === 0 && effort === '');
+  return h('div', { className: 'wx-field-block' },
+    h('div', { className: 'wx-setting-copy' },
+      h('span', { className: 'wx-setting-title' }, title),
+      h('span', { className: 'wx-setting-description' }, description)),
+    h('div', { className: 'wx-model-controls' },
+      h(MenuPicker, {
+        label: t('direct.modelProvider'),
+        value: provider,
+        items: providerOptions(catalog, provider, {
+          followDefault: t('direct.modelFollowDefault'),
+          missing: t('direct.modelMissing'),
+          unverified: t('direct.modelUnverified'),
+        }),
+        placeholder: t('direct.modelFollowDefault'),
+        disabled,
+        onChange: (next: string) => props.onChangeProvider(next),
+      }),
+      h(MenuPicker, {
+        label: t('direct.model'),
+        value: modelValue,
+        items: modelOptions(catalog, provider, modelValue, {
+          placeholder: t('direct.modelPick'),
+          missing: t('direct.modelMissing'),
+          unverified: t('direct.modelUnverified'),
+        }),
+        placeholder: t('direct.modelPick'),
+        disabled: disabled || provider === '',
+        onChange: (next: string) => props.onChangeModel(next === '' ? '' : modelRowName(next)),
+      }),
+      h(MenuPicker, {
+        label: t('direct.effort'),
+        value: effort,
+        items: effortOptions(catalog, provider, model, effort, {
+          default: t('direct.effortDefault'),
+          missing: t('direct.effortMissing'),
+          unverified: t('direct.effortUnverified'),
+        }),
+        placeholder: t('direct.effortDefault'),
+        disabled: effortDisabled,
+        onChange: (next: string) => props.onChangeEffort(next),
+      }),
+      h(Button, {
+        variant: 'outline',
+        size: 'sm',
+        disabled: disabled || !canSave,
+        onClick: () => void props.onSave(),
+      }, t('common.save'))),
+    hint !== null ? h('p', { className: 'wx-draft-hint' }, hint) : null);
 }

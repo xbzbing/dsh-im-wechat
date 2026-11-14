@@ -12,7 +12,6 @@ import {
 } from './config.ts';
 import type { BusyMode, StoredConfig } from './config.ts';
 import { DEFAULT_LONG_TASK_MINUTES, normalizeLongTaskMinutes } from './long-tasks.ts';
-import { sameModelRef } from './direct-model.ts';
 import type { ModelCatalogView, ModelRef } from '../shared/models.ts';
 import type { RuntimeStatus, WorkspaceCatalog } from './runtime-status.ts';
 import type { ReminderCenter } from './reminder-center.ts';
@@ -96,7 +95,8 @@ export async function saveQuestionSettings(
 }
 
 /**
- * 保存独立模式设置：工作区、提交方式、模型，或重置绑定（ADR-0009、ADR-0025）。
+ * 保存独立模式设置：工作区、提交方式、模型与推理等级，或重置绑定
+ * （ADR-0009、ADR-0025、ADR-0026）。
  *
  * `model: null` 是「跟随 DSH 默认」，不是「没改」——两者靠 `undefined` 区分。
  */
@@ -140,13 +140,21 @@ export async function saveDirect(
  * 两种情况放行：目录整体读不到，以及这个 provider 自己读失败（宿主只把失败的 provider
  * 放进 failures，整体仍算可用）——那时「目录里没有」不代表模型已下架，拦下来只会把
  * 一次无害的保存变成误报。
+ *
+ * 第三层同理：模型在目录里时，推理等级必须是它自己声明的那些。适配器拿到表外的 id 没有
+ * 兜底，所以这一条按「已下架」处理，要求主人重选，而不是悄悄降级成模型默认。
  */
 async function assertModel(host: PanelActionHost, model: ModelRef | null): Promise<void> {
   if (model === null) return;
   const catalog = await host.models();
   if (!catalog.available) return;
   if (catalog.unavailableProviders.includes(model.provider)) return;
-  if (!catalog.items.some((item) => sameModelRef(item, model))) {
+  const item = catalog.items.find((entry) => entry.provider === model.provider && entry.model === model.model);
+  if (item === undefined) {
     throw Object.assign(new Error('所选模型已不在宿主的模型目录里，请重新选择'), { code: 'invalid-config' });
+  }
+  const efforts = Array.isArray(item.efforts) ? item.efforts : [];
+  if (model.reasoningEffort !== undefined && !efforts.some((effort) => effort?.id === model.reasoningEffort)) {
+    throw Object.assign(new Error('所选推理等级已不在该模型的档位里，请重新选择'), { code: 'invalid-config' });
   }
 }

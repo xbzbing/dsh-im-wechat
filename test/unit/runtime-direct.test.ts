@@ -32,7 +32,7 @@ function fakeSession(options: { catalog?: unknown } = {}) {
 
 /** 宿主的 agents 服务：记录模型选择落在哪个会话上（不建真 Agent）。 */
 function fakeAgents(onSelect: () => void = () => undefined) {
-  const selected: { sessionId: string; provider: string; model: string }[] = [];
+  const selected: { sessionId: string; provider: string; model: string; reasoningEffort?: string }[] = [];
   return {
     selected,
     service: {
@@ -40,7 +40,7 @@ function fakeAgents(onSelect: () => void = () => undefined) {
         return {
           id,
           model: {
-            select(selection: { provider: string; model: string }) {
+            select(selection: { provider: string; model: string; reasoningEffort?: string }) {
               selected.push({ sessionId: id, ...selection });
               onSelect();
             },
@@ -236,7 +236,11 @@ test('独立模式：配了模型就钉在新建的会话上', async () => {
     const session = loggingSession(events);
     const agents = fakeAgents(() => events.push('select'));
     const runtime = new WeixinRuntime({
-      config: { dataDir: dir, superagent: false, directModel: { provider: 'p1', model: 'm1' } },
+      config: {
+        dataDir: dir,
+        superagent: false,
+        directModel: { provider: 'p1', model: 'm1', reasoningEffort: 'high' },
+      },
       createApi: api.createApi,
     });
     runtime.attachSessionController(session.controller);
@@ -244,7 +248,9 @@ test('独立模式：配了模型就钉在新建的会话上', async () => {
     await runtime.start();
 
     await waitFor(() => session.prompts.length > 0, '消息交给会话');
-    assert.deepEqual(agents.selected, [{ sessionId: 'sess-image', provider: 'p1', model: 'm1' }]);
+    assert.deepEqual(agents.selected, [
+      { sessionId: 'sess-image', provider: 'p1', model: 'm1', reasoningEffort: 'high' },
+    ]);
     // 模型必须在第一条消息之前钉上：顺序反了，这一轮就还用 DSH 默认模型。
     assert.deepEqual(events, ['select', 'prompt']);
     await runtime.stop();
@@ -281,10 +287,46 @@ test('面板选模型：已绑定的会话立刻换过去，并落盘等重启�
     await runtime.start();
     await waitFor(() => session.prompts.length > 0, '建好绑定会话');
 
-    await saveDirect(runtime.panelActions(), { model: { provider: 'p2', model: 'm2' } });
-    assert.deepEqual(agents.selected, [{ sessionId: 'sess-image', provider: 'p2', model: 'm2' }]);
-    assert.deepEqual(runtime.status().direct.model, { provider: 'p2', model: 'm2' });
-    assert.deepEqual((await new LocalConfigStore({ dir }).load()).directModel, { provider: 'p2', model: 'm2' });
+    await saveDirect(runtime.panelActions(), {
+      model: { provider: 'p2', model: 'm2', reasoningEffort: 'high' },
+    });
+    assert.deepEqual(agents.selected, [
+      { sessionId: 'sess-image', provider: 'p2', model: 'm2', reasoningEffort: 'high' },
+    ]);
+    assert.deepEqual(runtime.status().direct.model, { provider: 'p2', model: 'm2', reasoningEffort: 'high' });
+    assert.deepEqual((await new LocalConfigStore({ dir }).load()).directModel, {
+      provider: 'p2',
+      model: 'm2',
+      reasoningEffort: 'high',
+    });
+    await runtime.stop();
+  });
+});
+
+test('面板只清空推理等级：已绑定会话切回模型默认，模型不动', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const api = fakeApi({ batches: [[textBatch('9204', '你好')]] });
+    const session = fakeSession();
+    const agents = fakeAgents();
+    const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: api.createApi });
+    runtime.attachSessionController(session.controller);
+    runtime.attachAgents(agents.service);
+    await runtime.start();
+    await waitFor(() => session.prompts.length > 0, '建好绑定会话');
+
+    await saveDirect(runtime.panelActions(), {
+      model: { provider: 'p1', model: 'm1', reasoningEffort: 'high' },
+    });
+    assert.deepEqual(agents.selected.at(-1), {
+      sessionId: 'sess-image',
+      provider: 'p1',
+      model: 'm1',
+      reasoningEffort: 'high',
+    });
+    await saveDirect(runtime.panelActions(), { model: { provider: 'p1', model: 'm1' } });
+    assert.deepEqual(agents.selected.at(-1), { sessionId: 'sess-image', provider: 'p1', model: 'm1' });
+    assert.deepEqual(runtime.status().direct.model, { provider: 'p1', model: 'm1' });
     await runtime.stop();
   });
 });
@@ -305,10 +347,20 @@ test('面板清空模型：写 null 表示跟随 DSH 默认，不回落到 profi
   });
 });
 
-test('面板选模型：目录里没有的组合拒绝保存，目录里有才写', async () => {
+test('面板选模型：目录里没有的组合、目录里没有的推理等级都拒绝保存', async () => {
   await withDir(async (dir) => {
     const session = fakeSession({
-      catalog: { groups: [{ id: 'p1', name: 'P1', models: [{ id: 'm1', name: 'M1' }] }] },
+      catalog: {
+        groups: [{
+          id: 'p1',
+          name: 'P1',
+          models: [{
+            id: 'm1',
+            name: 'M1',
+            reasoning: { efforts: [{ id: 'low', name: '低' }, { id: 'high', name: '高' }], defaultEffort: 'low' },
+          }],
+        }],
+      },
     });
     const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: fakeApi().createApi });
     runtime.attachSessionController(session.controller);
@@ -320,6 +372,24 @@ test('面板选模型：目录里没有的组合拒绝保存，目录里有才�
     );
     assert.equal(runtime.status().direct.model, null);
 
+    // 推理等级不在模型声明的档位里：同样按坏配置拒绝。
+    await assert.rejects(
+      () => saveDirect(runtime.panelActions(), {
+        model: { provider: 'p1', model: 'm1', reasoningEffort: 'ultra' },
+      }),
+      (error: unknown) => (error as { code?: string }).code === 'invalid-config',
+    );
+    assert.equal(runtime.status().direct.model, null);
+
+    await saveDirect(runtime.panelActions(), {
+      model: { provider: 'p1', model: 'm1', reasoningEffort: 'high' },
+    });
+    assert.deepEqual(runtime.status().direct.model, {
+      provider: 'p1',
+      model: 'm1',
+      reasoningEffort: 'high',
+    });
+    // 留空推理等级 = 模型默认，也要能存。
     await saveDirect(runtime.panelActions(), { model: { provider: 'p1', model: 'm1' } });
     assert.deepEqual(runtime.status().direct.model, { provider: 'p1', model: 'm1' });
     await runtime.stop();
@@ -360,8 +430,15 @@ test('独立模式：模型目录读不到时照样能保存模型（不误拦�
     await runtime.start();
     assert.equal((await runtime.panelActions().models()).available, false);
 
-    await saveDirect(runtime.panelActions(), { model: { provider: 'p1', model: 'm1' } });
-    assert.deepEqual(runtime.status().direct.model, { provider: 'p1', model: 'm1' });
+    // 目录读不到时，带推理等级的保存也不误拦。
+    await saveDirect(runtime.panelActions(), {
+      model: { provider: 'p1', model: 'm1', reasoningEffort: 'high' },
+    });
+    assert.deepEqual(runtime.status().direct.model, {
+      provider: 'p1',
+      model: 'm1',
+      reasoningEffort: 'high',
+    });
     await runtime.stop();
   });
 });
@@ -380,9 +457,15 @@ test('独立模式：某个 provider 的目录读失败时，它的模型不算�
 
     const view = await runtime.panelActions().models();
     assert.deepEqual(view.unavailableProviders, ['p2']);
-    // p2 只是没读到，不能因此拒掉保存。
-    await saveDirect(runtime.panelActions(), { model: { provider: 'p2', model: 'm2' } });
-    assert.deepEqual(runtime.status().direct.model, { provider: 'p2', model: 'm2' });
+    // p2 只是没读到，不能因此拒掉保存（连推理等级一起放行）。
+    await saveDirect(runtime.panelActions(), {
+      model: { provider: 'p2', model: 'm2', reasoningEffort: 'ultra' },
+    });
+    assert.deepEqual(runtime.status().direct.model, {
+      provider: 'p2',
+      model: 'm2',
+      reasoningEffort: 'ultra',
+    });
     await runtime.stop();
   });
 });

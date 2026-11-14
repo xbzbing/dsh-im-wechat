@@ -9,6 +9,7 @@
 import { errorDetail, injectOptional } from './host-context.ts';
 import { saveDirect, saveEnabled, saveLongTask, saveQuestionSettings, saveSuperagent } from './panel-actions.ts';
 import { normalizeModelRef } from './direct-model.ts';
+import type { ModelRef } from '../shared/models.ts';
 import type { PanelRoute, PluginContext, PluginLogger } from './host-context.ts';
 import type { WeixinRuntime } from './runtime.ts';
 
@@ -129,7 +130,7 @@ async function handleEndpoint(
     }
     case ENDPOINTS.DIRECT_SET: {
       const record = payloadOf(payload);
-      const patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean; model?: { provider: string; model: string } | null } = {};
+      const patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean; model?: ModelRef | null } = {};
       if (record.workspaceId !== undefined) {
         if (typeof record.workspaceId !== 'string') throw codedError('workspaceId 必须是字符串', 'invalid-config');
         patch.workspaceId = record.workspaceId;
@@ -150,7 +151,7 @@ async function handleEndpoint(
         else {
           const model = normalizeModelRef(record.model);
           if (model === undefined) {
-            throw codedError('model 必须是 { provider, model } 两个非空字符串', 'invalid-config');
+            throw codedError('model 必须是 { provider, model, reasoningEffort? }，前两个是非空字符串', 'invalid-config');
           }
           patch.model = model;
         }

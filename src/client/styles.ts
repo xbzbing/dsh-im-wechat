@@ -130,6 +130,10 @@ export const STYLES = `
 .wx-field-block .wx-picker { flex: 1 1 auto; min-width: 0; max-width: 420px; }
 /* 控件行里除下拉以外的控件不参与收缩，否则窄面板会把「保存」挤成两行（宿主 Button 可能包一层）。 */
 .wx-field-block .wx-threshold-control > *:not(.wx-picker) { flex: none; white-space: nowrap; }
+/* 模型三级下拉：provider / model / 推理等级同一行，窄面板自动换行；保存不参与收缩。 */
+.wx-model-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+.wx-model-controls .wx-picker { flex: 1 1 132px; min-width: 108px; max-width: 260px; }
+.wx-model-controls > *:not(.wx-picker) { flex: none; white-space: nowrap; }
 /* 可折叠卡片的头部：右侧是状态说明 + 展开/收起。 */
 .wx-head-collapsible { align-items: center; flex-wrap: wrap; row-gap: 8px; }
 /* 标题块至少占 220px：窄面板里状态与「展开」按钮换到下一行，标题不被挤成一字一行。 */

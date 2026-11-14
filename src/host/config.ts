@@ -63,7 +63,7 @@ export interface PluginConfig {
   directWorkspaceId?: string;
   /** 独立模式里回合正在跑时又来一条消息的提交方式：插话（默认，见 DEFAULT_DIRECT_BUSY_MODE）或排队（ADR-0009）。 */
   directBusyMode?: BusyMode;
-  /** 独立模式的微信会话用哪个模型；缺省跟随 DSH 的默认模型（ADR-0025）。 */
+  /** 独立模式的微信会话用哪个模型与推理等级；缺省跟随 DSH 的默认模型（ADR-0025、ADR-0026）。 */
   directModel?: ModelRef;
 }
 

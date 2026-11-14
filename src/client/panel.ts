@@ -16,12 +16,11 @@ import {
   isHostOlder,
   isLoginActive,
   isHttpsUrl,
-  modelRowId,
-  modelSelectionOf,
   qrImageUrl,
   validateMinutes,
   validateQuestionDelay,
 } from './logic.ts';
+import { effortForModel, modelForProvider, modelSelectionOf } from './model-route.ts';
 import type { ModelCatalogView } from '../shared/models.ts';
 import type { Translate } from './locales.ts';
 import { h, useCallback, useEffect, useMemo, useRef, useState } from './platform.ts';
@@ -65,9 +64,10 @@ export function WeixinSettingsPanel(props: any) {
   const [workspacesReady, setWorkspacesReady] = useState(false);
   /** 宿主的模型目录（`null` 表示还没读到）；读失败也要落到一个「不可用 + 原因」的形状。 */
   const [models, setModels] = useState<ModelCatalogView | null>(null);
-  /** 模型下拉的草稿：行键给下拉用，`modelDraft` 是保存时的真值（`null` = 跟随 DSH 默认）。 */
-  const [modelValue, setModelValue] = useState('');
-  const [modelDraft, setModelDraft] = useState<{ provider: string; model: string } | null>(null);
+  /** 模型三级草稿：provider 空 = 跟随 DSH 默认，model 空 = 还没选，effort 空 = 模型默认。 */
+  const [modelProvider, setModelProvider] = useState('');
+  const [modelId, setModelId] = useState('');
+  const [modelEffort, setModelEffort] = useState('');
   const [modelDirty, setModelDirty] = useState(false);
   /** 本次会话里刚清空过模型：只用来提示「已绑定的会话仍用旧模型」，不常显。 */
   const [modelCleared, setModelCleared] = useState(false);
@@ -227,7 +227,7 @@ export function WeixinSettingsPanel(props: any) {
     workspaceId?: string;
     busyMode?: 'queue' | 'steer';
     reset?: boolean;
-    model?: { provider: string; model: string } | null;
+    model?: { provider: string; model: string; reasoningEffort?: string } | null;
   }) => {
     await applyAction('direct', () => rpcCall(ENDPOINTS.setDirect, patch), () => {
       if (patch.workspaceId !== undefined) setWorkspaceDirty(false);
@@ -283,17 +283,40 @@ export function WeixinSettingsPanel(props: any) {
   /** 已保存的模型：宿主回 `null` 表示跟随 DSH 默认；老宿主没有这个字段，同样按没配处理。 */
   const savedProvider = direct?.model?.provider;
   const savedModel = direct?.model?.model;
+  const savedEffort = direct?.model?.reasoningEffort;
   useEffect(() => {
     if (modelDirty) return;
-    const known = typeof savedProvider === 'string' && typeof savedModel === 'string';
-    setModelValue(known ? modelRowId(savedProvider, savedModel) : '');
-    setModelDraft(known ? { provider: savedProvider, model: savedModel } : null);
-  }, [savedProvider, savedModel, modelDirty]);
+    setModelProvider(typeof savedProvider === 'string' ? savedProvider : '');
+    setModelId(typeof savedModel === 'string' ? savedModel : '');
+    setModelEffort(typeof savedEffort === 'string' ? savedEffort : '');
+  }, [savedProvider, savedModel, savedEffort, modelDirty]);
 
-  /** 只改模型：把下拉里选中的那一行换算成选择再保存（清空就是跟随默认）。 */
+  /** 换 provider：新 provider 下仍声明同名模型才保留，否则连推理等级一起清掉。 */
+  const pickProvider = useCallback((value: string) => {
+    setModelDirty(true);
+    setModelProvider(value);
+    const nextModel = value === '' ? '' : modelForProvider(models, value, modelId);
+    setModelId(nextModel);
+    setModelEffort(nextModel === '' ? '' : effortForModel(models, value, nextModel, modelEffort));
+  }, [models, modelId, modelEffort]);
+
+  /** 换模型：新模型仍声明这档推理等级才保留。 */
+  const pickModel = useCallback((value: string) => {
+    setModelDirty(true);
+    setModelId(value);
+    setModelEffort(value === '' ? '' : effortForModel(models, modelProvider, value, modelEffort));
+  }, [models, modelProvider, modelEffort]);
+
+  /** 换推理等级：空值就是模型默认。 */
+  const pickEffort = useCallback((value: string) => {
+    setModelDirty(true);
+    setModelEffort(value);
+  }, []);
+
+  /** 保存三级选择：provider 或 model 为空就是跟随 DSH 默认。 */
   const saveModel = useCallback(async () => {
-    await saveDirect({ model: modelDraft ?? null });
-  }, [modelDraft, saveDirect]);
+    await saveDirect({ model: modelSelectionOf(modelProvider, modelId, modelEffort) });
+  }, [modelProvider, modelId, modelEffort, saveDirect]);
 
   if (loading && !status) {
     return h('div', { className: 'wx-root wx-loading', 'data-plugin': 'dsh-im-wechat' },
@@ -381,12 +404,10 @@ export function WeixinSettingsPanel(props: any) {
       },
       onToggleExpand: () => setDirectOpen(!directExpanded),
       superagent, directExpanded, direct, workspaceId, workspaces, workspacesReady, hostOlder, busy,
-      models, modelValue, modelCleared,
-      onModelChange: (value: string) => {
-        setModelDirty(true);
-        setModelValue(value);
-        setModelDraft(modelSelectionOf(value, models));
-      },
+      models, modelProvider, modelId, modelEffort, modelCleared,
+      onProviderChange: pickProvider,
+      onModelChange: pickModel,
+      onEffortChange: pickEffort,
       saveModel,
     }),
     h(RuntimeSection, { t, status }),

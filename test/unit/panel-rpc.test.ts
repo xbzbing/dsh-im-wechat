@@ -42,7 +42,13 @@ function harness(options: { recordSave?: boolean } = {}): Harness {
     models: async () => ({
       available: true,
       default: { provider: 'p1', model: 'm1' },
-      items: [{ provider: 'p1', model: 'm1', label: 'M1', providerName: 'P1' }],
+      items: [{
+        provider: 'p1',
+        model: 'm1',
+        label: 'M1',
+        providerName: 'P1',
+        efforts: [{ id: 'low', label: '低' }, { id: 'high', label: '高' }],
+      }],
       unavailableProviders: [],
     }),
     resetDirect: async () => {
@@ -181,12 +187,18 @@ test('独立模式设置转发给运行期，非法值在边界挡住', async ()
   assert.equal(badReset.result.error.code, 'invalid-config');
 });
 
-test('独立模式的模型：能存、能清空（null），非法形状在边界挡住', async () => {
+test('独立模式的模型：能存（含推理等级）、能清空（null），非法形状在边界挡住', async () => {
   const h = harness({ recordSave: true });
-  const saved = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: { provider: 'p1', model: 'm1' } }));
+  const saved = await call(h, envelope(ENDPOINTS.DIRECT_SET, {
+    model: { provider: 'p1', model: 'm1', reasoningEffort: 'high' },
+  }));
   assert.equal(saved.result.ok, true);
   // 顺序：先落盘，再钉会话（落盘失败还去钉，重启后就对不上了）。
-  assert.deepEqual(h.calls, ['directModel:{"provider":"p1","model":"m1"}', 'save', 'applyDirectModel']);
+  assert.deepEqual(h.calls, [
+    'directModel:{"provider":"p1","model":"m1","reasoningEffort":"high"}',
+    'save',
+    'applyDirectModel',
+  ]);
 
   // null 是「跟随 DSH 默认」，必须能存进去，不能被当成没填。
   h.calls.length = 0;
@@ -209,6 +221,16 @@ test('独立模式的模型：能存、能清空（null），非法形状在边�
   assert.equal(badType.result.error.code, 'invalid-config');
   const emptyHalf = await call(h, envelope(ENDPOINTS.DIRECT_SET, { model: { provider: ' ', model: 'm1' } }));
   assert.equal(emptyHalf.result.error.code, 'invalid-config');
+  // 推理等级是可选字符串：给了别的类型或目录里没有的 id，都不许进会话。
+  const badEffort = await call(h, envelope(ENDPOINTS.DIRECT_SET, {
+    model: { provider: 'p1', model: 'm1', reasoningEffort: 3 },
+  }));
+  assert.equal(badEffort.result.error.code, 'invalid-config');
+  const unknownEffort = await call(h, envelope(ENDPOINTS.DIRECT_SET, {
+    model: { provider: 'p1', model: 'm1', reasoningEffort: 'ultra' },
+  }));
+  assert.equal(unknownEffort.result.error.code, 'invalid-config');
+  assert.deepEqual(h.calls, []);
 });
 
 test('独立模式的模型：落盘失败就不去钉会话，错误照常回给面板', async () => {

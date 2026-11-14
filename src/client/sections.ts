@@ -11,15 +11,15 @@ import {
   describeLoginPhase,
   formatTime,
   healthText,
-  modelOptions,
   standaloneSettingsLocked,
   validateMinutes,
   validateQuestionDelay,
   workspaceOptions,
 } from './logic.ts';
+import { modelSaveable } from './model-route.ts';
 import { h } from './platform.ts';
 import type { ModelCatalogView } from '../shared/models.ts';
-import { Fact, Metric, MinutesRow, PickerRow, SwitchRow } from './rows.ts';
+import { Fact, Metric, MinutesRow, ModelRouteRow, PickerRow, SwitchRow } from './rows.ts';
 import { Button, IconCopy, IconLink, Input, StateDot } from './ui.ts';
 import type { Translate } from './locales.ts';
 
@@ -267,7 +267,7 @@ export function ReminderSection(props: {
         }))));
 }
 
-/** 独立模式区：插话、工作区、模型与绑定（ADR-0009、ADR-0025）。 */
+/** 独立模式区：插话、工作区、模型与推理等级、绑定（ADR-0009、ADR-0025、ADR-0026）。 */
 export function DirectSection(props: {
   t: T;
   saveDirect: (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean }) => Promise<void>;
@@ -281,17 +281,23 @@ export function DirectSection(props: {
   workspacesReady: boolean;
   /** 宿主的模型目录（`null` 表示还没读到）。 */
   models: ModelCatalogView | null;
-  modelValue: string;
+  /** 模型三级草稿：provider 空 = 跟随 DSH 默认；model 空 = 还没选；effort 空 = 模型默认。 */
+  modelProvider: string;
+  modelId: string;
+  modelEffort: string;
   /** 本次会话里刚清空过模型：提示「已绑定会话仍用旧模型」，不常显。 */
   modelCleared: boolean;
+  onProviderChange: (value: string) => void;
   onModelChange: (value: string) => void;
+  onEffortChange: (value: string) => void;
   saveModel: () => Promise<void>;
   hostOlder: boolean;
   busy: string;
 }) {
   const { t, saveDirect, onWorkspaceChange, onToggleExpand } = props;
   const { superagent, directExpanded, direct, workspaceId, workspaces, workspacesReady, hostOlder, busy } = props;
-  const { models, modelValue, modelCleared, onModelChange, saveModel } = props;
+  const { models, modelProvider, modelId, modelEffort, modelCleared, saveModel } = props;
+  const { onProviderChange, onModelChange, onEffortChange } = props;
   const directBusy = direct?.busyMode === 'steer';
   // 同形的禁用条件只算一次：四份拷贝已经漂移过（重置绑定曾少了 available 判断）。
   const directLocked = standaloneSettingsLocked({ superagent, hostOlder, busy }) || direct?.available === false;
@@ -341,20 +347,20 @@ export function DirectSection(props: {
             onChange: onWorkspaceChange,
             onSave: () => saveDirect({ workspaceId }),
           }),
-          h(PickerRow, {
+          h(ModelRouteRow, {
             t,
             title: t('direct.model'),
             description: t('direct.modelDescription'),
-            value: modelValue,
-            items: modelOptions(models, modelValue, {
-              followDefault: t('direct.modelFollowDefault'),
-              missing: t('direct.modelMissing'),
-              unverified: t('direct.modelUnverified'),
-            }),
-            placeholder: t('direct.modelUnselected'),
+            catalog: models,
+            provider: modelProvider,
+            model: modelId,
+            effort: modelEffort,
             // 目录整体读不到时不让人乱选：能列出目录才谈「选目录里的模型」。
             disabled: directLocked || models === null || models.available === false,
-            onChange: onModelChange,
+            canSave: modelSaveable(modelProvider, modelId),
+            onChangeProvider: onProviderChange,
+            onChangeModel: onModelChange,
+            onChangeEffort: onEffortChange,
             onSave: saveModel,
           }),
           direct?.bound

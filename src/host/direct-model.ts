@@ -1,19 +1,26 @@
 /**
- * 独立模式会话的模型（ADR-0025）：面板下拉的候选来自宿主的模型目录，选中的模型钉在
- * 直连会话自己身上。
+ * 独立模式会话的模型与推理等级（ADR-0025、ADR-0026）：面板下拉的候选来自宿主的模型
+ * 目录，选中的 provider/model/effort 钉在直连会话自己身上。
  *
  * 钉模型用 Agent 自己的 `model.select`——它只往这个会话追加一条 `model/selection` 事件，
  * **不是** `sessionController.selectModel`：后者会把选择顺带写成 DSH 的全局默认模型，
- * 主人 Web 端新建的会话会跟着换（否决方案见 ADR-0025）。模型从目录里消失时不做兜底，
- * 面板会把已保存的值标成不可用，让主人重选。
+ * 主人 Web 端新建的会话会跟着换（否决方案见 ADR-0025）。模型或推理等级从目录里消失时不做
+ * 兜底，面板会把已保存的值标成不可用，让主人重选。
  */
 
 import { messageOf } from './host-context.ts';
 import type { HostAgentModel } from './host-agents.ts';
-import type { ModelCatalogItem, ModelCatalogView, ModelRef } from '../shared/models.ts';
+import type { ModelCatalogEffort, ModelCatalogItem, ModelCatalogView, ModelRef } from '../shared/models.ts';
 
-/** provider 与 model id 的长度上限：面板是外部输入，落盘前给个硬边界。 */
+/** provider / model / 推理等级 id 的长度上限：面板是外部输入，落盘前给个硬边界。 */
 const MAX_MODEL_PART = 200;
+/** 一个模型最多列多少档推理等级：适配器出错时不把面板撑爆。 */
+const MAX_EFFORTS = 32;
+
+/** 目录里的展示名只用于显示，超长截断即可；id 超长则丢掉（存不进去）。 */
+function clipLabel(value: string): string {
+  return value.length > MAX_MODEL_PART ? value.slice(0, MAX_MODEL_PART) : value;
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -24,10 +31,11 @@ function asText(value: unknown): string {
 }
 
 /**
- * 收窄一次模型选择；缺任一半、只有空白或超长都算没配（跟随 DSH 默认）。
+ * 收窄一次模型选择；缺 provider 或 model、只有空白或超长都算没配（跟随 DSH 默认）。
  *
- * 只取 `provider` 与 `model` 两个字段：将来宿主给选择加上 `reasoningEffort` 之类，
- * 这里也不会把它悄悄带进配置（真要支持得显式加字段）。
+ * `reasoningEffort` 是可选的第三层：缺省、空白或 `null` 表示用模型自己的默认推理等级；
+ * 给了别的类型或超长就是坏输入，整条选择当没配——宁可不钉，也不把一个适配器不认识的
+ * 推理等级 id 写进会话。
  */
 export function normalizeModelRef(value: unknown): ModelRef | undefined {
   const record = asRecord(value);
@@ -36,12 +44,22 @@ export function normalizeModelRef(value: unknown): ModelRef | undefined {
   const model = asText(record.model);
   if (provider === '' || model === '') return undefined;
   if (provider.length > MAX_MODEL_PART || model.length > MAX_MODEL_PART) return undefined;
-  return { provider, model };
+  let reasoningEffort: string | undefined;
+  const rawEffort = record.reasoningEffort;
+  if (rawEffort !== undefined && rawEffort !== null) {
+    if (typeof rawEffort !== 'string') return undefined;
+    const effort = rawEffort.trim();
+    if (effort.length > MAX_MODEL_PART) return undefined;
+    if (effort !== '') reasoningEffort = effort;
+  }
+  return { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
 }
 
-/** 两次选择是否同一条路由；`null`（不选）与任何值都不相等。 */
+/** 两次选择是否同一条路由（含推理等级）；`null`（不选）与任何值都不相等。 */
 export function sameModelRef(left: ModelRef | null, right: ModelRef | null): boolean {
-  return left !== null && right !== null && left.provider === right.provider && left.model === right.model;
+  if (left === null || right === null) return false;
+  return left.provider === right.provider && left.model === right.model
+    && (left.reasoningEffort ?? '') === (right.reasoningEffort ?? '');
 }
 
 /** 宿主 `sessionController` 里读模型目录的方法（结构类型，不 import 宿主包）。 */
@@ -59,7 +77,7 @@ export function unavailableModels(reason: string): ModelCatalogView {
 }
 
 /**
- * 把 `sessionController.modelCatalog()` 的返回拍平成下拉行。
+ * 把 `sessionController.modelCatalog()` 的返回拍平成下拉行（含每个模型的推理等级）。
  *
  * 读不出来的分组（宿主的 `failures`）不进下拉，但把它们的 id 记进
  * `unavailableProviders`：这些 provider 下的模型不能被当成「已下架」。
@@ -72,18 +90,38 @@ export function parseModelCatalog(value: unknown): ModelCatalogView {
   for (const group of groups) {
     const entry = asRecord(group);
     const provider = asText(entry?.id);
-    if (provider === '') continue;
-    const providerName = asText(entry?.name) || provider;
+    if (provider === '' || provider.length > MAX_MODEL_PART) continue;
+    const providerName = clipLabel(asText(entry?.name) || provider);
     const models = Array.isArray(entry?.models) ? entry.models : [];
     for (const row of models) {
       const model = asRecord(row);
       const id = asText(model?.id);
-      if (id === '') continue;
+      if (id === '' || id.length > MAX_MODEL_PART) continue;
       // 行键只用 provider/model 拼：同一个 provider 声称两遍同一个模型时只留第一条。
       const key = `${provider}\u0000${id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      items.push({ provider, model: id, label: asText(model?.name) || id, providerName });
+      const reasoning = asRecord(model?.reasoning);
+      const efforts: ModelCatalogEffort[] = [];
+      const seenEfforts = new Set<string>();
+      for (const raw of Array.isArray(reasoning?.efforts) ? reasoning.efforts : []) {
+        if (efforts.length >= MAX_EFFORTS) break;
+        const effort = asRecord(raw);
+        const effortId = asText(effort?.id);
+        if (effortId === '' || effortId.length > MAX_MODEL_PART || seenEfforts.has(effortId)) continue;
+        seenEfforts.add(effortId);
+        efforts.push({ id: effortId, label: clipLabel(asText(effort?.name) || effortId) });
+      }
+      const defaultEffort = asText(reasoning?.defaultEffort);
+      const defaultEffortValid = defaultEffort !== '' && defaultEffort.length <= MAX_MODEL_PART;
+      items.push({
+        provider,
+        model: id,
+        label: clipLabel(asText(model?.name) || id),
+        providerName,
+        efforts,
+        ...(defaultEffortValid ? { defaultEffort } : {}),
+      });
     }
   }
   const failures = Array.isArray(record?.failures) ? record.failures : [];
@@ -136,7 +174,7 @@ export interface DirectModelOptions {
 export class DirectModelChoice {
   readonly #options: DirectModelOptions;
   #ref: ModelRef | null;
-  /** 上一次钉成功的会话与值：提交前补钉时用它去重。 */
+  /** 上一次钉成功的会话与值（含推理等级）：提交前补钉时用它去重。 */
   #applied: ({ sessionId: string } & ModelRef) | null = null;
 
   constructor(options: DirectModelOptions) {
@@ -172,7 +210,12 @@ export class DirectModelChoice {
     const applied = this.#applied;
     if (applied !== null && applied.sessionId === sessionId && sameModelRef(applied, ref)) return true;
     if (!applySessionModel(this.#options.agents(), sessionId, ref)) return false;
-    this.#applied = { sessionId, provider: ref.provider, model: ref.model };
+    this.#applied = {
+      sessionId,
+      provider: ref.provider,
+      model: ref.model,
+      ...(ref.reasoningEffort === undefined ? {} : { reasoningEffort: ref.reasoningEffort }),
+    };
     return true;
   }
 
@@ -211,7 +254,11 @@ export function applySessionModel(
   const model = agent?.model;
   if (model === undefined || model === null || typeof model.select !== 'function') return false;
   try {
-    model.select({ provider: ref.provider, model: ref.model });
+    model.select({
+      provider: ref.provider,
+      model: ref.model,
+      ...(ref.reasoningEffort === undefined ? {} : { reasoningEffort: ref.reasoningEffort }),
+    });
     return true;
   } catch {
     return false;

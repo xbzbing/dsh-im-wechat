@@ -4,13 +4,15 @@ import { test } from 'node:test';
 import { InboundPipeline } from '../../src/host/inbound-pipeline.ts';
 import type { InboundPipelineDeps } from '../../src/host/inbound-pipeline.ts';
 import type { SubmitResult } from '../../src/host/direct.ts';
+import type { InboundFiles } from '../../src/host/inbound.ts';
 import type { PromptPart } from '../../src/host/prompt-parts.ts';
 import type { WeixinBridge } from '../../src/host/superagent/bridge.ts';
-import { CDN, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
+import { CDN, fileMessage, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
 
 interface Submitted {
   sender: string;
   content: readonly PromptPart[];
+  files?: InboundFiles;
 }
 
 /** 只为 `route` 用的最小依赖：轮询侧的状态用空壳占位，本组测试不碰。 */
@@ -46,8 +48,8 @@ function harness(options: {
     directAvailable: () => options.directAvailable ?? true,
     typingStart: (sender) => typing.push(sender),
     typingStop: (sender) => typingStopped.push(sender),
-    submitDirect: async (sender, content) => {
-      submitted.push({ sender, content });
+    submitDirect: async (sender, content, files) => {
+      submitted.push({ sender, content, ...(files !== undefined ? { files } : {}) });
       return options.submitResult ?? 'queued';
     },
     setHealth: () => {},
@@ -194,4 +196,68 @@ test('独立模式：插话成功时保留输入状态给回合事件收尾', as
   await pipeline.route(built.message, signal);
 
   assert.deepEqual(typingStopped, []);
+});
+
+test('独立模式：主人只发文件时下载并交给会话，补提示留给提交层', async () => {
+  const built = fileMessage(1, { names: ['报告.pdf'] });
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, submitted, typing } = harness({ fetch: fetch.impl });
+
+  await pipeline.route(built.message, signal);
+
+  assert.equal(fetch.calls(), 1);
+  assert.equal(submitted.length, 1);
+  assert.deepEqual(submitted[0]?.content, [], '文件不拼进 content，回执由提交层换');
+  assert.equal(submitted[0]?.files?.files.length, 1);
+  assert.equal(submitted[0]?.files?.files[0]?.name, '报告.pdf');
+  assert.deepEqual(typing, ['owner-1']);
+});
+
+test('独立模式：文字与文件一起时，content 是文字、文件单独传', async () => {
+  const built = fileMessage(1, { text: '总结这个', names: ['报告.pdf'] });
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, submitted } = harness({ fetch: fetch.impl });
+
+  await pipeline.route(built.message, signal);
+
+  assert.deepEqual(submitted[0]?.content, [{ type: 'text', text: '总结这个' }]);
+  assert.equal(submitted[0]?.files?.files.length, 1);
+});
+
+test('独立模式：文件没收下又没有别的可交付内容时，只把原因交给提交层', async () => {
+  const built = fileMessage(1, { names: ['大文件.pdf'] });
+  const message = { ...built.message, item_list: [{ type: 4, file_item: { ...built.message.item_list?.[0]?.file_item, len: '999999999' } }] };
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, submitted, typing } = harness({ fetch: fetch.impl });
+
+  await pipeline.route(message, signal);
+
+  assert.equal(fetch.calls(), 0);
+  assert.equal(submitted.length, 1);
+  assert.deepEqual(submitted[0]?.content, []);
+  assert.equal(submitted[0]?.files?.files.length, 0);
+  assert.equal(submitted[0]?.files?.dropped.length, 1);
+  assert.deepEqual(typing, [], '没有可提交的内容，不开输入状态');
+});
+
+test('独立模式：非主人发文件不下载也不提交', async () => {
+  const built = fileMessage(1);
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, submitted } = harness({ fetch: fetch.impl, isOwner: () => false });
+
+  await pipeline.route(built.message, signal);
+
+  assert.equal(fetch.calls(), 0);
+  assert.deepEqual(submitted, []);
+});
+
+test('独立模式：宿主没有会话服务时不下载文件', async () => {
+  const built = fileMessage(1);
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, submitted } = harness({ fetch: fetch.impl, directAvailable: false });
+
+  await pipeline.route(built.message, signal);
+
+  assert.equal(fetch.calls(), 0);
+  assert.deepEqual(submitted, []);
 });

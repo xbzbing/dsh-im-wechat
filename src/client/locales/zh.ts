@@ -97,7 +97,7 @@ export const zh = {
   'direct.handledByCore': '由超级助理接管',
   'direct.handledByPlugin': '由本插件直接处理',
   'direct.bridgeHint': '接入超级助理后，会话与模型由核心决定；关闭上方开关即可启用独立模式。',
-  'direct.standaloneHint': '未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，文字与图片交给会话，回答发回微信。',
+  'direct.standaloneHint': '未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，文字、图片与文件交给会话，回答发回微信。',
   'direct.steerTitle': '回合内插话',
   'direct.steerDescription': '默认打开：插入正在运行的回合；关闭时新消息排队等待当前回合结束。',
   'direct.model': '默认模型',

@@ -9,18 +9,25 @@
  * 会话选择只有一条规则：**第一次发消息时按所选工作区新建，之后一直用它**。
  * 工作区由 `workspaceId` 决定（默认是自动创建的「微信会话」，ADR-0018；为空只在
  * 默认工作区建不出来时出现，表示宿主默认位置），绑定落在 `direct.json`，重启沿用。
- * 文字与图片都交给会话：图片由本插件按 ADR-0004 的边界下载解密，再作为附件 part
- * 交给宿主（ADR-0017）。
+ * 文字、图片与文件都交给会话：图片由本插件按 ADR-0004 的边界下载解密，作为 base64
+ * 附件 part 交给宿主（ADR-0017）；文件换一条路——先由宿主 `fileUploads` 在同一个会话下
+ * 暂存，再把换回来的回执作为 part 提交（ADR-0027）。
  */
 
 import { randomUUID } from 'node:crypto';
 
 import { textFromAssistantMessage } from './long-tasks.ts';
 import { messageOf } from './host-context.ts';
-import { textContent, withImageHint } from './prompt-parts.ts';
+import { textContent, withAttachmentHint } from './prompt-parts.ts';
 import type { PromptPart } from './prompt-parts.ts';
+import { NO_FILES } from './inbound.ts';
+import type { InboundFiles } from './inbound.ts';
+import { attachmentKind, droppedNotice, fileDropNotice, onlyRejected, unsentFiles, uploadOwnerFiles, withDropped } from './direct-files.ts';
+import type { DroppedKind, HostFileUploader } from './direct-files.ts';
 import type { DirectBinding, DirectBindingStore } from './state/direct-binding.ts';
 import { MAX_TEXT_BYTES, splitText, toWeChatMarkdown } from './superagent/render.ts';
+
+export type { HostFileUploader } from './direct-files.ts';
 
 /** 提交方式：与 DSH 的 `InputSubmitMode` 同一套取值。 */
 export type BusyMode = 'queue' | 'steer';
@@ -81,9 +88,6 @@ export type SubmitResult = 'ignored' | 'unavailable' | 'queued' | 'steered' | 'f
 const DEFAULT_SUBMIT_TIMEOUT_MS = 30_000;
 const QUEUE_NOTICE = '已交给会话，这一轮结束后把回答发给你。';
 const STEER_NOTICE = '已插进正在跑的这一轮，本轮回答仍由原回合送回。';
-const IMAGE_DROPPED_NOTICE = '图片没有发出去（当前会话的模型可能不支持看图），已按文字发送。';
-const IMAGE_DROPPED_SUFFIX = '（图片没有发出去，已按文字发送）';
-const IMAGE_ONLY_REJECTED = '图片没有发出去：当前会话的模型可能不支持看图，换个模型或改用文字再发一次。';
 /**
  * 提交在我们自己的超时预算内没拿到回执。
  *
@@ -91,6 +95,8 @@ const IMAGE_ONLY_REJECTED = '图片没有发出去：当前会话的模型可能
  * 英文 DOMException 原文发到微信。先让主人别重复发送，回合真跑完时回答仍会送回。
  */
 const SUBMIT_TIMEOUT_NOTICE = '提交超时，可能已经进入会话；先别重复发送，回答会照常发给你。';
+/** 文件暂存吃满了提交预算：这条消息根本没提交，措辞不能沿用上面那句。 */
+const UPLOAD_TIMEOUT_NOTICE = '附件暂存超时，这条消息没有提交，请重发一次。';
 
 export class DirectChat {
   readonly #controller: () => DirectController | null;
@@ -111,6 +117,8 @@ export class DirectChat {
   #answer = '';
   /** 建会话进行中，避免连发两条建出两个会话。 */
   #creating: Promise<string> | null = null;
+  /** 宿主 `fileUploads` 服务；没接入时文件收得下但进不了会话（会给一句提示）。 */
+  #uploader: HostFileUploader | null = null;
 
   constructor(options: DirectChatOptions) {
     this.#controller = options.controller;
@@ -140,6 +148,11 @@ export class DirectChat {
     };
   }
 
+  /** `fileUploads` 服务接入（index.ts 的可选注入）：入站文件先暂存、再换成回执提交。 */
+  attachUploader(uploader: HostFileUploader | null): void {
+    this.#uploader = uploader;
+  }
+
   /** 丢掉绑定，下次发消息重新按工作区建会话。 */
   async reset(): Promise<void> {
     this.#running = false;
@@ -151,11 +164,22 @@ export class DirectChat {
    * 入站消息：只有主人、且宿主提供会话控制器时才接手。
    *
    * `content` 是文字与图片 part 组成的消息（ADR-0017），由 `buildPromptContent` 组装；
-   * 空白内容直接丢弃，不建会话。
+   * `files` 是已经下载解密、还没交给宿主暂存的文件（ADR-0027）。空白内容直接丢弃，不建
+   * 会话；一个文件都没收下、又没有别的可交付内容时只回一句原因，同样不建会话。
    */
-  async submit(sender: string, content: readonly PromptPart[]): Promise<SubmitResult> {
-    if (content.length === 0) return 'ignored';
+  async submit(
+    sender: string,
+    content: readonly PromptPart[],
+    files: InboundFiles = NO_FILES,
+  ): Promise<SubmitResult> {
     if (!this.#isOwner(sender)) return 'ignored';
+    // 没有可提交的东西（只有没收下的文件，或只有文件而宿主没有上传服务）：不建会话，
+    // 只回一句原因——文件不像图片可以静默少一张。
+    if (content.length === 0 && (files.files.length === 0 || this.#uploader === null)) {
+      const dropped = [...files.dropped, ...unsentFiles(files.files, this.#logger)];
+      if (dropped.length > 0) await this.#send(fileDropNotice(dropped));
+      return 'ignored';
+    }
     const controller = this.#controller();
     if (!controller) return 'unavailable';
     let sessionId: string;
@@ -171,25 +195,44 @@ export class DirectChat {
     const busy = await this.#isBusy(controller, sessionId);
     const mode: BusyMode = busy && this.#busyMode() === 'steer' ? 'steer' : 'queue';
     const requestId = randomUUID();
-    // 一次入站只给一个提交预算：被拒后的重发沿用同一个 signal，不再多等一个超时。
+    // 一次入站只给一个提交预算：暂存、提交与被拒后的重发共用同一个 signal。
     const signal = AbortSignal.timeout(this.#submitTimeoutMs);
-    let imageDropped = false;
+    // 文件必须等到会话 id 才能暂存：回执只对这一个会话有效（ADR-0027）。
+    const uploaded = await uploadOwnerFiles({
+      uploader: this.#uploader,
+      sessionId,
+      files: files.files,
+      signal,
+      ...(this.#logger ? { logger: this.#logger } : {}),
+    });
+    const dropped = [...files.dropped, ...uploaded.dropped];
+    if (dropped.length > 0) await this.#send(fileDropNotice(dropped));
+    // 暂存吃满提交预算时还没提交：这句不能说成「可能已经进入会话」。
+    if (signal.aborted) {
+      if (files.files.length > 0 && isSubmitTimeout(signal, undefined)) await this.#send(UPLOAD_TIMEOUT_NOTICE);
+      return 'failed';
+    }
+    // 补提示只影响真正提交的那一份：重发判定要的是主人自己写的文字（`textContent`）。
+    const parts = [...content, ...uploaded.parts];
+    if (parts.length === 0) return 'ignored';
+    let droppedAtSubmit: DroppedKind | null = null;
     try {
-      await this.#submitTo(controller, { requestId, sessionId, mode, content: withImageHint(content) }, signal);
+      await this.#submitTo(controller, { requestId, sessionId, mode, content: withAttachmentHint(parts) }, signal);
     } catch (error) {
-      if (!(await this.#retryTextOnly(controller, { requestId, sessionId, mode }, content, signal, error))) {
+      const kind = attachmentKind(parts);
+      if (!(await this.#retryTextOnly(controller, { requestId, sessionId, mode }, parts, signal, error))) {
         return 'failed';
       }
-      imageDropped = true;
+      droppedAtSubmit = kind;
     }
     if (mode === 'steer') {
-      await this.#send(withImageDropped(STEER_NOTICE, imageDropped));
+      await this.#send(withDropped(STEER_NOTICE, droppedAtSubmit));
       return 'steered';
     }
     // 排队的回合开跑前宿主可能还在处理上一条，提示只在「当前确实在跑」时给，
     // 平淡的一句排队提示会变成每条消息都多一条噪音。
-    if (busy) await this.#send(withImageDropped(QUEUE_NOTICE, imageDropped));
-    else if (imageDropped) await this.#send(IMAGE_DROPPED_NOTICE);
+    if (busy) await this.#send(withDropped(QUEUE_NOTICE, droppedAtSubmit));
+    else if (droppedAtSubmit !== null) await this.#send(droppedNotice(droppedAtSubmit));
     return 'queued';
   }
 
@@ -292,12 +335,13 @@ export class DirectChat {
   }
 
   /**
-   * 提交被明确拒收时，去掉图片用**同一个 requestId** 重发一次纯文字。
+   * 提交被明确拒收时，去掉附件用**同一个 requestId** 重发一次纯文字。
    *
    * 宿主按 requestId 去重（同一条请求再提交直接回 `accepted`，不会重复入队），所以重发
-   * 不会让主人收到两遍；拒收发生在建用户消息之前，图片超限、模型不支持看图都落到这里。
+   * 不会让主人收到两遍；拒收发生在建用户消息之前，图片超限、模型不支持看图、文件回执
+   * 失效都落到这里。
    *
-   * 三种情况不重试、照旧报错：没有图片（与改动前一致）、没有真实文字（只剩补的提示，
+   * 三种情况不重试、照旧报错：没有附件（与改动前一致）、没有真实文字（只剩补的提示，
    * 重发没有意义）、我们自己超时了（宿主可能已经受理，只是回执没回来）。
    */
   async #retryTextOnly(
@@ -308,8 +352,7 @@ export class DirectChat {
     error: unknown,
   ): Promise<boolean> {
     const text = textContent(content);
-    const hasImage = content.some((part) => part.type === 'image');
-    if (!hasImage || text.trim() === '' || signal.aborted) {
+    if (attachmentKind(content) === null || text.trim() === '' || signal.aborted) {
       await this.#reportSubmitFailure(content, error, isSubmitTimeout(signal, error));
       return false;
     }
@@ -332,8 +375,10 @@ export class DirectChat {
       return;
     }
     // 微信那头只发中文：宿主给的是英文技术细节（模型名、限额），留在日志里排障。
-    const imageOnly = content.every((part) => part.type === 'image');
-    await this.#send(imageOnly ? IMAGE_ONLY_REJECTED : `没能把消息交给会话：${detail}`);
+    // 连文字都没有才说「附件没发出去」：有文字而只是超时被砍的情况归上一句。
+    const kind = attachmentKind(content);
+    const attachmentsOnly = kind !== null && textContent(content).trim() === '';
+    await this.#send(attachmentsOnly ? onlyRejected(kind) : `没能把消息交给会话：${detail}`);
   }
 
   /** 状态快照里的时间戳：面板显示「最近一次绑定」。 */
@@ -350,10 +395,6 @@ export class DirectChat {
   nowMs(): number {
     return this.#now();
   }
-}
-
-function withImageDropped(notice: string, imageDropped: boolean): string {
-  return imageDropped ? `${notice}${IMAGE_DROPPED_SUFFIX}` : notice;
 }
 
 /**

@@ -1,24 +1,28 @@
 /**
- * 入站图片：从 CDN 取密文、解密、按文件头认类型（ADR-0004）。
+ * 入站媒体：从 CDN 取密文、解密，图片再按文件头认类型（ADR-0004、ADR-0027）。
  *
- * 协议事实（官方 openclaw-weixin 的图片入站路径）：
- * - 图片本体在 CDN 上，AES-128-ECB / PKCS#7；
- * - 密钥可能给在 `image_item.aeskey`（十六进制），优先级高于 `media.aes_key`；
+ * 协议事实（官方 openclaw-weixin 的入站路径）：
+ * - 图片与文件本体都在 CDN 上，AES-128-ECB / PKCS#7；
+ * - 图片的密钥可能给在 `image_item.aeskey`（十六进制），优先级高于 `media.aes_key`；
+ *   文件只在 `media.aes_key` 里给；
  * - `media.aes_key` 有两种编码：base64(16 字节裸密钥) 或 base64(32 个十六进制字符)；
  * - `media.full_url` 有时直接给可下载直链。
  *
  * 这里是插件唯一主动访问第三方地址的地方，所以边界写死：只允许 https、主机必须在
- * 微信域名白名单内、禁跟随重定向、限大小与时限；任何一项不满足都当作「这条没有图」。
+ * 微信域名白名单内、禁跟随重定向、限大小与时限；任何一项不满足都当作「这条没有附件」。
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
 import type { ImageMediaType } from '../../shared/media.ts';
 import { classifyNetworkFailure } from './api.ts';
-import type { CdnMedia, ImageItem } from './types.ts';
+import type { CdnMedia, FileItem, ImageItem } from './types.ts';
 
-/** 单张上限：密文与明文各判一次。 */
+/** 单张图片上限：密文与明文各判一次。 */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** 单条消息的文件总量上限（ADR-0027）：密文与明文各判一次，多个文件共享这份预算。 */
+export const MAX_FILE_BYTES = 32 * 1024 * 1024;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
@@ -116,11 +120,21 @@ function randomBytesDefault(size: number): Buffer {
   return randomBytes(size);
 }
 
-export type ImageDownloadResult =
-  | { ok: true; mediaType: ImageMediaType; data: Buffer }
-  | { ok: false; reason: string };
+/** 下载失败：只带分类后的原因，不带 URL、密钥与字节。 */
+export interface MediaFailure {
+  ok: false;
+  reason: string;
+}
 
-export interface ImageDownloadOptions {
+/** 一份已解密的媒体字节。 */
+export type MediaBytesResult = { ok: true; data: Buffer } | MediaFailure;
+
+export type ImageDownloadResult = { ok: true; mediaType: ImageMediaType; data: Buffer } | MediaFailure;
+
+/** 文件不判类型：解出来就是原文（PDF、Office、压缩包、二进制都照收）。 */
+export type FileDownloadResult = MediaBytesResult;
+
+export interface MediaDownloadOptions {
   cdnBaseUrl: string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
@@ -129,7 +143,7 @@ export interface ImageDownloadOptions {
   signal?: AbortSignal;
 }
 
-function fail(reason: string): ImageDownloadResult {
+function fail(reason: string): MediaFailure {
   return { ok: false, reason };
 }
 
@@ -187,27 +201,64 @@ async function readLimited(response: Response, maxBytes: number): Promise<Buffer
 }
 
 /**
- * 下载并解密一张图片。
+ * 下载并解密一张图片；解出来的字节必须能认成四种图片之一。
  *
  * 失败一律返回原因字符串，由调用方记一条不含 URL 与密钥的日志；这条消息的其余
  * 部分照常处理。
  */
 export async function downloadImage(
   item: ImageItem,
-  options: ImageDownloadOptions,
+  options: MediaDownloadOptions,
 ): Promise<ImageDownloadResult> {
   const media = item.media;
   if (!media) return fail('缺少 media 引用');
+  const key = parseHexKey(item.aeskey) ?? parseBase64Key(media.aes_key);
+  const result = await downloadDecrypted(media, key, {
+    ...options,
+    maxBytes: options.maxBytes ?? MAX_IMAGE_BYTES,
+  });
+  if (!result.ok) return result;
+  const mediaType = sniffImageType(result.data);
+  if (!mediaType) return fail('解密后不是 png/jpeg/webp/gif');
+  return { ok: true, mediaType, data: result.data };
+}
+
+/**
+ * 下载并解密一个文件：不认类型，解出来是什么就交给宿主什么（ADR-0027）。
+ *
+ * 文件项只有 `media.aes_key` 一种密钥来源，没有图片那种顶层十六进制字段。
+ */
+export async function downloadFile(
+  item: FileItem,
+  options: MediaDownloadOptions,
+): Promise<FileDownloadResult> {
+  const media = item.media;
+  if (!media) return fail('缺少 media 引用');
+  return downloadDecrypted(media, parseBase64Key(media.aes_key), {
+    ...options,
+    maxBytes: options.maxBytes ?? MAX_FILE_BYTES,
+  });
+}
+
+/** 图片与文件共用的下载解密切口：只差「用哪把密钥、解完还认不认类型」。 */
+async function downloadDecrypted(
+  media: CdnMedia,
+  key: Buffer | null,
+  options: MediaDownloadOptions,
+): Promise<MediaBytesResult> {
   const url = resolveMediaUrl(media, options.cdnBaseUrl);
   if (url === null) return fail('没有可用的下载地址');
 
-  const key = parseHexKey(item.aeskey) ?? parseBase64Key(media.aes_key);
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const maxBytes = options.maxBytes ?? MAX_IMAGE_BYTES;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   const onExternalAbort = (): void => controller.abort();
   if (options.signal) {
     if (options.signal.aborted) controller.abort();
@@ -229,12 +280,13 @@ export async function downloadImage(
   } catch (error) {
     // 只回分类码：底层异常的 message 会带完整 URL（直链有签名参数），不能进日志。
     if (options.signal?.aborted) return fail('下载被取消');
+    if (timedOut) return fail('下载超时');
     return fail(`下载失败（${classifyNetworkFailure(error)}）`);
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onExternalAbort);
   }
-  if (ciphertext === null) return fail(`图片超过 ${maxBytes} 字节上限`);
+  if (ciphertext === null) return fail(`超过 ${maxBytes} 字节上限`);
 
   let plaintext = ciphertext;
   if (key) {
@@ -247,7 +299,5 @@ export async function downloadImage(
     if (plaintext.length > maxBytes) return fail(`解密后超过 ${maxBytes} 字节上限`);
   }
 
-  const mediaType = sniffImageType(plaintext);
-  if (!mediaType) return fail('解密后不是 png/jpeg/webp/gif');
-  return { ok: true, mediaType, data: plaintext };
+  return { ok: true, data: plaintext };
 }

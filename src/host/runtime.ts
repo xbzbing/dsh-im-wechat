@@ -95,7 +95,8 @@ export class WeixinRuntime {
   readonly #directStore: DirectBindingStore;
   /** 独立模式直连会话用哪个模型（ADR-0025）；`null` 表示跟随 DSH 的默认模型。 */
   readonly #model: DirectModelChoice;
-  readonly #direct: DirectChat;
+  /** 独立模式直连会话：装配层用它把可选的 `fileUploads` 接进去（ADR-0027）。 */
+  readonly direct: DirectChat;
   #sessionController: DirectController | null = null;
   #agents: HostAgents | null = null;
   #workspaceRegistry: WorkspaceRegistry | null = null;
@@ -173,12 +174,12 @@ export class WeixinRuntime {
     this.#model = new DirectModelChoice({
       initial: this.#config.directModel ?? null,
       agents: () => this.#agents,
-      boundSession: () => this.#direct.binding()?.sessionId,
+      boundSession: () => this.direct.binding()?.sessionId,
       catalog: () => this.#sessionController,
       logger: this.#logger,
     });
     this.#directStore = new DirectBindingStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
-    this.#direct = new DirectChat({
+    this.direct = new DirectChat({
       controller: () => this.#sessionController,
       store: this.#directStore,
       workspaceId: () => (this.#directWorkspaceId.trim() !== '' ? this.#directWorkspaceId : this.#defaultWorkspace.id),
@@ -213,11 +214,11 @@ export class WeixinRuntime {
     this.#sessionEvents = {
       ownFeaturesActive: () => this.#ownFeaturesActive(),
       longTasks: this.#longTasks,
-      binding: () => this.#direct.binding(),
+      binding: () => this.direct.binding(),
       ownerUserId: () => this.#loginState?.userId ?? '',
       typingStop: (userId) => this.#typing.stop(userId),
       forwardPresented: (event) => forwardPresentedImages(event, this.#owner, this.#logger),
-      directHandle: (sessionId, event) => this.#direct.handleEvent(sessionId, event),
+      directHandle: (sessionId, event) => this.direct.handleEvent(sessionId, event),
     };
     this.#pipeline = new InboundPipeline({
       enabled: () => this.#enabled,
@@ -240,13 +241,13 @@ export class WeixinRuntime {
       isOwner: (sender) => this.#owner.isOwner(sender),
       replyQuestion: (text, identity) => this.#reminders.reply(text, identity),
       superagentEnabled: () => this.#superagent,
-      directAvailable: () => this.#direct.status().available,
+      directAvailable: () => this.direct.status().available,
       typingStart: (sender) => this.#typing.start(sender),
       typingStop: (sender) => this.#typing.stop(sender),
-      submitDirect: async (sender, content) => {
+      submitDirect: async (sender, content, files) => {
         // 默认工作区没建好就建会话，会落到宿主默认位置：先确保它在这里。
         await this.#defaultWorkspace.ensure();
-        return this.#direct.submit(sender, content).catch((error: unknown) => {
+        return this.direct.submit(sender, content, files).catch((error: unknown) => {
           this.#logger.warn?.('独立模式处理失败', messageOf(error));
           return 'failed' as const;
         });
@@ -283,7 +284,7 @@ export class WeixinRuntime {
       setDirectModel: (value) => this.#model.use(value),
       applyDirectModel: () => this.#model.applyToBoundSession(),
       models: () => this.#model.view(),
-      resetDirect: () => this.#direct.reset(),
+      resetDirect: () => this.direct.reset(),
     };
   }
 
@@ -397,7 +398,7 @@ export class WeixinRuntime {
       questionReminders: this.#reminders.enabled,
       questionDelayMinutes: this.#reminders.delayMinutes,
       trackingTasks: this.#longTasks.tracking,
-      direct: { ...this.#direct.status(), model: this.#model.snapshot() },
+      direct: { ...this.direct.status(), model: this.#model.snapshot() },
       longTaskThresholdMinutes: this.#longTasks.thresholdMinutes,
       login: this.#loginState,
       loginSnapshot: this.#loginController.snapshot(),

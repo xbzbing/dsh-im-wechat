@@ -10,7 +10,7 @@ import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
 import { LoginStateStore } from '../../src/host/state/login-state.ts';
 import type { PromptPart } from '../../src/host/prompt-parts.ts';
 import { ACCOUNT, LOGIN, OWNER, fakeApi, uploadFetch, waitFor, withDir } from './helpers/runtime-harness.ts';
-import { imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
+import { fileMessage, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
 
 /** 独立模式接上宿主会话服务：只记账，不建真会话。 */
 function fakeSession(options: { catalog?: unknown } = {}) {
@@ -466,6 +466,34 @@ test('独立模式：某个 provider 的目录读失败时，它的模型不算�
       model: 'm2',
       reasoningEffort: 'ultra',
     });
+    await runtime.stop();
+  });
+});
+
+test('独立模式：主人发的文件先暂存成回执，再作为 part 提交', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const built = fileMessage(1, { text: '总结这个', names: ['报告.pdf'] });
+    const api = fakeApi({ batches: [[built.message]] });
+    const fetch = imageFetch(built.payloads);
+    const session = fakeSession();
+    const names: string[] = [];
+    const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: api.createApi, fetch: fetch.impl });
+    runtime.attachSessionController(session.controller);
+    runtime.direct.attachUploader({
+      async uploadStream(request) {
+        names.push(request.name ?? '');
+        for await (const chunk of request.data) assert.ok(chunk.byteLength > 0);
+        return { receiptId: 'r-file' };
+      },
+    });
+    await runtime.start();
+    await waitFor(() => session.prompts.length > 0, '文件交给会话');
+    assert.deepEqual(session.prompts[0]?.content, [
+      { type: 'text', text: '总结这个' },
+      { type: 'file', receiptId: 'r-file' },
+    ]);
+    assert.deepEqual(names, ['报告.pdf']);
     await runtime.stop();
   });
 });

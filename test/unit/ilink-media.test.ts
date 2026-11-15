@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import {
   MAX_IMAGE_BYTES,
   decryptAesEcb,
+  downloadFile,
   downloadImage,
   isAllowedMediaUrl,
   parseBase64Key,
@@ -216,4 +217,63 @@ test('非 2xx/3xx 与超限都显式丢弃响应体', async () => {
     false,
   );
   assert.equal(cancelled.length, 3);
+});
+
+const FILE_BYTES = Buffer.from('%PDF-1.7\n% hello\n', 'ascii');
+
+test('文件下载走同一套边界：解密后原样返回，不做类型嗅探', async () => {
+  const key = randomBytes(16);
+  const { impl, urls } = fetchReturning(encrypt(FILE_BYTES, key));
+  const result = await downloadFile(
+    {
+      media: { encrypt_query_param: 'file-1', aes_key: key.toString('base64') },
+      file_name: '报告.pdf',
+      len: String(FILE_BYTES.length),
+    },
+    { cdnBaseUrl: CDN, fetch: impl },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.data, FILE_BYTES);
+  assert.equal(urls[0], `${CDN}/download?encrypted_query_param=file-1`);
+});
+
+test('文件没有 media 引用时按失败处理', async () => {
+  const result = await downloadFile({ file_name: 'a.pdf' }, { cdnBaseUrl: CDN });
+  assert.equal(result.ok, false);
+});
+
+test('文件超过体积上限时不做截断解密', async () => {
+  const key = randomBytes(16);
+  const { impl } = fetchReturning(encrypt(FILE_BYTES, key));
+  const result = await downloadFile(
+    { media: { encrypt_query_param: 'p', aes_key: key.toString('base64') } },
+    { cdnBaseUrl: CDN, fetch: impl, maxBytes: 8 },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.reason, /上限/);
+});
+
+test('文件密钥也认 base64(32 个十六进制字符) 这一种编码', async () => {
+  const key = randomBytes(16);
+  const encoded = Buffer.from(key.toString('hex'), 'ascii').toString('base64');
+  const { impl } = fetchReturning(encrypt(FILE_BYTES, key));
+  const result = await downloadFile(
+    { media: { encrypt_query_param: 'p', aes_key: encoded } },
+    { cdnBaseUrl: CDN, fetch: impl },
+  );
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.data, FILE_BYTES);
+});
+
+test('下载超时单独成一类原因，便于日志与微信提示区分', async () => {
+  const hanging = (async (_input: RequestInfo | URL, init?: RequestInit) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+  })) as typeof globalThis.fetch;
+  const result = await downloadFile(
+    { media: { encrypt_query_param: 'p', aes_key: randomBytes(16).toString('base64') } },
+    { cdnBaseUrl: CDN, fetch: hanging, timeoutMs: 5 },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, '下载超时');
 });

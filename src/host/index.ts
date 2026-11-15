@@ -13,6 +13,7 @@
 import { normalizePluginConfig } from './config.ts';
 import type { PluginConfig } from './config.ts';
 import { registerWeixinCommand } from './command.ts';
+import type { HostFileUploader } from './direct.ts';
 import { errorDetail, injectOptional } from './host-context.ts';
 import type { PluginContext } from './host-context.ts';
 import type { HostAgents } from './host-agents.ts';
@@ -60,6 +61,13 @@ export async function apply(
   injectOptional(ctx, 'sessionController', (scope) => {
     runtime.attachSessionController((scope as { sessionController?: unknown }).sessionController as never ?? null);
     scope.effect?.(() => () => runtime.attachSessionController(null), 'dsh-im-wechat: 解挂 sessionController');
+  });
+
+  // 独立模式的入站文件要先交给宿主暂存（ADR-0027）：没有这个服务时文件收不下，
+  // 提交层会明确回一句原因，不静默丢。
+  injectOptional(ctx, 'fileUploads', (scope) => {
+    runtime.direct.attachUploader((scope as { fileUploads?: HostFileUploader }).fileUploads ?? null);
+    scope.effect?.(() => () => runtime.direct.attachUploader(null), 'dsh-im-wechat: 解挂 fileUploads');
   });
 
   // 根会话识别：子代理的提问与回合不打扰主人。

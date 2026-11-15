@@ -99,7 +99,7 @@ export const en: Record<WeChatKey, string> = {
   'direct.handledByCore': 'Handled by My Superagent',
   'direct.handledByPlugin': 'Handled by this plugin',
   'direct.bridgeHint': 'With My Superagent connected, the core decides the session and model. Turn the switch above off to enable standalone mode.',
-  'direct.standaloneHint': 'Without My Superagent, this plugin talks to the session directly: the first message creates a session in the chosen workspace, text and images go to the session, and answers come back to WeChat.',
+  'direct.standaloneHint': 'Without My Superagent, this plugin talks to the session directly: the first message creates a session in the chosen workspace, text, images and files go to the session, and answers come back to WeChat.',
   'direct.steerTitle': 'Steer within a running turn',
   'direct.steerDescription': 'On by default: new messages are inserted into the running turn. Off: they queue until the current turn ends.',
   'direct.model': 'Default model',

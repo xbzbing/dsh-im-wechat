@@ -1,13 +1,15 @@
 /** 入站图片测试的公共夹具：假 CDN、加密过的 PNG、带图消息。 */
 import { createCipheriv, randomBytes } from 'node:crypto';
 
-import type { ImageItem, WeixinMessage } from '../../../src/host/ilink/types.ts';
+import type { FileItem, ImageItem, WeixinMessage } from '../../../src/host/ilink/types.ts';
 
 export const CDN = 'https://novac2c.cdn.weixin.qq.com/c2c';
 export const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.alloc(8, 0x01),
 ]);
+/** 一个假 PDF：内容是 ASCII，方便断言解密后的字节。 */
+export const PDF = Buffer.from('%PDF-1.7\n% weixin attachment\n', 'ascii');
 
 export function encrypt(plaintext: Buffer, key: Buffer): Buffer {
   const cipher = createCipheriv('aes-128-ecb', key, null);
@@ -60,5 +62,33 @@ export function imageOnlyMessage(): { message: WeixinMessage; payload: Buffer } 
       ],
     },
     payload: encrypt(PNG, key),
+  };
+}
+
+/** 一条「一句文字 + count 个文件」的消息，返回每个文件密文的明文（按 item 顺序）。 */
+export function fileMessage(
+  count: number,
+  options: { names?: readonly string[]; text?: string } = {},
+): { message: WeixinMessage; payloads: Buffer[] } {
+  const items: unknown[] = options.text === undefined ? [] : [{ type: 1, text_item: { text: options.text } }];
+  const payloads: Buffer[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const key = randomBytes(16);
+    const item: FileItem = {
+      media: { encrypt_query_param: `f-${index}`, aes_key: key.toString('base64') },
+      file_name: options.names?.[index] ?? `file-${index}.pdf`,
+      len: String(PDF.length),
+    };
+    items.push({ type: 4, msg_id: `file-${index}`, file_item: item });
+    payloads.push(encrypt(PDF, key));
+  }
+  return {
+    message: {
+      message_id: '3001',
+      from_user_id: 'owner-1',
+      create_time_ms: 1_760_000_000_000,
+      item_list: items as WeixinMessage['item_list'],
+    },
+    payloads,
   };
 }

@@ -1,5 +1,5 @@
 /**
- * 入站管道：长轮询 → 身份/图片转换 → 自有功能认领 → 独立模式直连 → 核心交付。
+ * 入站管道：长轮询 → 身份/附件转换 → 自有功能认领 → 独立模式直连 → 核心交付。
  *
  * 「收消息」半边：轮询的 `onMessage` 只有入站路由这一个消费者，两者是同一条流水线，
  * 放一起装配层才不会越长越胖（AGENTS.md 规模规则）。
@@ -14,7 +14,8 @@ import type { PollHealth } from './ilink/poll.ts';
 import type { SessionGuard } from './ilink/session-guard.ts';
 import type { WeixinMessage } from './ilink/types.ts';
 import { messageIdentity, messageText } from './ilink/identity.ts';
-import { downloadOwnerImages, toOwnerMessageDraft } from './inbound.ts';
+import { downloadOwnerFiles, downloadOwnerImages, toOwnerMessageDraft } from './inbound.ts';
+import type { InboundFiles } from './inbound.ts';
 import { buildPromptContent } from './prompt-parts.ts';
 import type { PromptPart } from './prompt-parts.ts';
 import { messageOf } from './host-context.ts';
@@ -52,7 +53,7 @@ export interface InboundPipelineDeps {
   typingStart(sender: string): void;
   typingStop(sender: string): void;
   /** 交给独立模式的会话；返回值决定「正在输入」要不要自己收尾。 */
-  submitDirect(sender: string, content: readonly PromptPart[]): Promise<SubmitResult>;
+  submitDirect(sender: string, content: readonly PromptPart[], files: InboundFiles): Promise<SubmitResult>;
   setHealth(health: BridgeHealth): void;
   noteError(message: string): void;
 }
@@ -130,11 +131,12 @@ export class InboundPipeline {
 
     // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；
     // 没配会话控制器、或不是主人时照旧到此为止。主人发的图片按 ADR-0017 下载成
-    // 附件 part，与文字一起交给会话；下载失败的图当这条没有图。
+    // 附件 part 与文字一起交给会话（下载失败的图当这条没有图）；文件按 ADR-0027
+    // 下载后单独交给提交层，由它换成宿主的暂存回执。
     if (!deps.superagentEnabled() || !binder) {
       if (!deps.ownFeaturesActive()) return;
       if (!deps.isOwner(sender)) return;
-      // 宿主没有会话服务时独立模式接不了：先判，别白白下载图片、开输入状态。
+      // 宿主没有会话服务时独立模式接不了：先判，别白白下载附件、开输入状态。
       if (!deps.directAvailable()) return;
       const images = await downloadOwnerImages(message, {
         cdnBaseUrl: deps.cdnBaseUrl,
@@ -143,13 +145,25 @@ export class InboundPipeline {
         logger: deps.logger,
         senderIsOwner: deps.isOwner,
       });
+      const files = await downloadOwnerFiles(message, {
+        cdnBaseUrl: deps.cdnBaseUrl,
+        ...(deps.fetch ? { fetch: deps.fetch } : {}),
+        signal,
+        logger: deps.logger,
+        senderIsOwner: deps.isOwner,
+      });
       const content = buildPromptContent(messageText(message.item_list), images);
-      // 图片阶段等了十几秒，这里按同一个判据重新看一眼：这期间停用、登出、停机或
+      // 附件阶段等了十几秒，这里按同一个判据重新看一眼：这期间停用、登出、停机或
       // 打开「接入超级助理」都会让独立模式失效，不能再开新提交。
-      if (content.length === 0 || !deps.ownFeaturesActive()) return;
-      // 图片下载完才开「正在输入」：一张都没成、又没有文字时不能留下一直闪的输入状态。
+      if (!deps.ownFeaturesActive()) return;
+      // 没有可提交的内容（只剩没收下的文件）：交给提交层回一句原因，不开输入状态。
+      if (content.length === 0 && files.files.length === 0) {
+        if (files.dropped.length > 0) await deps.submitDirect(sender, content, files);
+        return;
+      }
+      // 附件下载完才开「正在输入」：一个都没成、又没有文字时不能留下一直闪的输入状态。
       deps.typingStart(sender);
-      const result = await deps.submitDirect(sender, content);
+      const result = await deps.submitDirect(sender, content, files);
       // 进了会话就等回合结束再取消（turn/end 会停）；被拒、无服务时没有回合，自己收尾。
       // 输入状态按用户只留一份：这里收尾可能提前关掉上一轮的，但比挂着十分钟好。
       if (result !== 'queued' && result !== 'steered') deps.typingStop(sender);

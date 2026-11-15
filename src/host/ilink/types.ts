@@ -83,6 +83,7 @@ export interface VoiceItem {
 export interface FileItem {
   media?: CdnMedia;
   file_name?: string;
+  /** 明文字节数，十进制字符串。 */
   len?: string;
 }
 

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 
-import { downloadOwnerImages, toOwnerMessageDraft } from '../../src/host/inbound.ts';
+import { downloadOwnerFiles, downloadOwnerImages, toOwnerMessageDraft } from '../../src/host/inbound.ts';
 import type { WeixinMessage } from '../../src/host/ilink/types.ts';
-import { CDN, PNG, encrypt, imageFetch, imageMessage } from './helpers/inbound-fixtures.ts';
+import { CDN, PDF, PNG, encrypt, fileMessage, imageFetch, imageMessage } from './helpers/inbound-fixtures.ts';
 
 test('纯文本消息原样转成草稿', async () => {
   const draft = await toOwnerMessageDraft(
@@ -260,4 +260,173 @@ test('没有图片条目时不发任何请求', async () => {
   );
   assert.equal(fetch.calls(), 0);
   assert.deepEqual(images, []);
+});
+
+test('文件只给主人下载：非主人整条不处理', async () => {
+  const built = fileMessage(1);
+  const fetch = imageFetch(built.payloads);
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: () => false,
+  });
+  assert.equal(fetch.calls(), 0);
+  assert.deepEqual(result, { files: [], dropped: [] });
+});
+
+test('主人发的文件按原文件名下载解密', async () => {
+  const built = fileMessage(1, { names: ['报告.pdf'] });
+  const fetch = imageFetch(built.payloads);
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: (sender) => sender === 'owner-1',
+  });
+  assert.equal(fetch.calls(), 1);
+  assert.equal(result.files.length, 1);
+  assert.equal(result.files[0]?.name, '报告.pdf');
+  assert.deepEqual(Buffer.from(result.files[0]?.bytes ?? []), PDF);
+  assert.deepEqual(result.dropped, []);
+});
+
+test('文件名清洗掉路径分隔符与控制字符，清洗后为空才用序号', async () => {
+  const built = fileMessage(2, { names: ['../报告.pdf', 'a/b\\c\nd.pdf'] });
+  const fetch = imageFetch(built.payloads);
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: () => true,
+  });
+  assert.deepEqual(result.files.map((file) => file.name), ['报告.pdf', 'a_b_c_d.pdf']);
+
+  const unnamed = fileMessage(1, { names: ['  ..  '] });
+  const other = await downloadOwnerFiles(unnamed.message, {
+    cdnBaseUrl: CDN,
+    fetch: imageFetch(unnamed.payloads).impl,
+    senderIsOwner: () => true,
+  });
+  assert.equal(other.files[0]?.name, 'weixin-file-1');
+});
+
+test('超过总量上限的文件按 len 预检，不发起下载', async () => {
+  const built = fileMessage(1, { names: ['大文件.pdf'] });
+  const message = { ...built.message, item_list: [{ type: 4, file_item: { ...built.message.item_list?.[0]?.file_item, len: '999999999' } }] };
+  const fetch = imageFetch(built.payloads);
+  const result = await downloadOwnerFiles(message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: () => true,
+  });
+  assert.equal(fetch.calls(), 0);
+  assert.deepEqual(result.files, []);
+  assert.equal(result.dropped.length, 1);
+  assert.equal(result.dropped[0]?.name, '大文件.pdf');
+  assert.match(result.dropped[0]?.reason ?? '', /上限/);
+});
+
+test('一条消息最多收 3 个文件，超出部分不下载', async () => {
+  const built = fileMessage(5);
+  const fetch = imageFetch(built.payloads);
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: () => true,
+  });
+  assert.equal(fetch.calls(), 3);
+  assert.equal(result.files.length, 3);
+});
+
+test('文件共享同一份总量预算：前一个占满后，后一个不下载', async () => {
+  const built = fileMessage(2);
+  const fetch = imageFetch(built.payloads);
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: () => true,
+    maxBytes: PDF.length,
+  });
+  assert.equal(fetch.calls(), 1);
+  assert.equal(result.files.length, 1);
+  assert.equal(result.dropped.length, 1);
+  assert.match(result.dropped[0]?.reason ?? '', /上限/);
+});
+
+test('解不出来的文件跳过、其余照常，原因不带 URL 与密钥', async () => {
+  const built = fileMessage(2);
+  const fetch = imageFetch([Buffer.from('not ciphertext'), built.payloads[1] ?? Buffer.alloc(0)]);
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: () => true,
+  });
+  assert.equal(fetch.calls(), 2);
+  assert.equal(result.files.length, 1);
+  assert.equal(result.dropped.length, 1);
+  assert.match(result.dropped[0]?.reason ?? '', /解密失败/);
+  assert.equal(result.dropped[0]?.name, 'file-0.pdf');
+});
+
+test('没有文件项的消息返回空结果', async () => {
+  const result = await downloadOwnerFiles(
+    { message_id: '1', from_user_id: 'owner-1', item_list: [{ type: 1, text_item: { text: 'hi' } }] },
+    { cdnBaseUrl: CDN, senderIsOwner: () => true },
+  );
+  assert.deepEqual(result, { files: [], dropped: [] });
+});
+
+test('文件项缺少 media 引用时记一条原因', async () => {
+  const result = await downloadOwnerFiles(
+    { message_id: '1', from_user_id: 'owner-1', item_list: [{ type: 4, file_item: { file_name: 'x.pdf' } }] },
+    { cdnBaseUrl: CDN, senderIsOwner: () => true },
+  );
+  assert.deepEqual(result.files, []);
+  assert.match(result.dropped[0]?.reason ?? '', /缺少 media/);
+});
+
+test('接入核心时文件不进草稿：只有文件的消息不产出草稿', async () => {
+  const built = fileMessage(1);
+  const fetch = imageFetch(built.payloads);
+  const draft = await toOwnerMessageDraft(built.message, {
+    account: 'bot',
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    imagesEnabled: true,
+    senderIsOwner: () => true,
+  });
+  assert.equal(fetch.calls(), 0, '核心协议没有文件能力，不下载');
+  assert.equal(draft, null);
+});
+
+test('接入核心时文字与文件一起发：草稿只带文字', async () => {
+  const built = fileMessage(1, { text: '看下这个 pdf' });
+  const draft = await toOwnerMessageDraft(built.message, { account: 'bot' });
+  assert.equal(draft?.text, '看下这个 pdf');
+  assert.equal(draft?.images, undefined);
+});
+
+test('超过 3 个文件的部分合成一条原因，不静默丢掉', async () => {
+  const built = fileMessage(5);
+  const fetch = imageFetch(built.payloads);
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: fetch.impl,
+    senderIsOwner: () => true,
+  });
+  assert.equal(result.files.length, 3);
+  assert.equal(result.dropped.length, 1);
+  assert.equal(result.dropped[0]?.name, '其余 2 个文件');
+  assert.match(result.dropped[0]?.reason ?? '', /最多 3 个/);
+});
+
+test('过长的中文文件名按字节截断，扩展名保留', async () => {
+  const long = `${'报告'.repeat(120)}.pdf`;
+  const built = fileMessage(1, { names: [long] });
+  const result = await downloadOwnerFiles(built.message, {
+    cdnBaseUrl: CDN,
+    fetch: imageFetch(built.payloads).impl,
+    senderIsOwner: () => true,
+  });
+  const name = result.files[0]?.name ?? '';
+  assert.ok(Buffer.byteLength(name, 'utf8') <= 200, '不超过宿主再清洗时的余量');
+  assert.ok(name.endsWith('.pdf'), '扩展名不能被截掉');
 });

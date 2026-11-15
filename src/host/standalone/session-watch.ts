@@ -227,21 +227,23 @@ export class SessionWatcher {
     }
     if (send !== undefined && this.#now() >= send.until) {
       this.#sends.delete(sessionId);
-      this.#turns.delete(sessionId);
+      // 同一会话还在跟踪时，这一轮的收尾仍归跟踪推送，不能把折叠状态一起丢掉。
+      if (!trace) this.#turns.delete(sessionId);
       this.#enqueue(sessionId, () => this.#deliver(`「${send.title || UNTITLED}」这一轮没有在 30 分钟内结束，不再等它了。`));
       if (!trace) return;
     }
 
     const data = asRecord(event.data) ?? {};
     const current = this.#sends.get(sessionId);
+    let skipSend = false;
     if (current?.pendingStart === true) {
       if (event.type === 'turn/start') {
         current.pendingStart = false;
       } else if (event.type === 'turn/end') {
-        // 排队期间结束的是上一轮：丢掉它的回答，等我们这一轮的 turn/start。
+        // 排队期间结束的是上一轮：不把它发回 /send；同一会话若在跟踪，这一轮仍归
+        // 跟踪推送，所以继续往下折叠。
         current.pendingStart = false;
-        this.#turns.delete(sessionId);
-        return;
+        skipSend = true;
       }
     }
     if (event.type === 'turn/start') {
@@ -274,12 +276,13 @@ export class SessionWatcher {
     if (event.type !== 'turn/end') return;
     this.#turns.delete(sessionId);
     const currentSend = this.#sends.get(sessionId);
-    if (currentSend !== undefined) this.#sends.delete(sessionId);
+    // 排队跳过的那一轮不能把观察一起删掉：我们这条还在队列里，等它自己的回合。
+    if (currentSend !== undefined && !skipSend) this.#sends.delete(sessionId);
     const currentTrace = this.#traces.find((entry) => entry.sessionId === sessionId);
     if (currentSend === undefined && currentTrace === undefined) return;
     const snapshot: TurnState = { ...turn };
     const reason = asRecord(data.reason);
-    if (currentSend !== undefined) {
+    if (currentSend !== undefined && !skipSend) {
       this.#enqueue(sessionId, () => this.#deliverSend(currentSend.title || UNTITLED, snapshot, reason));
     }
     if (currentTrace !== undefined) {

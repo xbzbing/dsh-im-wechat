@@ -190,3 +190,22 @@ test('会话改名：跟踪条目与 /send 的标题一起更新并落盘', asyn
   await h.watcher.drain();
   assert.match(h.sent[0]!, /转发的新名字/);
 });
+
+test('跟踪与 /send 落在同一会话：排队跳过上一轮只影响 /send，跟踪照常推送', async () => {
+  const h = harness();
+  await h.watcher.add('s-1', '会话一', 30);
+  h.watcher.trackSend('s-1', '会话一', '第二条', true);
+  // 上一轮结束：跟踪推这一轮，/send 不推。
+  h.watcher.handleEvent('s-1', { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+  await h.watcher.drain();
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0]!, /跟踪 ·「会话一」/);
+
+  // 我们这一轮：两边各推一条。
+  fold(h.watcher, 's-1', { prompt: '第二条', answer: '新回答' });
+  await h.watcher.drain();
+  assert.equal(h.sent.length, 3);
+  // 两条各自独立：/send 先入队，跟踪紧随其后。
+  assert.match(h.sent[1]!, /来自会话「会话一」/);
+  assert.match(h.sent[2]!, /跟踪 ·「会话一」/);
+});

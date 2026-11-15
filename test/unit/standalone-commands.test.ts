@@ -9,6 +9,7 @@ import {
 import { HELP_TEXT } from '../../src/host/standalone/command-text.ts';
 import type { SessionCatalog, SessionLister } from '../../src/host/standalone/session-list.ts';
 import type { SessionWatcher } from '../../src/host/standalone/session-watch.ts';
+import type { CommandStatusView } from '../../src/host/standalone/commands.ts';
 import type { ListingEntry, TraceEntry } from '../../src/host/state/standalone-commands.ts';
 
 const NOW = 1_700_000_000_000;
@@ -29,6 +30,8 @@ function harness(options: {
   attachedImages?: boolean;
   queued?: boolean;
   deliverFails?: boolean;
+  status?: CommandStatusView;
+  stopResult?: 'stopped' | 'idle' | 'unsupported' | 'failed';
 } = {}): Harness {
   const sent: string[] = [];
   const listing: ListingEntry[] = [];
@@ -86,6 +89,14 @@ function harness(options: {
       sent.push(text);
       return true;
     },
+    status: () => options.status ?? {
+      loggedIn: true,
+      health: { state: 'ok' },
+      pendingQuestions: 0,
+      pendingApprovals: 0,
+      direct: { bound: false, running: false, busyMode: 'queue', model: null },
+    },
+    stop: async () => options.stopResult ?? 'idle',
     now: () => NOW,
   });
   return state;
@@ -99,7 +110,7 @@ test('命令解析：只认命令名后跟空白或结尾，参数原样留下',
   assert.deepEqual(parseCommand('/trace stop 1'), { name: 'trace', rest: 'stop 1' });
   assert.deepEqual(parseCommand('/SEND 1 你好'), { name: 'send', rest: '1 你好' });
   assert.equal(parseCommand('/new-thing'), null);
-  assert.equal(parseCommand('/status'), null);
+  assert.equal(parseCommand('/answer'), null);
   assert.equal(parseCommand('帮我 /help'), null);
 });
 
@@ -107,7 +118,7 @@ test('帮助里写的命令都被真正识别，命令名集合没有漏', () =>
   for (const name of COMMAND_NAMES) {
     assert.match(HELP_TEXT, new RegExp(`\`/${name}`), `帮助里缺少 /${name}`);
   }
-  assert.deepEqual([...COMMAND_NAMES].sort(), ['help', 'list', 'new', 'reset', 'send', 'sessions', 'trace']);
+  assert.deepEqual([...COMMAND_NAMES].sort(), ['help', 'list', 'new', 'reset', 'send', 'sessions', 'status', 'stop', 'trace']);
 });
 
 test('/help 发一份命令说明', async () => {
@@ -273,7 +284,7 @@ test('/trace 没有跟踪时的列表与未知命令', async () => {
   const h = harness();
   await h.commands.run({ ...plain, text: '/trace' });
   assert.match(h.sent[0]!, /当前没有跟踪的会话/);
-  assert.equal(await h.commands.run({ ...plain, text: '/stop' }), false);
+  assert.equal(await h.commands.run({ ...plain, text: '/unknown' }), false);
 });
 
 test('/send 提交失败：说清原因并撤销观察，不留下等不到的条目', async () => {
@@ -323,4 +334,55 @@ test('/send 附图下载失败：有文字照常发并说明，只有图则拒�
   await h.commands.run({ text: '/send 1', hasImages: true, images: [] });
   assert.equal(h.delivered.length, 1);
   assert.match(h.sent[1]!, /图片没有下载到/);
+});
+
+test('/stop：分开说「已请求」「没在跑」「宿主不支持」「失败」', async () => {
+  for (const [result, expected] of [
+    ['stopped', /已请求停止当前任务/],
+    ['idle', /当前没有正在运行的会话/],
+    ['unsupported', /宿主不支持停止当前回合/],
+    ['failed', /停止失败/],
+  ] as const) {
+    const h = harness({ stopResult: result });
+    await h.commands.run({ ...plain, text: '/stop' });
+    assert.match(h.sent[0]!, expected);
+  }
+});
+
+test('/status：连接、当前会话、模型、待答与运行中的会话都有一行', async () => {
+  const h = harness({
+    catalog: {
+      sessions: [
+        { sessionId: 'session-a', title: '在跑的', updatedAt: NOW - 60_000, running: true, workspace: 'ws' },
+        { sessionId: 'session-b', title: '空闲的', updatedAt: NOW - 120_000, running: false, workspace: '' },
+      ],
+      available: true,
+    },
+    status: {
+      loggedIn: true,
+      accountTail: 'bot…@im.bot',
+      health: { state: 'ok' },
+      pendingQuestions: 2,
+      pendingApprovals: 1,
+      direct: {
+        bound: true,
+        sessionId: 'session-bound',
+        sessionTitle: '微信 · 主人',
+        running: true,
+        busyMode: 'steer',
+        model: { provider: 'p', model: 'm', reasoningEffort: 'high' },
+      },
+    },
+  });
+  await h.commands.run({ ...plain, text: '/status' });
+  const text = h.sent[0]!;
+  assert.match(text, /\| 连接 \| 在线（bot…@im\.bot） \|/);
+  assert.match(text, /微信 · 主人（运行中）/);
+  assert.match(text, /p\/m（推理等级 high）/);
+  assert.match(text, /插话/);
+  assert.match(text, /待答问题 \| 2 个/);
+  assert.match(text, /待审批 \| 1 个/);
+  assert.match(text, /运行中的会话\*\*（1 个）/);
+  assert.match(text, /在跑的/);
+  assert.doesNotMatch(text, /空闲的/);
 });

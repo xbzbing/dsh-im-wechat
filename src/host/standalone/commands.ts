@@ -1,5 +1,5 @@
 /**
- * 独立模式的文字命令：`/help` `/new` `/sessions` `/list` `/send` `/trace`。
+ * 独立模式的文字命令：`/help` `/new` `/sessions` `/list` `/send` `/trace` `/stop` `/status`。
  *
  * 只在没有接入核心时生效（接入后命令由核心解析，AGENTS.md 的安全红线）；只有主人
  * 的文本能走到这里。命令本身不进会话、不经过模型，回复也直接发回微信。
@@ -18,9 +18,11 @@ import {
   HELP_TEXT,
   SESSION_PAGE_SIZE,
   renderSessionList,
+  renderStatus,
   sessionIdMatches,
   renderTraceList,
 } from './command-text.ts';
+import type { StatusView } from './command-text.ts';
 import type { SessionLister, SessionSummary } from './session-list.ts';
 import {
   DEFAULT_TRACE_MINUTES,
@@ -29,10 +31,11 @@ import {
 import type { SessionWatcher } from './session-watch.ts';
 import { MAX_LISTING, MAX_TRACES } from '../state/standalone-commands.ts';
 import type { ListingEntry } from '../state/standalone-commands.ts';
+import type { ModelRef } from '../../shared/models.ts';
 
 /** 可识别的命令名（不含 `/`）；帮助文案与解析规则都以它为准。 */
 export const COMMAND_NAMES: readonly string[] = Object.freeze([
-  'new', 'reset', 'sessions', 'list', 'send', 'trace', 'help',
+  'new', 'reset', 'sessions', 'list', 'send', 'trace', 'stop', 'status', 'help',
 ]);
 
 // 命令名后面必须是空白或结尾：`/new-thing`、`/sendabc` 是普通文本，不能被当成命令。
@@ -57,6 +60,23 @@ export interface CommandInput {
   images: readonly OwnerImage[];
 }
 
+/** 命令要读的运行态（装配层从完整 status 里挑出来）。 */
+export interface CommandStatusView {
+  loggedIn: boolean;
+  accountTail?: string;
+  health: { state?: string; reason?: string };
+  pendingQuestions: number;
+  pendingApprovals: number;
+  direct: {
+    bound: boolean;
+    sessionId?: string;
+    sessionTitle?: string;
+    running: boolean;
+    busyMode: 'queue' | 'steer';
+    model: ModelRef | null;
+  };
+}
+
 /** 命令运行需要的端口；装配层给实现，测试给假实现。 */
 export interface CommandPorts {
   lister: SessionLister;
@@ -79,6 +99,10 @@ export interface CommandPorts {
     onAdmitted: (info: { queued: boolean }) => void,
   ) => Promise<void>;
   send: (text: string) => Promise<boolean>;
+  /** 运行态快照（`/status` 用）。 */
+  status: () => CommandStatusView;
+  /** 停止当前绑定的回合；由装配层判断「没有绑定 / 没在跑 / 宿主不支持」。 */
+  stop: () => Promise<'stopped' | 'idle' | 'unsupported' | 'failed'>;
   now?: () => number;
   maxText?: number;
   logger?: { warn?(...args: unknown[]): unknown };
@@ -118,12 +142,61 @@ export class StandaloneCommands {
       case 'trace':
         await this.#trace(parsed.rest);
         return true;
+      case 'stop':
+        await this.#stop();
+        return true;
+      case 'status':
+        await this.#status();
+        return true;
       case 'help':
         await this.#say(HELP_TEXT);
         return true;
       default:
         return false;
     }
+  }
+
+  async #stop(): Promise<void> {
+    const result = await this.#ports.stop();
+    const text = result === 'stopped'
+      ? '已请求停止当前任务。'
+      : result === 'idle'
+        ? '当前没有正在运行的会话。'
+        : result === 'unsupported'
+          ? '宿主不支持停止当前回合。'
+          : '停止失败，请到 Web 端处理。';
+    await this.#say(text);
+  }
+
+  /** `/status`：连接、当前会话、模型、待答/待审批、跟踪、其它运行中的会话。 */
+  async #status(): Promise<void> {
+    const runtime = this.#ports.status();
+    const catalog = await this.#ports.lister.list();
+    const traces = this.#ports.watcher.list(this.#now());
+    const byId = new Map(catalog.sessions.map((row) => [row.sessionId, row]));
+    const running = catalog.available
+      ? catalog.sessions.filter((row) => row.running)
+      : `读取失败：${catalog.reason ?? '未知错误'}`;
+    const direct = runtime.direct;
+    const view: StatusView = {
+      now: this.#now(),
+      loggedIn: runtime.loggedIn,
+      ...(runtime.accountTail === undefined ? {} : { accountTail: runtime.accountTail }),
+      health: runtime.health,
+      current: direct.bound && direct.sessionId !== undefined
+        ? { sessionId: direct.sessionId, title: direct.sessionTitle ?? '', running: direct.running }
+        : null,
+      model: direct.model,
+      busyMode: direct.busyMode,
+      pendingQuestions: runtime.pendingQuestions,
+      pendingApprovals: runtime.pendingApprovals,
+      traces: traces.map((trace) => ({ ...trace, running: byId.get(trace.sessionId)?.running ?? null })),
+      running: typeof running === 'string'
+        ? running
+        : running.map((row) => ({ title: row.title, updatedAt: row.updatedAt, workspace: row.workspace })),
+      listing: this.#ports.store.listing(),
+    };
+    await this.#say(renderStatus(view));
   }
 
   async #new(): Promise<void> {

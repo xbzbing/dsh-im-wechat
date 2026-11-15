@@ -52,6 +52,8 @@ export interface DirectController {
   ): Promise<{ items?: readonly HostSessionRow[] }>;
   /** 读宿主的模型目录（面板下拉与模型校验用；老宿主没有这个方法）。 */
   modelCatalog?(): Promise<unknown>;
+  /** 取消会话当前回合（`/stop`；宿主没有这个方法时命令说「不支持」）。 */
+  cancel?(request: { sessionId: string }): { accepted?: boolean } | Promise<{ accepted?: boolean }>;
 }
 
 export interface DirectLogger {

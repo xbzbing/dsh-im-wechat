@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import {
   SESSION_PAGE_SIZE,
   renderSessionList,
+  renderStatus,
   renderTraceList,
   sessionIdMatches,
   shortSessionId,
@@ -151,4 +152,30 @@ test('命令状态：快照与跟踪都有硬上限', async (t) => {
   })));
   assert.equal(store.listing().length, MAX_LISTING);
   assert.equal(store.traces().length, MAX_TRACES);
+});
+
+test('状态表：跟踪序号按快照、运行中的会话读不到时说明原因', () => {
+  const status = renderStatus({
+    now: 0,
+    loggedIn: true,
+    accountTail: 'bot…@im.bot',
+    health: { state: 'degraded' },
+    current: { sessionId: 'session-bound', title: '微信 · 主人', running: false },
+    model: null,
+    busyMode: 'queue',
+    pendingQuestions: 0,
+    pendingApprovals: 0,
+    traces: [
+      { sessionId: 'session-b', title: 'B', since: 0, until: 60_000, running: true },
+      { sessionId: 'session-x', title: 'X', since: 0, until: 60_000, running: null },
+    ],
+    running: '读取失败：宿主不提供会话列表',
+    listing: [{ sessionId: 'session-a' }, { sessionId: 'session-b' }],
+  });
+  assert.match(status, /\| 连接 \| 在线（bot…@im\.bot） · 连接异常 \|/);
+  assert.match(status, /微信 · 主人（空闲）/);
+  assert.match(status, /跟随 DSH 默认/);
+  assert.match(status, /\| 2 \| B \| \*\*运行中\*\* \|/);
+  assert.match(status, /\| — \| X \| — \|/);
+  assert.match(status, /运行中的会话\*\*：读取失败：宿主不提供会话列表/);
 });

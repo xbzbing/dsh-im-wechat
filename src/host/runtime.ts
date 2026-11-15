@@ -180,6 +180,10 @@ export class WeixinRuntime {
       isOwner: (sender) => this.#owner.isOwner(sender),
       ownerLabel: () => accountTail(this.#loginState?.userId ?? ''),
       defaultWorkspaceId: () => this.#defaultWorkspace.id,
+      hostStatus: () => {
+        const { loggedIn, accountTail, health, pendingQuestions, pendingApprovals, direct } = this.status();
+        return { loggedIn, ...(accountTail === undefined ? {} : { accountTail }), health, pendingQuestions, pendingApprovals, direct };
+      },
       model: this.#config.directModel ?? null,
       workspaceId: this.#config.directWorkspaceId ?? '',
       busyMode: this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE,

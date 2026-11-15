@@ -14,7 +14,11 @@ function tempDir(t: { after: (fn: () => void) => void }): string {
   return dir;
 }
 
-function stack(dir: string, options: { list?: DirectController['list']; send?: (text: string) => Promise<boolean> } = {}) {
+function stack(dir: string, options: {
+  list?: DirectController['list'];
+  send?: (text: string) => Promise<boolean>;
+  cancel?: DirectController['cancel'];
+} = {}) {
   const controller = {
     async create() {
       return { sessionId: 's-new' };
@@ -23,6 +27,7 @@ function stack(dir: string, options: { list?: DirectController['list']; send?: (
       return { accepted: true };
     },
     ...(options.list === undefined ? {} : { list: options.list }),
+    ...(options.cancel === undefined ? {} : { cancel: options.cancel }),
   } as unknown as DirectController;
   return new DirectStack({
     dir,
@@ -32,6 +37,13 @@ function stack(dir: string, options: { list?: DirectController['list']; send?: (
     isOwner: () => true,
     ownerLabel: () => 'abc123',
     defaultWorkspaceId: () => '',
+    hostStatus: () => ({
+      loggedIn: false,
+      health: {},
+      pendingQuestions: 0,
+      pendingApprovals: 0,
+      direct: { bound: false, running: false, busyMode: 'queue', model: null },
+    }),
     model: null,
     workspaceId: '',
     busyMode: 'queue',
@@ -90,4 +102,35 @@ test('独立模式装配：命令经同一层分发，未知命令不消费', as
   assert.equal(await built.runCommand({ text: '/help', hasImages: false, images: [] }), true);
   assert.equal(sent.length, 1);
   assert.match(sent[0]!, /微信命令/);
+});
+
+test('/stop：只停绑定的会话，没绑定/没在跑/宿主不支持分别返回', async (t) => {
+  const dir = tempDir(t);
+  const store = new DirectBindingStore({ dir });
+  await store.hydrate();
+
+  const idle = stack(dir);
+  await idle.hydrate();
+  assert.equal(await idle.stopBound(), 'idle');
+
+  await store.set('session-1', '');
+  const noCancel = stack(dir, { list: async () => ({ items: [{ sessionId: 'session-1', running: true }] }) });
+  await noCancel.hydrate();
+  assert.equal(await noCancel.stopBound(), 'unsupported');
+
+  const cancelled: string[] = [];
+  const running = stack(dir, {
+    list: async () => ({ items: [{ sessionId: 'session-1', running: true }] }),
+    cancel: (request) => {
+      cancelled.push(request.sessionId);
+      return { accepted: true };
+    },
+  });
+  await running.hydrate();
+  assert.equal(await running.stopBound(), 'stopped');
+  assert.deepEqual(cancelled, ['session-1']);
+
+  const idleBound = stack(dir, { list: async () => ({ items: [{ sessionId: 'session-1', running: false }] }) });
+  await idleBound.hydrate();
+  assert.equal(await idleBound.stopBound(), 'idle');
 });

@@ -20,7 +20,7 @@ import type { ModelRef } from '../../shared/models.ts';
 import type { BusyMode } from '../config.ts';
 import { StandaloneCommandStore } from '../state/standalone-commands.ts';
 import { StandaloneCommands } from './commands.ts';
-import type { CommandInput } from './commands.ts';
+import type { CommandInput, CommandStatusView } from './commands.ts';
 import { SessionLister, rowTitle } from './session-list.ts';
 import { SessionWatcher } from './session-watch.ts';
 import { MAX_TEXT_BYTES } from '../superagent/render.ts';
@@ -41,6 +41,8 @@ export interface DirectStackOptions {
   ownerLabel: () => string;
   /** 没有显式选择时落到哪个工作区（自动创建的「微信会话」）。 */
   defaultWorkspaceId: () => string;
+  /** 完整运行态里命令要用的那几项（`/status`）。 */
+  hostStatus: () => CommandStatusView;
   /** 初始值：插件配置；`start()` 后由本地配置覆盖。 */
   model: ModelRef | null;
   workspaceId: string;
@@ -60,11 +62,13 @@ export class DirectStack {
   readonly #watcher: SessionWatcher;
   readonly #commandStore: StandaloneCommandStore;
   readonly #defaultWorkspaceId: () => string;
+  readonly #logger: DirectLogger | undefined;
   #workspaceId: string;
   #busyMode: BusyMode;
 
   constructor(options: DirectStackOptions) {
     this.#defaultWorkspaceId = options.defaultWorkspaceId;
+    this.#logger = options.logger;
     this.#controller = options.controller;
     this.#workspaceId = options.workspaceId;
     this.#busyMode = options.busyMode;
@@ -106,6 +110,8 @@ export class DirectStack {
       bound: () => this.#store.get() !== null,
       deliver: (sessionId, content, onAdmitted) => this.#deliver(sessionId, content, onAdmitted),
       send: options.send,
+      status: options.hostStatus,
+      stop: () => this.stopBound(),
       maxText,
       ...(options.logger ? { logger: options.logger } : {}),
       ...(options.now ? { now: options.now } : {}),
@@ -188,6 +194,25 @@ export class DirectStack {
 
   async reset(): Promise<void> {
     await this.#chat.reset();
+  }
+
+  /** `/stop`：只停绑定的直连会话；没有绑定、没在跑、宿主不支持分开说。 */
+  async stopBound(): Promise<'stopped' | 'idle' | 'unsupported' | 'failed'> {
+    const binding = this.#store.get();
+    const controller = this.#controller();
+    if (binding === null) return 'idle';
+    if (controller === null) return 'unsupported';
+    let running = this.#chat.status().running;
+    if (!running) running = await this.#isBusy(controller, binding.sessionId);
+    if (!running) return 'idle';
+    if (typeof controller.cancel !== 'function') return 'unsupported';
+    try {
+      await controller.cancel({ sessionId: binding.sessionId });
+      return 'stopped';
+    } catch (error) {
+      this.#logger?.warn?.('独立模式 /stop 失败', error instanceof Error ? error.message : error);
+      return 'failed';
+    }
   }
 
   /** 直连会话事件：只处理绑定会话自己的回合与标题。 */

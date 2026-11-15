@@ -1,4 +1,8 @@
-/** 独立模式测试的公共夹具：假会话控制器、发送记录与临时状态目录。 */
+/**
+ * 独立模式测试的公共夹具：假会话控制器、发送记录与临时状态目录。
+ *
+ * `direct.test.ts` 与 `direct-files.test.ts` 共用（两份用例测的是同一个 DirectChat）。
+ */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -69,6 +73,7 @@ export async function setup(
     controller?: FakeController | null;
     submitTimeoutMs?: number;
     applyModel?: (sessionId: string) => void;
+    now?: () => number;
   } = {},
 ) {
   const dir = tempDir(t);
@@ -87,10 +92,9 @@ export async function setup(
     },
     isOwner: (sender) => sender === 'owner-1',
     ownerLabel: () => 'abc123',
-    now: () => 1_700_000_000_000,
+    now: options.now ?? (() => 1_700_000_000_000),
     ...(options.submitTimeoutMs !== undefined ? { submitTimeoutMs: options.submitTimeoutMs } : {}),
     ...(options.applyModel !== undefined ? { applyModel: options.applyModel } : {}),
   });
   return { chat, store, sent, controller };
 }
-

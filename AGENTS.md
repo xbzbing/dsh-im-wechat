@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-微信 IM 桥插件：把微信接入 DeepSeek Harness，作为 `dsh-my-superagent` 的 IM 桥（协议 `my-superagent/v1`，经 `bridges.register` 注册），把交付渲染成微信消息送达主人，把主人的消息与作答回交核心；**独立安装**（不装核心）时直接驱动 DSH 会话（ADR-0009），与接入核心互斥（两种用法见 README）。微信侧走腾讯 iLink 协议，**只以腾讯官方 `openclaw-weixin` 的接口与协议定义为参考、自写零依赖客户端**（ADR-0001）。插件为两半式结构：host 半跑在 DSH Host 进程内，client 半是 Web 设置面板；框架与构建门禁与 `dsh-im-infoflow` 同构。
+微信 IM 桥插件：把微信接入 DeepSeek Harness，作为 `dsh-my-superagent` 的 IM 桥（协议 `my-superagent/v1`，经 `bridges.register` 注册），把交付渲染成微信消息送达主人，把主人的消息与作答回交核心；**独立安装**（不装核心）时直接驱动 DSH 会话（ADR-0009），与接入核心互斥（两种用法见 README）。微信侧走腾讯 iLink 协议，**只以腾讯官方 `openclaw-weixin` 的接口与协议定义为参考、自写零依赖客户端**（ADR-0001）。插件为两半式结构：host 半跑在 DSH Host 进程内，client 半是 Web 设置面板；构建与门禁是本仓库自己的约定。
 
 ## 代码结构
 
@@ -15,12 +15,13 @@
 | `src/host/ilink/` | iLink 协议客户端：`types`/`api`（端点、请求头、错误分类）、`json`（64 位消息 id 保真）、`identity`（入站身份）、`login`、`poll`、`send`、`upload`（CDN 上传）、`media`、`session-guard`；只用 Node 内置模块 |
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`quota`（bridge 级发送窗口）、`send-health`（发送失败到健康状态）、`link`（延后注册的 `BridgeBinder`） |
 | `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`reply-pending.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、审批提醒与微信作答（ADR-0023）、两者的开关/等待窗口与入站归属、共用的待答机械件、作答匹配、长任务提醒、按会话来源判根会话 |
-| `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`、独立模式绑定、已消费的提醒回复；`files.ts` 私密文件读写、`paths.ts` 目录解析；目录 `0700`、文件 `0600`、原子写 |
-| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`runtime-status.ts` 面板状态、`panel-actions.ts` 面板设置的校验/落盘/生效、`inbound.ts` 入站转换、`inbound-pipeline.ts` 轮询/投递流水线、`owner-channel.ts` 主人收发通道、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`direct-model.ts` 独立模式的模型与推理等级选择、钉模型（ADR-0025、ADR-0026）、`present-images.ts` present 图片转发（ADR-0019）、`session-events.ts` 会话事件、`workspace-default.ts` 默认工作区、`bot-agent.ts` 机器人元数据、`prompt-parts.ts` 提交给会话的文字/图片 part（ADR-0017）、`panel-rpc.ts` 面板 RPC、`send-gate.ts` 提醒节流、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`、独立模式绑定、命令快照与跟踪（`commands.json`）、已消费的提醒回复；`files.ts` 私密文件读写、`paths.ts` 目录解析；目录 `0700`、文件 `0600`、原子写 |
+| `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`runtime-status.ts` 面板状态、`panel-actions.ts` 面板设置的校验/落盘/生效、`inbound.ts` 入站转换、`inbound-pipeline.ts` 轮询/投递流水线、`owner-channel.ts` 主人收发通道、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`direct-files.ts` 直连会话的附件暂存与提示（ADR-0028）、`direct-model.ts` 独立模式的模型与推理等级选择、钉模型（ADR-0025、ADR-0026）、`standalone/` 独立模式的装配与会话命令（ADR-0027）、`present-images.ts` present 图片转发（ADR-0019）、`session-events.ts` 会话事件、`workspace-default.ts` 默认工作区、`bot-agent.ts` 机器人元数据、`prompt-parts.ts` 提交给会话的文字/图片/文件 part（ADR-0017、ADR-0028）、`panel-rpc.ts` 面板 RPC、`send-gate.ts` 提醒节流、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
+| `src/host/standalone/` | 独立模式专属：`stack`（绑定、模型、直连与命令的装配）、`commands`（文字命令解析与执行）、`command-text`（帮助与表格文案）、`session-list`（宿主会话目录）、`session-watch`（`/send` 等回答、`/trace` 跟踪） |
 | `bin/dsh-wechat-send.mjs` | 出站命令入口，只把参数交给 `lib/src/host/cli.js`（ADR-0012） |
 | `src/host/command.ts` | 斜杠命令 `/wechat`：人用入口，复用 `cli.ts` 的解析与发送端口（ADR-0012） |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external；模型三级下拉的纯逻辑在 `model-route.ts` |
-| `src/shared/` | 跨上下文的纯函数与纯类型：版本常量、二维码编码器、`media.ts` 图片类型、`question-text.ts` 提示语渲染（两条提问路径共用）、`limits.ts` 文件行数上限 |
+| `src/shared/` | 跨上下文的纯函数与纯类型：版本常量、二维码编码器、`media.ts` 图片类型、`question-text.ts` 提示语渲染（两条提问路径共用）、`limits.ts` 文件行数与标题长度上限 |
 | `test/unit/` | 单元测试（每测独立临时目录） |
 | `scripts/` | `build.mjs`（host tsc + client esbuild）、`verify-package.mjs`（打包自洽校验）、`assert-pack.mjs`（产物清单断言）、`dev-bridge.mjs`（不开面板的真机自测） |
 | `docs/adr/` | 架构决策记录：选了哪条路、否决了什么、代价是什么 |
@@ -42,7 +43,7 @@
 - **自有功能与核心互斥**：`ownFeatures = 启用 && 未接入核心 && 已登录 && 未停机`（与 `runtime.ts` 的 `#ownFeaturesActive` 四项一致）。接入核心时不发自己的提醒，否则同一条提醒会来两遍（ADR-0006）；新增任何「主动提醒主人」的能力都要先过这个判据。面板同理：只属于独立模式的设置（提醒开关与两个分钟值、直连会话、会话模型与推理等级）接入核心后在面板锁住，判据是 `logic.ts` 的 `standaloneSettingsLocked`，别在渲染里各写一份。
 - **失败提醒不受开关影响**：长任务提醒的开关只关「完成」提醒；宿主 `error`、`blocked`、非用户原因的 `aborted` 一律立刻提醒，主人自己停的（`reason.reason.kind === 'user'`）不提醒。关掉开关后仍会收到失败提醒是刻意的，不要当 bug 改；判据在 `src/host/long-tasks.ts` 与 `test/unit/long-tasks.test.ts`。注意该不变量在**提醒器层**成立（直连测试覆盖）；集成层里开关与事件门同源，插件停用或接入核心时整段不进提醒——两种表述指向同一现状，别把提醒器层的不变量当集成层 bug 查。
 - 面板 RPC 契约版本（`HOST_CONTRACT` / `REQUIRED_CONTRACT`）两半必须一致：加端点或改返回结构时一起递增，否则「新面板 + 旧 host」会打到不存在的端点。
-- 凭据与 `context_token` 不进日志、不进面板快照；面板只显示账号尾号（`accountTail`）。
+- 凭据与 `context_token` 不进日志、不进面板快照；面板正文只显示账号尾号（`accountTail`），完整账号只作为「账号」的悬停提示（`status.account`），不铺在卡片上。
 - 注释只写实现逻辑与不明显的约束，不写演进过程。
 
 ## 开发流程
@@ -80,8 +81,9 @@ npm run check      # 提交前门禁：typecheck + test + verify
 ## 安全红线
 
 - 登录态与 token 只落本机状态文件，权限收紧；不进日志、不进面板快照、不随包发布。
-- 桥不解析命令、不判断身份：命令由核心解析，是不是主人由核心按配对绑定判断；桥只上报渠道内的发送者标识。
+- 桥不解析命令、不判断身份：命令由核心解析，是不是主人由核心按配对绑定判断；桥只上报渠道内的发送者标识。**唯一例外是独立模式**（没有核心可解析）：只认扫码登录的主人、只认固定的命令清单（`/help` `/new` `/sessions` `/send` `/trace` `/stop` `/status` 及其别名），其余文本原样交给会话，边界见 ADR-0027。
 - 非主人的微信消息不解析命令；对外发言、授权类动作永远由核心决策，桥只负责呈现与转发。例外只有独立模式（没有核心）：工具授权可以由主人在微信里回「批准/拒绝」，边界见 ADR-0023——只主人、只根会话、只认明确关键词、缺省失败关闭。
 - 协议实现只用官方 `openclaw-weixin` 定义的接口，不做逆向扩展、不携带凭据到第三方端点。
 - 出站入口（`/wechat` 命令、`dsh-wechat-send` 命令行、独立模式下 `present` 图片的自动转发）的收件人**恒为扫码登录的主人**，不提供指定收件人的参数：只解决「主人给自己发」，不新增「给第三方发言」的能力（ADR-0012、ADR-0019）。
-- 斜杠命令是给人用的（`dsh-commands` 契约：handler 不经过模型），**模型调不到**；要模型主动发只能走 CLI 或注册工具，别再试图用命令解决模型侧需求。
+- 斜杠命令是给人用的（`dsh-commands` 契约：handler 不经过模型），**模型调不到**；要模型主动发只能走 CLI 或注册工具，别再试图用命令解决模型侧需求。微信里的文字命令同理：它们是给人用的入站命令，不是模型工具。
+- 主动提醒走 `OwnerChannel.send`（有节流），回复与命令回执走 `OwnerChannel.reply`（不节流）：长回答会拆成多条，复用提醒节流会静默吞掉后几条。

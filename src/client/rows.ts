@@ -27,10 +27,23 @@ export function SwitchRow({ title, description, checked, disabled, onChange }: a
     }));
 }
 
-export function Fact({ label, value }: { label: string; value: string }) {
+export function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return h('div', { className: 'wx-fact' },
     h('span', null, label),
-    h('strong', null, value));
+    // 悬停看全文：账号这类值平时只显示尾号，不把整串铺在卡片上；读屏也读全文。
+    h('strong', { ...(hint ? { title: hint, 'aria-label': hint } : {}) }, value));
+}
+
+/**
+ * 保存成功的即时反馈：只活几秒，由面板的状态驱动。
+ *
+ * 未保存时也占位（空串 + 固定宽度），否则提示出现/消失会让左侧说明列宽度跳一下。
+ */
+export function SavedHint({ t, saved }: { t: T; saved: boolean }) {
+  return h('span', {
+    className: 'wx-saved',
+    ...(saved ? { role: 'status' } : { 'aria-hidden': 'true' }),
+  }, saved ? t('common.saved') : '');
 }
 
 export function Metric({ value, label, wide }: { value: string; label: string; wide?: boolean }) {
@@ -53,10 +66,11 @@ export function PickerRow(props: {
   items: any[];
   placeholder: string;
   disabled: boolean;
+  saved?: boolean;
   onChange: (value: string) => void;
   onSave: () => Promise<void>;
 }) {
-  const { t, title, description, value, items, placeholder, disabled, onChange, onSave } = props;
+  const { t, title, description, value, items, placeholder, disabled, saved, onChange, onSave } = props;
   return h('div', { className: 'wx-field-block' },
     h('div', { className: 'wx-setting-copy' },
       h('span', { className: 'wx-setting-title' }, title),
@@ -75,7 +89,8 @@ export function PickerRow(props: {
         size: 'sm',
         disabled,
         onClick: () => void onSave(),
-      }, t('common.save'))));
+      }, t('common.save')),
+      h(SavedHint, { t, saved: saved === true })));
 }
 
 /** 分钟输入行：标题 + 说明 + 数字输入 + 单位 + 保存 + 校验/草稿提示。 */
@@ -87,12 +102,13 @@ export function MinutesRow(props: {
   placeholder: string;
   disabled: boolean;
   canSave: boolean;
+  saved?: boolean;
   onChange: (value: string) => void;
   onSave: () => Promise<void>;
   error: string | null;
   draftHint: string | null;
 }) {
-  const { t, title, description, value, placeholder, disabled, canSave, onChange, onSave, error, draftHint } = props;
+  const { t, title, description, value, placeholder, disabled, canSave, saved, onChange, onSave, error, draftHint } = props;
   return h('div', { className: 'wx-setting-group' },
     h('div', { className: 'wx-setting-row wx-threshold-row' },
       h('div', { className: 'wx-setting-copy' },
@@ -113,7 +129,8 @@ export function MinutesRow(props: {
           size: 'sm',
           disabled: disabled || !canSave,
           onClick: () => void onSave(),
-        }, t('common.save')))),
+        }, t('common.save')),
+        h(SavedHint, { t, saved: saved === true }))),
     // 校验不过就地说明：宿主会把值夹回区间，与其保存后被回读顶掉，不如先讲清楚。
     error !== null ? h('p', { className: 'wx-error' }, error) : null,
     draftHint !== null ? h('p', { className: 'wx-draft-hint' }, draftHint) : null);
@@ -136,12 +153,13 @@ export function ModelRouteRow(props: {
   effort: string;
   disabled: boolean;
   canSave: boolean;
+  saved?: boolean;
   onChangeProvider: (value: string) => void;
   onChangeModel: (value: string) => void;
   onChangeEffort: (value: string) => void;
   onSave: () => Promise<void>;
 }) {
-  const { t, title, description, catalog, provider, model, effort, disabled, canSave } = props;
+  const { t, title, description, catalog, provider, model, effort, disabled, canSave, saved } = props;
   const activeModel = catalogModel(catalog, provider, model);
   const efforts = Array.isArray(activeModel?.efforts) ? activeModel.efforts : [];
   // 半截选择（有来源没模型）与「模型没有推理等级」是两种提示，都只在这里算一次。
@@ -199,6 +217,7 @@ export function ModelRouteRow(props: {
         size: 'sm',
         disabled: disabled || !canSave,
         onClick: () => void props.onSave(),
-      }, t('common.save'))),
+      }, t('common.save')),
+      h(SavedHint, { t, saved: saved === true })),
     hint !== null ? h('p', { className: 'wx-draft-hint' }, hint) : null);
 }

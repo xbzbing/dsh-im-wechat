@@ -1,5 +1,5 @@
 /**
- * 入站媒体：从 CDN 取密文、解密，图片再按文件头认类型（ADR-0004、ADR-0027）。
+ * 入站媒体：从 CDN 取密文、解密，图片再按文件头认类型（ADR-0004、ADR-0028）。
  *
  * 协议事实（官方 openclaw-weixin 的入站路径）：
  * - 图片与文件本体都在 CDN 上，AES-128-ECB / PKCS#7；
@@ -21,7 +21,7 @@ import type { CdnMedia, FileItem, ImageItem } from './types.ts';
 /** 单张图片上限：密文与明文各判一次。 */
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-/** 单条消息的文件总量上限（ADR-0027）：密文与明文各判一次，多个文件共享这份预算。 */
+/** 单条消息的文件总量上限（ADR-0028）：密文与明文各判一次，多个文件共享这份预算。 */
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -224,7 +224,7 @@ export async function downloadImage(
 }
 
 /**
- * 下载并解密一个文件：不认类型，解出来是什么就交给宿主什么（ADR-0027）。
+ * 下载并解密一个文件：不认类型，解出来是什么就交给宿主什么（ADR-0028）。
  *
  * 文件项只有 `media.aes_key` 一种密钥来源，没有图片那种顶层十六进制字段。
  */

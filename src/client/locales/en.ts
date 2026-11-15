@@ -19,6 +19,7 @@ export const en: Record<WeChatKey, string> = {
   'common.expand': 'Expand',
   'common.collapse': 'Collapse',
   'common.minutes': 'min',
+  'common.saved': 'Saved',
 
   // 状态
   'status.signedIn': 'Signed in',
@@ -47,7 +48,6 @@ export const en: Record<WeChatKey, string> = {
   'connection.signedOut': 'WeChat is not connected',
   'connection.signedOutHint': 'Sign in with a QR code to start receiving and sending messages.',
   'connection.bridgeOn': 'Bridged to My Superagent',
-  'connection.bridgeOff': 'Not bridged',
 
   // 扫码登录
   'login.start': 'Sign in with QR code',
@@ -125,6 +125,7 @@ export const en: Record<WeChatKey, string> = {
   'direct.running': 'running',
   'direct.resetBinding': 'Reset binding',
   'direct.noSession': 'No session is bound yet; the next message creates one in the selected workspace.',
+  'direct.unnamedSession': 'Untitled session',
   'direct.unavailable': 'The host exposes no session service, so standalone mode is unavailable.',
 
   // 运行概览

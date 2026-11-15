@@ -71,6 +71,9 @@ export function WeixinSettingsPanel(props: any) {
   const [modelDirty, setModelDirty] = useState(false);
   /** 本次会话里刚清空过模型：只用来提示「已绑定的会话仍用旧模型」，不常显。 */
   const [modelCleared, setModelCleared] = useState(false);
+  /** 刚保存成功的那一项（`minutes` / `questionDelay` / `workspace` / `model`），两秒后自己消失。 */
+  const [savedKey, setSavedKey] = useState('');
+  const savedTimer = useRef<any>(null);
   /** 状态请求的单调序号：Host 慢时旧响应可能后到，绝不能覆盖新快照。 */
   const requestSeq = useRef(0);
   /** 单飞：慢宿主下轮询不叠加在途请求；在途期间的请求排队补一次。 */
@@ -79,6 +82,17 @@ export function WeixinSettingsPanel(props: any) {
 
   useEffect(() => {
     ensureStyles();
+  }, []);
+
+  const flashSaved = useCallback((key: string) => {
+    setSavedKey(key);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSavedKey(''), 2_000);
+  }, []);
+
+  // 定时器随组件卸载清理：切走设置页后不再 setState。
+  useEffect(() => () => {
+    if (savedTimer.current) clearTimeout(savedTimer.current);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -152,7 +166,12 @@ export function WeixinSettingsPanel(props: any) {
   }, [refresh, t]);
 
   /** 面板动作模板：busy/错误/回读快照都一致，差异只在请求与成功后的草稿清理。 */
-  const applyAction = useCallback(async (name: string, call: () => Promise<any>, after?: (next: any) => void) => {
+  const applyAction = useCallback(async (
+    name: string,
+    call: () => Promise<any>,
+    after?: (next: any) => void,
+    saved?: string,
+  ) => {
     setBusy(name);
     setActionError('');
     try {
@@ -160,13 +179,15 @@ export function WeixinSettingsPanel(props: any) {
       requestSeq.current += 1;
       setStatus(next);
       after?.(next);
+      // 保存是显式动作：成功后就地给一句「已保存」，不用等下一轮轮询猜。
+      if (saved !== undefined && saved !== '') flashSaved(saved);
     } catch (error) {
       setActionError(errorText(t, error));
       await refresh();
     } finally {
       setBusy('');
     }
-  }, [refresh, t]);
+  }, [flashSaved, refresh, t]);
 
   const login = status?.login ?? { phase: 'idle', refreshed: 0 };
   const qrData = useMemo(
@@ -204,7 +225,12 @@ export function WeixinSettingsPanel(props: any) {
       return;
     }
     // 直接用 Host 返回的快照回显：等下一轮轮询再来，输入框会先跳回旧值。
-    await applyAction('longtask', () => rpcCall(ENDPOINTS.setLongTask, { minutes: check.value }), () => setMinutesDirty(false));
+    await applyAction(
+      'longtask',
+      () => rpcCall(ENDPOINTS.setLongTask, { minutes: check.value }),
+      () => setMinutesDirty(false),
+      'minutes',
+    );
   }, [minutes, rpcCall, applyAction]);
 
   /** 保存提醒等待时间：0 表示立即提醒。 */
@@ -214,7 +240,12 @@ export function WeixinSettingsPanel(props: any) {
       setActionError(t(check.key, check.params));
       return;
     }
-    await applyAction('question', () => rpcCall(ENDPOINTS.setQuestion, { delayMinutes: check.value }), () => setQuestionDelayDirty(false));
+    await applyAction(
+      'question',
+      () => rpcCall(ENDPOINTS.setQuestion, { delayMinutes: check.value }),
+      () => setQuestionDelayDirty(false),
+      'questionDelay',
+    );
   }, [questionDelay, rpcCall, applyAction]);
 
   /** 问题与审批提醒开关：立即生效。 */
@@ -229,13 +260,14 @@ export function WeixinSettingsPanel(props: any) {
     reset?: boolean;
     model?: { provider: string; model: string; reasoningEffort?: string } | null;
   }) => {
+    const saved = patch.model !== undefined ? 'model' : patch.workspaceId !== undefined ? 'workspace' : '';
     await applyAction('direct', () => rpcCall(ENDPOINTS.setDirect, patch), () => {
       if (patch.workspaceId !== undefined) setWorkspaceDirty(false);
       if (patch.model !== undefined) {
         setModelDirty(false);
         setModelCleared(patch.model === null);
       }
-    });
+    }, saved);
   }, [rpcCall, applyAction]);
 
   useEffect(() => {
@@ -388,8 +420,10 @@ export function WeixinSettingsPanel(props: any) {
         setMinutesDirty(true);
         setMinutes(value);
       },
-      enabled, superagent, minutes, minutesDirty, threshold, hostOlder, busy,
-      questionReminders, questionDelay, questionDelayDirty, questionDelayValue,
+      enabled, superagent, minutes, minutesDirty, minutesSaved: savedKey === 'minutes',
+      threshold, hostOlder, busy,
+      questionReminders, questionDelay, questionDelayDirty, questionDelaySaved: savedKey === 'questionDelay',
+      questionDelayValue,
       onQuestionDelayChange: (value: string) => {
         setQuestionDelayDirty(true);
         setQuestionDelay(value);
@@ -403,8 +437,9 @@ export function WeixinSettingsPanel(props: any) {
         setWorkspaceId(value);
       },
       onToggleExpand: () => setDirectOpen(!directExpanded),
-      superagent, directExpanded, direct, workspaceId, workspaces, workspacesReady, hostOlder, busy,
-      models, modelProvider, modelId, modelEffort, modelCleared,
+      superagent, directExpanded, direct, workspaceId, workspaceSaved: savedKey === 'workspace',
+      workspaces, workspacesReady, hostOlder, busy,
+      models, modelProvider, modelId, modelEffort, modelCleared, modelSaved: savedKey === 'model',
       onProviderChange: pickProvider,
       onModelChange: pickModel,
       onEffortChange: pickEffort,

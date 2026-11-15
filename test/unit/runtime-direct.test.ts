@@ -470,6 +470,7 @@ test('独立模式：某个 provider 的目录读失败时，它的模型不算�
   });
 });
 
+
 test('独立模式：主人发的文件先暂存成回执，再作为 part 提交', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);
@@ -480,7 +481,7 @@ test('独立模式：主人发的文件先暂存成回执，再作为 part 提�
     const names: string[] = [];
     const runtime = new WeixinRuntime({ config: { dataDir: dir, superagent: false }, createApi: api.createApi, fetch: fetch.impl });
     runtime.attachSessionController(session.controller);
-    runtime.direct.attachUploader({
+    runtime.attachFileUploads({
       async uploadStream(request) {
         names.push(request.name ?? '');
         for await (const chunk of request.data) assert.ok(chunk.byteLength > 0);

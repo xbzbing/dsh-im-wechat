@@ -18,6 +18,9 @@ export interface SessionEventDeps {
   typingStop(userId: string): void;
   /** present 的图片发到微信（ADR-0019）。 */
   forwardPresented(event: unknown): void;
+  /** 命令观察者：`/send` 等回答、`/trace` 跟踪，目标不一定是绑定会话。 */
+  watchHandle(sessionId: string, event: unknown): void;
+  /** 直连会话：只处理绑定会话自己的回合（实现里还会再判一次绑定）。 */
   directHandle(sessionId: string, event: unknown): void;
 }
 
@@ -31,6 +34,8 @@ export function dispatchSessionEvent(deps: SessionEventDeps, session: unknown, e
       : '';
   if (sessionId === '') return;
   deps.longTasks.handleEvent(sessionId, event);
+  // 命令观察者看所有会话：`/send`、`/trace` 的目标通常不是当前绑定的那个。
+  deps.watchHandle(sessionId, event);
   const binding = deps.binding();
   if (binding === null || binding.sessionId !== sessionId) return;
   const type = (event as { type?: unknown } | null)?.type;

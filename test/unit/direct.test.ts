@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { DirectChat } from '../../src/host/direct.ts';
@@ -277,4 +278,41 @@ test('独立模式：已有绑定时也会在提交前补钉（宿主重启后�
   // 幂等交给回调实现（同一个会话同一个值只钉一次），这里只保证「提交前调过」。
   assert.deepEqual(applied, ['s-bound']);
   assert.deepEqual((controller as FakeController).prompts.map((item) => item.sessionId), ['s-bound']);
+});
+
+test('独立模式：绑定记下会话标题，宿主改名后跟着更新并落盘', async (t) => {
+  const { chat, store } = await setup(t);
+  await chat.submit('owner-1', text('第一条'));
+  assert.equal(store.get()?.title, '微信 · abc123');
+
+  chat.handleEvent('s-1', { type: 'session/title', data: { title: '改过的名字' } });
+  assert.equal(store.get()?.title, '改过的名字');
+
+  // 标题落盘是异步的（事件回调不阻塞）：等写链清空再重读。
+  await store.flush();
+  // 重新读盘：标题不是只在内存里，重启后面板仍显示完整会话名。
+  const reloaded = new DirectBindingStore({ dir: join((store as unknown as { path(): string }).path(), '..') });
+  await reloaded.hydrate();
+  assert.equal(reloaded.get()?.title, '改过的名字');
+});
+
+test('独立模式：连续插话只在间隔超过 30 秒时提示一次', async (t) => {
+  // 连发几条补充说明时，每条都回一句「已插进本轮」会刷屏。
+  let clock = 1_700_000_000_000;
+  const controller = fakeController();
+  controller.setRunning(true);
+  const { chat, sent } = await setup(t, { controller, busyMode: 'steer', now: () => clock });
+
+  assert.equal(await chat.submit('owner-1', text('第一条')), 'steered');
+  assert.equal(sent.length, 1);
+  clock += 5_000;
+  assert.equal(await chat.submit('owner-1', text('第二条')), 'steered');
+  assert.equal(sent.length, 1, '5 秒后的连发不再提示');
+  clock += 20_000;
+  assert.equal(await chat.submit('owner-1', text('第三条')), 'steered');
+  assert.equal(sent.length, 1, '距上一条 20 秒仍算连发');
+  clock += 30_000;
+  assert.equal(await chat.submit('owner-1', text('第四条')), 'steered');
+  assert.equal(sent.length, 2, '隔了 30 秒、前一轮还在跑，才再确认一次');
+  assert.match(sent[1]!, /已插进正在跑的这一轮/);
 });

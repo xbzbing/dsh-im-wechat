@@ -1,5 +1,5 @@
 /**
- * 提交给会话的 prompt 内容（ADR-0017、ADR-0027）。
+ * 提交给会话的 prompt 内容（ADR-0017、ADR-0028）。
  *
  * 独立模式把微信消息直接交给 DSH 会话，宿主 `sessionController.prompt` 接受三种 part：
  * 文字；`{ type: 'image', mediaType, data, name? }`（`data` 是规范 base64，宿主自己校验
@@ -31,7 +31,7 @@ export interface PromptImage {
 
 /**
  * 文字（去掉首尾空白）在前、图片按收到的顺序在后；文件不在这里——它们要等会话 id
- * 才能换成回执（ADR-0027），由提交层追加。
+ * 才能换成回执（ADR-0028），由提交层追加。
  *
  * 不补默认提示：调用方要先拿到「主人到底写了什么」，才能决定提交失败后要不要按
  * 纯文字重发（`textContent`）；提示由 `withAttachmentHint` 在提交前补上。

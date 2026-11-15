@@ -10,6 +10,7 @@
 
 import { join } from 'node:path';
 
+import { MAX_TITLE_LENGTH } from '../../shared/limits.ts';
 import { readJsonIfPresent, writePrivateFile } from './files.ts';
 import type { StateLogger } from './files.ts';
 
@@ -17,9 +18,14 @@ export interface DirectBinding {
   sessionId: string;
   /** 建会话时用的工作区 id（空表示默认工作区建不出来，用了宿主默认位置）。 */
   workspaceId: string;
+  /** 会话标题（宿主 `session/title` 的最后一次）；面板用它显示完整会话名。 */
+  title?: string;
   /** 绑定时间，仅用于排障。 */
   boundAt: number;
 }
+
+/** 标题只用于展示：超长截断，避免异常事件把状态文件撑大。 */
+const MAX_TITLE = MAX_TITLE_LENGTH;
 
 export interface DirectBindingStoreOptions {
   dir: string;
@@ -40,9 +46,11 @@ export function parseBinding(value: unknown): DirectBinding | null {
   if (binding === null || typeof binding !== 'object') return null;
   const entry = binding as Record<string, unknown>;
   if (typeof entry.sessionId !== 'string' || entry.sessionId.trim() === '') return null;
+  const title = typeof entry.title === 'string' ? entry.title.trim() : '';
   return {
     sessionId: entry.sessionId,
     workspaceId: typeof entry.workspaceId === 'string' ? entry.workspaceId : '',
+    ...(title !== '' ? { title: title.slice(0, MAX_TITLE) } : {}),
     boundAt: typeof entry.boundAt === 'number' && Number.isFinite(entry.boundAt) ? entry.boundAt : 0,
   };
 }
@@ -52,6 +60,8 @@ export class DirectBindingStore {
   readonly #logger: StateLogger | undefined;
   readonly #now: () => number;
   #binding: DirectBinding | null = null;
+  /** 写链：`set` 与 `setTitle` 都排队，先发起的先落盘，后发起的不会先写。 */
+  #writes: Promise<void> = Promise.resolve();
 
   constructor(options: DirectBindingStoreOptions) {
     this.#dir = options.dir;
@@ -75,11 +85,29 @@ export class DirectBindingStore {
     return this.#binding;
   }
 
-  async set(sessionId: string, workspaceId: string): Promise<DirectBinding> {
-    const binding: DirectBinding = { sessionId, workspaceId, boundAt: this.#now() };
+  async set(sessionId: string, workspaceId: string, title?: string): Promise<DirectBinding> {
+    const trimmed = title?.trim() ?? '';
+    const binding: DirectBinding = {
+      sessionId,
+      workspaceId,
+      ...(trimmed !== '' ? { title: trimmed.slice(0, MAX_TITLE) } : {}),
+      boundAt: this.#now(),
+    };
     this.#binding = binding;
     await this.#persist();
     return binding;
+  }
+
+  /** 宿主改过标题（面板、Web 端、`session/title` 事件）：变了才落盘，返回是否已变。 */
+  async setTitle(title: string): Promise<boolean> {
+    const binding = this.#binding;
+    const trimmed = title.trim();
+    if (binding === null || trimmed === '') return false;
+    const next = trimmed.slice(0, MAX_TITLE);
+    if (binding.title === next) return false;
+    binding.title = next;
+    await this.#persist();
+    return true;
   }
 
   async clear(): Promise<void> {
@@ -87,8 +115,17 @@ export class DirectBindingStore {
     await this.#persist();
   }
 
-  async #persist(): Promise<void> {
+  /** 等挂起的写盘完成（标题事件是异步落盘，测试与停机时用它对齐）。 */
+  flush(): Promise<void> {
+    return this.#writes;
+  }
+
+  #persist(): Promise<void> {
     const payload: FileShape = { version: 1, ...(this.#binding ? { binding: this.#binding } : {}) };
-    await writePrivateFile(this.path(), `${JSON.stringify(payload)}\n`);
+    const text = `${JSON.stringify(payload)}\n`;
+    const write = this.#writes.then(() => writePrivateFile(this.path(), text));
+    // 链本身不能因一次失败断掉：调用方拿到的仍是会 reject 的那次写。
+    this.#writes = write.catch(() => undefined);
+    return write;
   }
 }

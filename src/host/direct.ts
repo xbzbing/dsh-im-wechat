@@ -11,7 +11,7 @@
  * 默认工作区建不出来时出现，表示宿主默认位置），绑定落在 `direct.json`，重启沿用。
  * 文字、图片与文件都交给会话：图片由本插件按 ADR-0004 的边界下载解密，作为 base64
  * 附件 part 交给宿主（ADR-0017）；文件换一条路——先由宿主 `fileUploads` 在同一个会话下
- * 暂存，再把换回来的回执作为 part 提交（ADR-0027）。
+ * 暂存，再把换回来的回执作为 part 提交（ADR-0028）。
  */
 
 import { randomUUID } from 'node:crypto';
@@ -32,6 +32,19 @@ export type { HostFileUploader } from './direct-files.ts';
 /** 提交方式：与 DSH 的 `InputSubmitMode` 同一套取值。 */
 export type BusyMode = 'queue' | 'steer';
 
+/** 宿主会话列表的一行（`sessionController.list` 的摘要，只取本插件用到的字段）。 */
+export interface HostSessionRow {
+  sessionId?: unknown;
+  running?: unknown;
+  updatedAt?: unknown;
+  cwd?: unknown;
+  blank?: unknown;
+  origin?: unknown;
+  parentSessionId?: unknown;
+  /** 投影汇总：标题在 `projections.values.title`（宿主 `dsh-session-title`）。 */
+  projections?: { values?: Record<string, unknown> } | null;
+}
+
 /** 宿主 `sessionController` 里本模块用到的那几个方法（结构类型，不 import 宿主包）。 */
 export interface DirectController {
   create(request: { workspaceId?: string }): Promise<{ sessionId: string }>;
@@ -43,9 +56,11 @@ export interface DirectController {
   list?(
     request: Record<string, unknown>,
     signal: AbortSignal,
-  ): Promise<{ items?: readonly { sessionId?: string; running?: boolean }[] }>;
+  ): Promise<{ items?: readonly HostSessionRow[] }>;
   /** 读宿主的模型目录（面板下拉与模型校验用；老宿主没有这个方法）。 */
   modelCatalog?(): Promise<unknown>;
+  /** 取消会话当前回合（`/stop`；宿主没有这个方法时命令说「不支持」）。 */
+  cancel?(request: { sessionId: string }): { accepted?: boolean } | Promise<{ accepted?: boolean }>;
 }
 
 export interface DirectLogger {
@@ -89,6 +104,13 @@ const DEFAULT_SUBMIT_TIMEOUT_MS = 30_000;
 const QUEUE_NOTICE = '已交给会话，这一轮结束后把回答发给你。';
 const STEER_NOTICE = '已插进正在跑的这一轮，本轮回答仍由原回合送回。';
 /**
+ * 连续插话的提示间隔：两条消息挨得太近（小于这个间隔）时不重复提示。
+ *
+ * 主人连发几条补充说明时，每条都回一句「已插进本轮」会刷屏；只有隔了一会儿、
+ * 前一轮还在思考时才值得确认一次。
+ */
+export const STEER_NOTICE_MIN_GAP_MS = 30_000;
+/**
  * 提交在我们自己的超时预算内没拿到回执。
  *
  * 宿主可能已经受理，只是回执没回来；不能说“没交出去”诱导主人重发，也不该把
@@ -117,6 +139,8 @@ export class DirectChat {
   #answer = '';
   /** 建会话进行中，避免连发两条建出两个会话。 */
   #creating: Promise<string> | null = null;
+  /** 上一次受理成功的时间（任意提交方式），用来决定插话提示要不要发。 */
+  #lastSubmitAt = 0;
   /** 宿主 `fileUploads` 服务；没接入时文件收得下但进不了会话（会给一句提示）。 */
   #uploader: HostFileUploader | null = null;
 
@@ -164,7 +188,7 @@ export class DirectChat {
    * 入站消息：只有主人、且宿主提供会话控制器时才接手。
    *
    * `content` 是文字与图片 part 组成的消息（ADR-0017），由 `buildPromptContent` 组装；
-   * `files` 是已经下载解密、还没交给宿主暂存的文件（ADR-0027）。空白内容直接丢弃，不建
+   * `files` 是已经下载解密、还没交给宿主暂存的文件（ADR-0028）。空白内容直接丢弃，不建
    * 会话；一个文件都没收下、又没有别的可交付内容时只回一句原因，同样不建会话。
    */
   async submit(
@@ -197,7 +221,7 @@ export class DirectChat {
     const requestId = randomUUID();
     // 一次入站只给一个提交预算：暂存、提交与被拒后的重发共用同一个 signal。
     const signal = AbortSignal.timeout(this.#submitTimeoutMs);
-    // 文件必须等到会话 id 才能暂存：回执只对这一个会话有效（ADR-0027）。
+    // 文件必须等到会话 id 才能暂存：回执只对这一个会话有效（ADR-0028）。
     const uploaded = await uploadOwnerFiles({
       uploader: this.#uploader,
       sessionId,
@@ -225,8 +249,16 @@ export class DirectChat {
       }
       droppedAtSubmit = kind;
     }
+    const submittedAt = this.#now();
+    const gap = submittedAt - this.#lastSubmitAt;
+    this.#lastSubmitAt = submittedAt;
     if (mode === 'steer') {
-      await this.#send(withDropped(STEER_NOTICE, droppedAtSubmit));
+      // 连发：间隔太短就不回执，只在「隔了一会儿仍在思考」时才确认一次。
+      // 第一次提交没有上一条可比，按「隔了很久」处理：会话是重启前就在跑的。
+      // 附件被丢掉是另一回事：这条必须告诉主人，不能跟着回执一起省掉。
+      if (droppedAtSubmit !== null || gap >= STEER_NOTICE_MIN_GAP_MS || gap < 0) {
+        await this.#send(withDropped(STEER_NOTICE, droppedAtSubmit));
+      }
       return 'steered';
     }
     // 排队的回合开跑前宿主可能还在处理上一条，提示只在「当前确实在跑」时给，
@@ -244,6 +276,16 @@ export class DirectChat {
     const entry = event as { type?: unknown; data?: unknown };
     const data = (entry.data !== null && typeof entry.data === 'object' ? entry.data : {}) as Record<string, unknown>;
     switch (entry.type) {
+      case 'session/title': {
+        // 标题会随 Web 端改名而变：面板显示完整会话名，不要停在建会话时那一版。
+        const title = typeof data.title === 'string' ? data.title : '';
+        if (title.trim() !== '') {
+          void this.#store.setTitle(title).catch((error: unknown) => {
+            this.#logger?.warn?.('独立模式会话标题落盘失败', messageOf(error));
+          });
+        }
+        return;
+      }
       case 'turn/start':
         this.#running = true;
         this.#answer = '';
@@ -288,8 +330,8 @@ export class DirectChat {
       const workspaceId = this.#workspaceId().trim();
       const created = await controller.create(workspaceId === '' ? {} : { workspaceId });
       const sessionId = created.sessionId;
-      await this.#store.set(sessionId, workspaceId);
       const title = `微信 · ${this.#ownerLabel()}`.trim();
+      await this.#store.set(sessionId, workspaceId, title);
       await controller.rename?.({ sessionId, title }).catch((error: unknown) => {
         this.#logger?.warn?.('独立模式会话改名失败', messageOf(error));
       });
@@ -326,7 +368,7 @@ export class DirectChat {
     signal: AbortSignal,
   ): Promise<void> {
     const result = await controller.prompt(
-      { ...request, clientTimeZone: timeZone() },
+      { ...request, clientTimeZone: clientTimeZone() },
       signal,
     );
     if (result.accepted !== true) throw new Error('会话没有接受这条消息');
@@ -410,7 +452,8 @@ function isSubmitTimeout(signal: AbortSignal, error: unknown): boolean {
   return reasonName === 'TimeoutError' || errorName === 'TimeoutError';
 }
 
-function timeZone(): string | undefined {
+/** 提交时带的客户端时区；取不到就不带（宿主自己兜底）。 */
+export function clientTimeZone(): string | undefined {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
   } catch {

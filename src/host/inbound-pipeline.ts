@@ -1,5 +1,5 @@
 /**
- * 入站管道：长轮询 → 身份/附件转换 → 自有功能认领 → 独立模式直连 → 核心交付。
+ * 入站管道：长轮询 → 身份/图片转换 → 自有功能认领 → 独立模式直连 → 核心交付。
  *
  * 「收消息」半边：轮询的 `onMessage` 只有入站路由这一个消费者，两者是同一条流水线，
  * 放一起装配层才不会越长越胖（AGENTS.md 规模规则）。
@@ -12,12 +12,15 @@ import type { ILinkApi } from './ilink/api.ts';
 import { PollLoop } from './ilink/poll.ts';
 import type { PollHealth } from './ilink/poll.ts';
 import type { SessionGuard } from './ilink/session-guard.ts';
+import { MessageItemType } from './ilink/types.ts';
 import type { WeixinMessage } from './ilink/types.ts';
 import { messageIdentity, messageText } from './ilink/identity.ts';
 import { downloadOwnerFiles, downloadOwnerImages, toOwnerMessageDraft } from './inbound.ts';
 import type { InboundFiles } from './inbound.ts';
 import { buildPromptContent } from './prompt-parts.ts';
 import type { PromptPart } from './prompt-parts.ts';
+import { parseCommand } from './standalone/commands.ts';
+import type { CommandInput } from './standalone/commands.ts';
 import { messageOf } from './host-context.ts';
 import type { WeixinBridge } from './superagent/bridge.ts';
 import type { BridgeBinder } from './superagent/link.ts';
@@ -54,6 +57,8 @@ export interface InboundPipelineDeps {
   typingStop(sender: string): void;
   /** 交给独立模式的会话；返回值决定「正在输入」要不要自己收尾。 */
   submitDirect(sender: string, content: readonly PromptPart[], files: InboundFiles): Promise<SubmitResult>;
+  /** 独立模式的文字命令；返回 true 表示这条消息已被命令消费。 */
+  runCommand(input: CommandInput): Promise<boolean>;
   setHealth(health: BridgeHealth): void;
   noteError(message: string): void;
 }
@@ -120,10 +125,32 @@ export class InboundPipeline {
     if (!bridge) return;
     const sender = typeof message.from_user_id === 'string' ? message.from_user_id : '';
 
-    // 自有功能先认领：这条文本可能是主人在回答微信里的问题。
+    const ownerMessage = deps.ownFeaturesActive() && deps.isOwner(sender);
+    const standalone = !deps.superagentEnabled() || !binder;
+    const text = messageText(message.item_list);
+
+    // 命令先于「回答问题」与图片下载：一条待答的问题不能把 /help 之类的命令吞成答案；
+    // 只有 /send 收图，其余命令先回一句「图没有发出」。只在独立模式解析（AGENTS.md）。
+    if (ownerMessage && standalone) {
+      const parsed = parseCommand(text);
+      if (parsed !== null) {
+        const hasImages = message.item_list?.some((item) => item?.type === MessageItemType.IMAGE) === true;
+        const images = parsed.name === 'send' && hasImages
+          ? await downloadOwnerImages(message, {
+            cdnBaseUrl: deps.cdnBaseUrl,
+            ...(deps.fetch ? { fetch: deps.fetch } : {}),
+            signal,
+            logger: deps.logger,
+            senderIsOwner: deps.isOwner,
+          })
+          : [];
+        if (await deps.runCommand({ text, hasImages, images })) return;
+      }
+    }
+
+    // 自有功能认领：这条文本可能是主人在回答微信里的问题。
     // 只认已确认主人的消息——陌生人的文本绝不能把主人的问题答掉。
-    if (deps.ownFeaturesActive() && deps.isOwner(sender)) {
-      const text = messageText(message.item_list);
+    if (ownerMessage) {
       // 身份用于跨重启去重：同一条重投的「批准」不能再批一次（见 consumed-replies.ts）。
       const identity = messageIdentity(deps.connection()?.account ?? '', message);
       if (text.trim() !== '' && deps.replyQuestion(text, identity)) return;
@@ -131,9 +158,9 @@ export class InboundPipeline {
 
     // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；
     // 没配会话控制器、或不是主人时照旧到此为止。主人发的图片按 ADR-0017 下载成
-    // 附件 part 与文字一起交给会话（下载失败的图当这条没有图）；文件按 ADR-0027
+    // 附件 part 与文字一起交给会话（下载失败的图当这条没有图）；文件按 ADR-0028
     // 下载后单独交给提交层，由它换成宿主的暂存回执。
-    if (!deps.superagentEnabled() || !binder) {
+    if (standalone) {
       if (!deps.ownFeaturesActive()) return;
       if (!deps.isOwner(sender)) return;
       // 宿主没有会话服务时独立模式接不了：先判，别白白下载附件、开输入状态。
@@ -152,7 +179,7 @@ export class InboundPipeline {
         logger: deps.logger,
         senderIsOwner: deps.isOwner,
       });
-      const content = buildPromptContent(messageText(message.item_list), images);
+      const content = buildPromptContent(text, images);
       // 附件阶段等了十几秒，这里按同一个判据重新看一眼：这期间停用、登出、停机或
       // 打开「接入超级助理」都会让独立模式失效，不能再开新提交。
       if (!deps.ownFeaturesActive()) return;

@@ -4,7 +4,7 @@
  * 桥在这里**只做搬运**：文本原样交出去，命令匹配由核心做（AGENTS.md「安全红线」）。
  * 唯一有立场的地方是附件——下载有边界（ADR-0004）：核心模式要核心声明 `owner-images`
  * 并判明发送者是主人，独立模式没有核心可声明，用登录态判明的主人（ADR-0017）。
- * 文件走独立模式自己的路（ADR-0027）：不进核心草稿，由 `downloadOwnerFiles` 下载后
+ * 文件走独立模式自己的路（ADR-0028）：不进核心草稿，由 `downloadOwnerFiles` 下载后
  * 交给直连会话换成宿主的暂存回执。
  */
 
@@ -44,11 +44,11 @@ export interface FileDownloadOptions {
   logger?: InboundLogger;
   /** 单条消息的文件总量上限（默认 `MAX_FILE_BYTES`；测试注入更小的值）。 */
   maxBytes?: number;
-  /** 主人才下载（ADR-0027：与图片同一道闸）。 */
+  /** 主人才下载（ADR-0028：与图片同一道闸）。 */
   senderIsOwner: (sender: string) => boolean;
 }
 
-/** 一条消息最多收几个文件：再多也只是没人看的附件（ADR-0027）。 */
+/** 一条消息最多收几个文件：再多也只是没人看的附件（ADR-0028）。 */
 export const OWNER_FILES_MAX = 3;
 
 /** 文件名的字节上限；宿主按 UTF-8 255 字节再清洗一次叶子名，这里留出余量。 */
@@ -141,7 +141,7 @@ function replyTo(message: WeixinMessage): string | undefined {
  * 把一条 iLink 消息转成核心的草稿。
  *
  * 返回 `null` 表示「这条没有可交付的内容」：既没有文本也没有可用的图片。
- * 文件不在草稿里（核心协议没有文件能力，ADR-0027）：接入核心时 `file_item` 照旧不处理。
+ * 文件不在草稿里（核心协议没有文件能力，ADR-0028）：接入核心时 `file_item` 照旧不处理。
  */
 export async function toOwnerMessageDraft(
   message: WeixinMessage,
@@ -275,7 +275,7 @@ function fileReason(reason: string, limitText: string): string {
 }
 
 /**
- * 下载主人这条消息里的文件（独立模式，ADR-0027）。
+ * 下载主人这条消息里的文件（独立模式，ADR-0028）。
  *
  * 准入只有一道闸：`senderIsOwner`。文件数量与总量都有限：最多 `OWNER_FILES_MAX` 个、
  * 合计 `MAX_FILE_BYTES` 字节，按顺序下载并共享同一份预算（处理完一个再下一个，

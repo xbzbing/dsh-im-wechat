@@ -97,3 +97,11 @@ test('发送抛错只记一条可读错误，不把异常抛给提醒链路', as
   assert.equal(await channel.send('hi'), false);
   assert.deepEqual(errors, ['提醒发送失败：网络断了']);
 });
+
+test('回复不走提醒节流：长回答拆成多条时不会被吞掉', async () => {
+  const { api, sent } = fakeApi();
+  const { channel } = makeChannel({ api, ownerId: 'owner-1', gate: { tryTake: () => false } });
+  assert.equal(await channel.reply('第一段'), true);
+  assert.equal(await channel.reply('第二段'), true);
+  assert.deepEqual(sent.map((item) => item.text), ['第一段', '第二段']);
+});

@@ -5,6 +5,7 @@ import { InboundPipeline } from '../../src/host/inbound-pipeline.ts';
 import type { InboundPipelineDeps } from '../../src/host/inbound-pipeline.ts';
 import type { SubmitResult } from '../../src/host/direct.ts';
 import type { PromptPart } from '../../src/host/prompt-parts.ts';
+import type { CommandInput } from '../../src/host/standalone/commands.ts';
 import type { WeixinBridge } from '../../src/host/superagent/bridge.ts';
 import { CDN, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
 
@@ -22,10 +23,12 @@ function harness(options: {
   replyQuestion?: (text: string) => boolean;
   directAvailable?: boolean;
   submitResult?: SubmitResult;
+  commandHandled?: boolean;
 } = {}) {
   const submitted: Submitted[] = [];
   const typing: string[] = [];
   const typingStopped: string[] = [];
+  const commands: CommandInput[] = [];
   const pipeline = new InboundPipeline({
     enabled: () => true,
     stopped: () => false,
@@ -44,6 +47,10 @@ function harness(options: {
     replyQuestion: options.replyQuestion ?? (() => false),
     superagentEnabled: () => options.superagent ?? false,
     directAvailable: () => options.directAvailable ?? true,
+    runCommand: async (input) => {
+      commands.push(input);
+      return options.commandHandled ?? false;
+    },
     typingStart: (sender) => typing.push(sender),
     typingStop: (sender) => typingStopped.push(sender),
     submitDirect: async (sender, content) => {
@@ -53,7 +60,7 @@ function harness(options: {
     setHealth: () => {},
     noteError: () => {},
   });
-  return { pipeline, submitted, typing, typingStopped };
+  return { pipeline, submitted, typing, typingStopped, commands };
 }
 
 const signal = new AbortController().signal;
@@ -194,4 +201,53 @@ test('独立模式：插话成功时保留输入状态给回合事件收尾', as
   await pipeline.route(built.message, signal);
 
   assert.deepEqual(typingStopped, []);
+});
+
+/** 一条只有文字的入站消息。 */
+function textMessage(text: string) {
+  return {
+    message: {
+      message_id: '3001',
+      from_user_id: 'owner-1',
+      create_time_ms: 1_760_000_000_000,
+      item_list: [{ type: 1 as const, text_item: { text } }],
+    },
+  };
+}
+
+test('独立模式：主人的命令交给命令层，不再进会话', async () => {
+  const { pipeline, submitted, typing, commands } = harness({ commandHandled: true });
+  await pipeline.route(textMessage('/help').message, signal);
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0]?.text, '/help');
+  assert.equal(commands[0]?.hasImages, false);
+  assert.deepEqual(submitted, []);
+  assert.deepEqual(typing, [], '命令不经过模型，不开「正在输入」');
+});
+
+test('独立模式：命令带图时只有 /send 下载图片，其他命令先说明图没有发出', async () => {
+  const built = imageMessage(1);
+  const fetch = imageFetch([built.payload]);
+  const { pipeline, commands } = harness({ fetch: fetch.impl, commandHandled: true });
+
+  const help = built.message;
+  help.item_list![0] = { type: 1, text_item: { text: '/help' } };
+  await pipeline.route(help, signal);
+  assert.equal(fetch.calls(), 0);
+  assert.equal(commands[0]?.hasImages, true);
+  assert.deepEqual(commands[0]?.images, []);
+
+  const send = built.message;
+  send.message_id = '2002';
+  send.item_list![0] = { type: 1, text_item: { text: '/send 1 看图' } };
+  await pipeline.route(send, signal);
+  assert.equal(fetch.calls(), 1);
+  assert.equal(commands[1]?.images.length, 1);
+});
+
+test('独立模式：非主人的命令不交给命令层', async () => {
+  const { pipeline, submitted, commands } = harness({ commandHandled: true, isOwner: () => false });
+  await pipeline.route(textMessage('/help').message, signal);
+  assert.deepEqual(commands, []);
+  assert.deepEqual(submitted, []);
 });

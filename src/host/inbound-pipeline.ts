@@ -12,11 +12,14 @@ import type { ILinkApi } from './ilink/api.ts';
 import { PollLoop } from './ilink/poll.ts';
 import type { PollHealth } from './ilink/poll.ts';
 import type { SessionGuard } from './ilink/session-guard.ts';
+import { MessageItemType } from './ilink/types.ts';
 import type { WeixinMessage } from './ilink/types.ts';
 import { messageIdentity, messageText } from './ilink/identity.ts';
 import { downloadOwnerImages, toOwnerMessageDraft } from './inbound.ts';
 import { buildPromptContent } from './prompt-parts.ts';
 import type { PromptPart } from './prompt-parts.ts';
+import { parseCommand } from './standalone/commands.ts';
+import type { CommandInput } from './standalone/commands.ts';
 import { messageOf } from './host-context.ts';
 import type { WeixinBridge } from './superagent/bridge.ts';
 import type { BridgeBinder } from './superagent/link.ts';
@@ -53,6 +56,8 @@ export interface InboundPipelineDeps {
   typingStop(sender: string): void;
   /** 交给独立模式的会话；返回值决定「正在输入」要不要自己收尾。 */
   submitDirect(sender: string, content: readonly PromptPart[]): Promise<SubmitResult>;
+  /** 独立模式的文字命令；返回 true 表示这条消息已被命令消费。 */
+  runCommand(input: CommandInput): Promise<boolean>;
   setHealth(health: BridgeHealth): void;
   noteError(message: string): void;
 }
@@ -134,6 +139,22 @@ export class InboundPipeline {
     if (!deps.superagentEnabled() || !binder) {
       if (!deps.ownFeaturesActive()) return;
       if (!deps.isOwner(sender)) return;
+      // 命令先于图片下载：只有 /send 收图，其余命令先回一句「图没有发出」。
+      const text = messageText(message.item_list);
+      const parsed = parseCommand(text);
+      if (parsed !== null) {
+        const hasImages = message.item_list?.some((item) => item?.type === MessageItemType.IMAGE) === true;
+        const images = parsed.name === 'send' && hasImages
+          ? await downloadOwnerImages(message, {
+            cdnBaseUrl: deps.cdnBaseUrl,
+            ...(deps.fetch ? { fetch: deps.fetch } : {}),
+            signal,
+            logger: deps.logger,
+            senderIsOwner: deps.isOwner,
+          })
+          : [];
+        if (await deps.runCommand({ text, hasImages, images })) return;
+      }
       // 宿主没有会话服务时独立模式接不了：先判，别白白下载图片、开输入状态。
       if (!deps.directAvailable()) return;
       const images = await downloadOwnerImages(message, {
@@ -143,7 +164,7 @@ export class InboundPipeline {
         logger: deps.logger,
         senderIsOwner: deps.isOwner,
       });
-      const content = buildPromptContent(messageText(message.item_list), images);
+      const content = buildPromptContent(text, images);
       // 图片阶段等了十几秒，这里按同一个判据重新看一眼：这期间停用、登出、停机或
       // 打开「接入超级助理」都会让独立模式失效，不能再开新提交。
       if (content.length === 0 || !deps.ownFeaturesActive()) return;

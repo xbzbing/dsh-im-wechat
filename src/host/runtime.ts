@@ -176,7 +176,7 @@ export class WeixinRuntime {
       dir: this.#dir,
       controller: () => this.#sessionController,
       agents: () => this.#agents,
-      send: (text) => this.#owner.send(text),
+      send: (text) => this.#owner.reply(text),
       isOwner: (sender) => this.#owner.isOwner(sender),
       ownerLabel: () => accountTail(this.#loginState?.userId ?? ''),
       defaultWorkspaceId: () => this.#defaultWorkspace.id,
@@ -229,6 +229,7 @@ export class WeixinRuntime {
       directAvailable: () => this.#direct.status().available,
       typingStart: (sender) => this.#typing.start(sender),
       typingStop: (sender) => this.#typing.stop(sender),
+      runCommand: (input) => this.#direct.runCommand(input),
       submitDirect: async (sender, content) => {
         // 默认工作区没建好就建会话，会落到宿主默认位置：先确保它在这里。
         await this.#defaultWorkspace.ensure();
@@ -369,6 +370,7 @@ export class WeixinRuntime {
     this.#api = null;
     this.#binder?.bind(null);
     this.#bridge = null;
+    this.#direct.stop();
     await this.#direct.flush();
     await this.#tokenStore.flush();
     if (api) await api.notifyStop().catch(() => undefined);

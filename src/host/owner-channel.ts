@@ -52,17 +52,31 @@ export class OwnerChannel {
     return owner !== undefined && owner.toLowerCase() === sender.toLowerCase();
   }
 
-  /** 把一段文本发到主人的微信；没有可用令牌时返回 false。 */
+  /**
+   * 直接回复主人的一条消息（`/send` 的命令回执、直连会话的回答、跟踪推送）。
+   *
+   * 不走提醒节流：这些是主人正要的回复，不是「主动提醒」；长回答还会被拆成多条，
+   * 节流会静默吞掉后几条。
+   */
+  reply(text: string): Promise<boolean> {
+    return this.#sendText(text, false);
+  }
+
+  /** 主动提醒（问题、授权、长任务）：走节流，避免密集 pending 把平台配额吃光。 */
   async send(text: string): Promise<boolean> {
-    const api = this.#options.api();
-    const account = this.#options.account();
-    const recipient = this.recipient();
-    if (!api || !account || recipient === null) return false;
-    // 提醒不走交付的配额账本：这里单独节流，避免密集 pending 把平台配额吃光。
+    // 提醒不走交付的配额账本：这里单独节流，密集 pending 时不发，交回 Web 端处理。
     if (this.#options.gate !== undefined && !this.#options.gate.tryTake()) {
       this.#options.logger?.warn?.('提醒发送过于频繁，已跳过');
       return false;
     }
+    return this.#sendText(text, true);
+  }
+
+  async #sendText(text: string, reminder: boolean): Promise<boolean> {
+    const api = this.#options.api();
+    const account = this.#options.account();
+    const recipient = this.recipient();
+    if (!api || !account || recipient === null) return false;
     try {
       await sendText(api, {
         to: recipient,
@@ -71,7 +85,7 @@ export class OwnerChannel {
       });
       return true;
     } catch (error) {
-      this.#options.noteError(`提醒发送失败：${messageOf(error)}`);
+      this.#options.noteError(reminder ? `提醒发送失败：${messageOf(error)}` : `回复发送失败：${messageOf(error)}`);
       return false;
     }
   }

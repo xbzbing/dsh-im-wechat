@@ -21,7 +21,7 @@ import type { BusyMode } from '../config.ts';
 import { StandaloneCommandStore } from '../state/standalone-commands.ts';
 import { StandaloneCommands } from './commands.ts';
 import type { CommandInput } from './commands.ts';
-import { SessionLister } from './session-list.ts';
+import { SessionLister, rowTitle } from './session-list.ts';
 import { SessionWatcher } from './session-watch.ts';
 import { MAX_TEXT_BYTES } from '../superagent/render.ts';
 
@@ -130,6 +130,8 @@ export class DirectStack {
     await this.#store.hydrate();
     await this.#commandStore.hydrate();
     this.#watcher.start();
+    // 旧版本落盘的绑定没有标题：启动时从宿主列表补一次，面板不用等下一次改名。
+    await this.#refreshBindingTitle();
   }
 
   /** 等挂起的写盘与推送完成（停机时调用）。 */
@@ -212,6 +214,20 @@ export class DirectStack {
     }, AbortSignal.timeout(DELIVER_TIMEOUT_MS));
     if (result.accepted !== true) throw new Error('会话没有接受这条消息');
     return { queued: busy && mode === 'queue' };
+  }
+
+  async #refreshBindingTitle(): Promise<void> {
+    const binding = this.#store.get();
+    const controller = this.#controller();
+    if (binding === null || controller === null || typeof controller.list !== 'function') return;
+    try {
+      const value = await controller.list({}, AbortSignal.timeout(BUSY_TIMEOUT_MS));
+      const row = value.items?.find((item) => item.sessionId === binding.sessionId);
+      const title = row === undefined ? '' : rowTitle(row);
+      if (title !== '') await this.#store.setTitle(title);
+    } catch {
+      // 读不到标题不影响绑定与会话；下一次 session/title 事件还会补。
+    }
   }
 
   async #isBusy(controller: DirectController, sessionId: string): Promise<boolean> {

@@ -184,13 +184,17 @@ node scripts/dev-bridge.mjs run
 发布由 [`.github/workflows/release.yml`](.github/workflows/release.yml) 在 master 上执行（[ADR-0020](docs/adr/0020-发布走CI与npm可信发布.md)）：门禁 → 打 tag → `npm publish`（可信发布，OIDC，不存 `NPM_TOKEN`）→ GitHub Release（附同一个 tgz）。**不要手工打 tag，也不要在本地 `npm publish`**。
 
 ```bash
-# 1. 版本号：package.json 与 package-lock.json 两处一起改
+# 1. 版本号：package.json 与 package-lock.json 由这条命令一起改
 #    带 - 的是预发布（0.2.0-rc.1）：只打 tag + 建 GitHub 预发布，不发 npm
 npm version <v> --no-git-tag-version
 
-# 2. 正文：稳定版与预发布都要写，和版本号一起提交
+# 2. 版本号还有第三处：src/shared/version.ts 的 PLUGIN_VERSION
+#    它是刻意留的权威副本，单测会校验，漏改门禁直接红
+$EDITOR src/shared/version.ts
+
+# 3. 正文：稳定版与预发布都要写，和版本号一起提交
 $EDITOR docs/releases/v<v>.md
-git add package.json package-lock.json docs/releases/v<v>.md
+git add package.json package-lock.json src/shared/version.ts docs/releases/v<v>.md
 git commit -m "chore: release v<v>"
 ```
 

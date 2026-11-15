@@ -91,13 +91,17 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-im-wechat/releases/d
 ## 发布流程
 
 ```bash
-# 1. 版本号：package.json 与 package-lock.json 两处 version 一起改
+# 1. 版本号：package.json 与 package-lock.json 由这条命令一起改
 #    带 - 的是预发布（0.2.0-rc.1）：只打 tag + 建 GitHub 预发布，不发 npm
 npm version <v> --no-git-tag-version
 
-# 2. 正文：稳定版与预发布都要写，和版本号一起提交
+# 2. 版本号还有第三处：src/shared/version.ts 的 PLUGIN_VERSION
+#    它是刻意留的权威副本，由单测校验「与 package.json 一致」，漏改门禁直接红
+$EDITOR src/shared/version.ts
+
+# 3. 正文：稳定版与预发布都要写，和版本号一起提交
 $EDITOR docs/releases/v<v>.md
-git add package.json package-lock.json docs/releases/v<v>.md
+git add package.json package-lock.json src/shared/version.ts docs/releases/v<v>.md
 git commit -m "chore: release v<v>"
 ```
 

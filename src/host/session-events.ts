@@ -31,10 +31,12 @@ export function dispatchSessionEvent(deps: SessionEventDeps, session: unknown, e
       : '';
   if (sessionId === '') return;
   deps.longTasks.handleEvent(sessionId, event);
+  // 独立模式的命令观察者要看所有会话（`/send`、`/trace` 的目标不一定是绑定的那个）；
+  // 直连会话自己按绑定过滤，不在这里判。
+  deps.directHandle(sessionId, event);
   const binding = deps.binding();
   if (binding === null || binding.sessionId !== sessionId) return;
   const type = (event as { type?: unknown } | null)?.type;
   if (type === 'turn/end') deps.typingStop(deps.ownerUserId());
   if (type === 'deliverables/presented') deps.forwardPresented(event);
-  deps.directHandle(sessionId, event);
 }

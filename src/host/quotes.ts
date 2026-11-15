@@ -5,7 +5,7 @@
  * （`docs/protocol/ilink-消息与媒体.md`）。所以这里在内存里记一份「平台消息 id → 这条消息
  * 带了什么」，引用到来时按 id 查回来；查不到就退回 `ref_msg.title`。
  *
- * 索引只在内存：引用是一次性的，文件名与正文片段不该进磁盘。代价是插件重启或超出窗口后
+ * 索引只在内存、按条数兜住：引用是一次性的，文件名与正文片段不该进磁盘。代价是插件重启后
  * 只能靠标题——这是 ADR-0029 选定的取舍，不是遗漏。
  */
 
@@ -29,10 +29,13 @@ export interface QuoteRef {
   readonly inline: readonly QuotedContent[];
 }
 
-/** 记住多久：够覆盖「先发文件、隔一会儿再引用着问」的节奏，又不至于攒满整个会话。 */
-export const QUOTE_TTL_MS = 30 * 60_000;
-/** 最多记多少条消息。 */
-export const QUOTE_MAX_ENTRIES = 50;
+/**
+ * 最多记多少条消息。
+ *
+ * 一条摘要几百字节（文件名、图片张数、截断过的正文），200 条也就几十 KB；超过就挤掉最早
+ * 记的那条。不设时效：主人引用一小时前发的那份文件时，这条记录仍然有用。
+ */
+export const QUOTE_MAX_ENTRIES = 200;
 /** 正文摘要与标题的截断长度。 */
 const QUOTE_TEXT_MAX = 40;
 
@@ -65,22 +68,21 @@ export function quotedContent(input: {
 }): QuotedContent[] {
   const content: QuotedContent[] = input.files.map((name) => ({ kind: 'file', name }));
   for (let index = 0; index < input.images; index += 1) content.push({ kind: 'image' });
-  // 正文只留标头会用到的那一小段：原文没有第二次用途，多在内存里放 30 分钟没有道理。
+  // 正文只留标头会用到的那一小段：原文没有第二次用途，多留没有道理。
   if (input.text.trim() !== '') content.push({ kind: 'text', text: clip(input.text) });
   return content;
 }
 
-/** 「这条消息带了什么」的内存索引：容量与时效都有上界，过期即忘。 */
+/** 「这条消息带了什么」的内存索引：按条数淘汰，进程内一直有效。 */
 export class QuoteMemory {
-  readonly #entries = new Map<string, { readonly at: number; readonly content: readonly QuotedContent[] }>();
+  readonly #entries = new Map<string, readonly QuotedContent[]>();
 
   /** 记下一条消息带了什么；没有平台 id 或没有内容时不记——引用它本来也无处可查。 */
-  remember(messageId: string | undefined, content: readonly QuotedContent[], now: number): void {
+  remember(messageId: string | undefined, content: readonly QuotedContent[]): void {
     if (messageId === undefined || content.length === 0) return;
-    this.#prune(now);
-    // 重投的同一帧会重新记一次：删了再插，顺序按最新一次排。
+    // 重投的同一帧会重新记一次：删了再插，淘汰顺序按最新一次排。
     this.#entries.delete(messageId);
-    this.#entries.set(messageId, { at: now, content });
+    this.#entries.set(messageId, content);
     while (this.#entries.size > QUOTE_MAX_ENTRIES) {
       const oldest = this.#entries.keys().next();
       if (oldest.done === true) break;
@@ -89,27 +91,14 @@ export class QuoteMemory {
   }
 
   /** 还原成一行中文标头；认不出引用的是哪条时返回 undefined（不猜）。 */
-  line(quote: QuoteRef, now: number): string | undefined {
-    const body = describeQuote(this.#lookup(quote.messageId, now) ?? quote.inline)
+  line(quote: QuoteRef): string | undefined {
+    const body = describeQuote(this.#lookup(quote.messageId) ?? quote.inline)
       ?? describeTitle(quote.title);
     return body === undefined ? undefined : `[引用：${body}]`;
   }
 
-  #lookup(messageId: string | undefined, now: number): readonly QuotedContent[] | undefined {
-    if (messageId === undefined) return undefined;
-    const entry = this.#entries.get(messageId);
-    if (entry === undefined) return undefined;
-    if (now - entry.at > QUOTE_TTL_MS) {
-      this.#entries.delete(messageId);
-      return undefined;
-    }
-    return entry.content;
-  }
-
-  #prune(now: number): void {
-    for (const [id, entry] of this.#entries) {
-      if (now - entry.at > QUOTE_TTL_MS) this.#entries.delete(id);
-    }
+  #lookup(messageId: string | undefined): readonly QuotedContent[] | undefined {
+    return messageId === undefined ? undefined : this.#entries.get(messageId);
   }
 }
 

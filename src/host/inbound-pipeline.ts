@@ -184,16 +184,14 @@ export class InboundPipeline {
       });
       // 引用还原（ADR-0029）：先记下这条消息带了什么，再把它的引用还原成一行标头。
       // 引用说的「这个文件」在会话里可能有多个候选，不指认清楚模型只能挑最近那个。
-      const now = deps.now();
       this.#quotes.remember(
         normalizeMessageId(message.message_id) ?? undefined,
         quotedContent({ text, images: images.length, files: files.files.map((file) => file.name) }),
-        now,
       );
       const quote = quoteOf(message);
       // 只有引用、没有别的可交付内容时不提交：标头不单独成一条消息（与加这一行之前一致）。
       const deliverable = text.trim() !== '' || images.length > 0 || files.files.length > 0;
-      const quoted = quote === undefined || !deliverable ? undefined : this.#quotes.line(quote, now);
+      const quoted = quote === undefined || !deliverable ? undefined : this.#quotes.line(quote);
       const content = withQuote(buildPromptContent(text, images), quoted);
       // 附件阶段等了十几秒，这里按同一个判据重新看一眼：这期间停用、登出、停机或
       // 打开「接入超级助理」都会让独立模式失效，不能再开新提交。

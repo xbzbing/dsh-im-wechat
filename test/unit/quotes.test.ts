@@ -3,7 +3,6 @@ import { test } from 'node:test';
 
 import {
   QUOTE_MAX_ENTRIES,
-  QUOTE_TTL_MS,
   QuoteMemory,
   quoteOf,
   quotedContent,
@@ -92,79 +91,76 @@ test('记一条消息带了什么：文件在前、其次图片、最后正文',
 
 test('引用命中索引时点名那个文件——这就是「这个文件」指的是哪一个', () => {
   const memory = new QuoteMemory();
-  memory.remember('3001', quotedContent({ text: '请看这个文件', images: 0, files: ['报告.pdf'] }), NOW);
+  memory.remember('3001', quotedContent({ text: '请看这个文件', images: 0, files: ['报告.pdf'] }));
   assert.equal(
-    memory.line({ messageId: '3001', inline: [] }, NOW),
+    memory.line({ messageId: '3001', inline: [] }),
     '[引用：文件 报告.pdf]',
   );
 });
 
 test('多个文件、多张图片分别拼成一句话', () => {
   const memory = new QuoteMemory();
-  memory.remember('3001', quotedContent({ text: '', images: 0, files: ['a.pdf', 'b.pdf'] }), NOW);
-  assert.equal(memory.line({ messageId: '3001', inline: [] }, NOW), '[引用：文件 a.pdf、b.pdf]');
-  memory.remember('3002', quotedContent({ text: '', images: 3, files: [] }), NOW);
-  assert.equal(memory.line({ messageId: '3002', inline: [] }, NOW), '[引用：图片 3 张]');
-  memory.remember('3003', quotedContent({ text: '', images: 1, files: [] }), NOW);
-  assert.equal(memory.line({ messageId: '3003', inline: [] }, NOW), '[引用：图片]');
+  memory.remember('3001', quotedContent({ text: '', images: 0, files: ['a.pdf', 'b.pdf'] }));
+  assert.equal(memory.line({ messageId: '3001', inline: [] }), '[引用：文件 a.pdf、b.pdf]');
+  memory.remember('3002', quotedContent({ text: '', images: 3, files: [] }));
+  assert.equal(memory.line({ messageId: '3002', inline: [] }), '[引用：图片 3 张]');
+  memory.remember('3003', quotedContent({ text: '', images: 1, files: [] }));
+  assert.equal(memory.line({ messageId: '3003', inline: [] }), '[引用：图片]');
 });
 
 test('索引没命中时依次退回客户端带来的内容与标题', () => {
   const memory = new QuoteMemory();
   assert.equal(
-    memory.line({ messageId: '9999', inline: [{ kind: 'file', name: 'c.pdf' }] }, NOW),
+    memory.line({ messageId: '9999', inline: [{ kind: 'file', name: 'c.pdf' }] }),
     '[引用：文件 c.pdf]',
   );
-  assert.equal(memory.line({ messageId: '9999', inline: [], title: '被引用的消息' }, NOW), '[引用：「被引用的消息」]');
-  assert.equal(memory.line({ inline: [] }, NOW), undefined);
+  assert.equal(memory.line({ messageId: '9999', inline: [], title: '被引用的消息' }), '[引用：「被引用的消息」]');
+  assert.equal(memory.line({ inline: [] }), undefined);
 });
 
 test('引用的正文压掉换行并截到 40 字', () => {
   const memory = new QuoteMemory();
   const long = `${'一二三四五六七八九十'.repeat(5)}\n第二行`;
-  memory.remember('3001', quotedContent({ text: long, images: 0, files: [] }), NOW);
-  const line = memory.line({ messageId: '3001', inline: [] }, NOW) ?? '';
+  memory.remember('3001', quotedContent({ text: long, images: 0, files: [] }));
+  const line = memory.line({ messageId: '3001', inline: [] }) ?? '';
   assert.equal(line, '[引用：「一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…」]');
 });
 
-test('过了窗口就当没记过：只看得到标题', () => {
+test('索引不设时效：没被条数挤掉的记录一直有效', () => {
   const memory = new QuoteMemory();
-  memory.remember('3001', quotedContent({ text: '', images: 0, files: ['a.pdf'] }), NOW);
-  assert.equal(memory.line({ messageId: '3001', inline: [], title: '旧消息' }, NOW + QUOTE_TTL_MS + 1), '[引用：「旧消息」]');
-});
-
-test('正好到窗口边界仍算有效', () => {
-  const memory = new QuoteMemory();
-  memory.remember('3001', quotedContent({ text: '', images: 0, files: ['a.pdf'] }), NOW);
-  assert.equal(memory.line({ messageId: '3001', inline: [] }, NOW + QUOTE_TTL_MS), '[引用：文件 a.pdf]');
+  memory.remember('3001', quotedContent({ text: '', images: 0, files: ['a.pdf'] }));
+  for (let index = 0; index < QUOTE_MAX_ENTRIES - 1; index += 1) {
+    memory.remember(String(4000 + index), quotedContent({ text: '', images: 0, files: [`${index}.pdf`] }));
+  }
+  assert.equal(memory.line({ messageId: '3001', inline: [] }), '[引用：文件 a.pdf]');
 });
 
 test('引用自己（id 就是本条消息）按普通查找处理，不会递归', () => {
   const memory = new QuoteMemory();
-  memory.remember('3001', quotedContent({ text: '', images: 0, files: ['a.pdf'] }), NOW);
-  assert.equal(memory.line({ messageId: '3001', inline: [] }, NOW), '[引用：文件 a.pdf]');
+  memory.remember('3001', quotedContent({ text: '', images: 0, files: ['a.pdf'] }));
+  assert.equal(memory.line({ messageId: '3001', inline: [] }), '[引用：文件 a.pdf]');
 });
 
 test('文件名也压换行并截到 40 字：标头不该比它指的东西还长', () => {
   const memory = new QuoteMemory();
   const long = `${'名'.repeat(60)}\n第二行.pdf`;
-  memory.remember('3001', quotedContent({ text: '', images: 0, files: [long] }), NOW);
-  const line = memory.line({ messageId: '3001', inline: [] }, NOW) ?? '';
+  memory.remember('3001', quotedContent({ text: '', images: 0, files: [long] }));
+  const line = memory.line({ messageId: '3001', inline: [] }) ?? '';
   assert.equal(line, `[引用：文件 ${'名'.repeat(40)}…]`);
 });
 
 test('条目数有上界：最早那条被挤出去', () => {
   const memory = new QuoteMemory();
   for (let index = 0; index <= QUOTE_MAX_ENTRIES; index += 1) {
-    memory.remember(String(3000 + index), quotedContent({ text: '', images: 0, files: [`${index}.pdf`] }), NOW + index);
+    memory.remember(String(3000 + index), quotedContent({ text: '', images: 0, files: [`${index}.pdf`] }));
   }
-  assert.equal(memory.line({ messageId: '3000', inline: [], title: '最早' }, NOW), '[引用：「最早」]');
-  assert.equal(memory.line({ messageId: '3001', inline: [] }, NOW), '[引用：文件 1.pdf]');
+  assert.equal(memory.line({ messageId: '3000', inline: [], title: '最早' }), '[引用：「最早」]');
+  assert.equal(memory.line({ messageId: '3001', inline: [] }), '[引用：文件 1.pdf]');
 });
 
 test('没有平台 id 或没有内容的条目不入索引', () => {
   const memory = new QuoteMemory();
-  memory.remember(undefined, quotedContent({ text: '', images: 0, files: ['a.pdf'] }), NOW);
-  memory.remember('3001', [], NOW);
-  assert.equal(memory.line({ messageId: '3001', inline: [] }, NOW), undefined);
+  memory.remember(undefined, quotedContent({ text: '', images: 0, files: ['a.pdf'] }));
+  memory.remember('3001', []);
+  assert.equal(memory.line({ messageId: '3001', inline: [] }), undefined);
 });

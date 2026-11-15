@@ -162,7 +162,7 @@ export const STYLES = `
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .wx-draft-hint { margin: 0 0 -2px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 /* 保存成功的即时反馈：两秒后由面板清掉。 */
-.wx-saved { color: var(--dsw-alias-state-success-label, var(--dsw-alias-label-secondary)); font-size: 11px; line-height: 16px; white-space: nowrap; animation: wx-saved-in .18s ease-out; }
+.wx-saved { display: inline-block; min-width: 3.2em; color: var(--dsw-alias-state-success-label, var(--dsw-alias-label-secondary)); font-size: 11px; line-height: 16px; white-space: nowrap; animation: wx-saved-in .18s ease-out; }
 @keyframes wx-saved-in { from { opacity: 0; transform: translateY(1px); } to { opacity: 1; transform: none; } }
 /* 当前会话：名字完整显示，id 用小字单独一行，长 id 可换行、可复制。 */
 .wx-session-name { color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 19px; overflow-wrap: anywhere; }

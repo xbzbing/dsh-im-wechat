@@ -73,7 +73,9 @@ export function ConnectionSection(props: {
           h(StateDot, { state }),
           h('div', null,
             h('strong', null, loggedIn ? healthText(t, health) : t('connection.signedOut')),
-            h('span', null, loggedIn ? bridgeLabel : t('connection.signedOutHint')))),
+            loggedIn
+              ? (bridgeLabel !== '' ? h('span', null, bridgeLabel) : null)
+              : h('span', null, t('connection.signedOutHint')))),
         h('div', { className: 'wx-facts' },
           h(Fact, {
             label: t('connection.account'),

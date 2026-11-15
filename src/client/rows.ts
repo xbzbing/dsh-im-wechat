@@ -30,14 +30,20 @@ export function SwitchRow({ title, description, checked, disabled, onChange }: a
 export function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return h('div', { className: 'wx-fact' },
     h('span', null, label),
-    // 悬停看全文：账号这类值平时只显示尾号，不把整串铺在卡片上。
-    h('strong', { ...(hint ? { title: hint } : {}) }, value));
+    // 悬停看全文：账号这类值平时只显示尾号，不把整串铺在卡片上；读屏也读全文。
+    h('strong', { ...(hint ? { title: hint, 'aria-label': hint } : {}) }, value));
 }
 
-/** 保存成功的即时反馈：只活几秒，由面板的状态驱动。 */
+/**
+ * 保存成功的即时反馈：只活几秒，由面板的状态驱动。
+ *
+ * 未保存时也占位（空串 + 固定宽度），否则提示出现/消失会让左侧说明列宽度跳一下。
+ */
 export function SavedHint({ t, saved }: { t: T; saved: boolean }) {
-  if (!saved) return null;
-  return h('span', { className: 'wx-saved', role: 'status' }, t('common.saved'));
+  return h('span', {
+    className: 'wx-saved',
+    ...(saved ? { role: 'status' } : { 'aria-hidden': 'true' }),
+  }, saved ? t('common.saved') : '');
 }
 
 export function Metric({ value, label, wide }: { value: string; label: string; wide?: boolean }) {

@@ -48,14 +48,15 @@ export const zh = {
   'connection.bridgeOn': '已接入超级助理',
 
   // 扫码登录
+  'login.title': '扫码登录微信',
   'login.start': '扫码登录',
   'login.restartScan': '重新扫码',
   'login.signOut': '登出',
   'login.signOutHint': '登出后需要重新扫码才能继续接收微信消息。',
   'login.scanHint': '用手机微信扫描二维码',
   'login.qrAlt': '二维码',
-  'login.qrLoading': '二维码加载中…',
-  'login.linkHint': '无法显示二维码时，可复制下面的链接在手机微信中打开：',
+  'login.qrLoading': '正在获取登录二维码…',
+  'login.qrFallback': '二维码没能显示，用下面的按钮复制链接，在手机微信里打开。',
   'login.copyLink': '复制链接',
   'login.openLink': '打开链接',
   'login.verifyCode': '验证码',

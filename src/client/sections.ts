@@ -11,6 +11,7 @@ import {
   describeLoginPhase,
   formatTime,
   healthText,
+  reminderSourceKey,
   standaloneSettingsLocked,
   validateMinutes,
   validateQuestionDelay,
@@ -20,7 +21,7 @@ import { modelSaveable } from './model-route.ts';
 import { h } from './platform.ts';
 import type { ModelCatalogView } from '../shared/models.ts';
 import { Fact, Metric, MinutesRow, ModelRouteRow, PickerRow, SwitchRow } from './rows.ts';
-import { Button, IconCopy, IconLink, Input, StateDot } from './ui.ts';
+import { Button, Dialog, IconCopy, IconLink, Input, StateDot } from './ui.ts';
 import type { Translate } from './locales.ts';
 
 type T = Translate;
@@ -35,7 +36,7 @@ export function healthDot(state: string): 'done' | 'warning' | 'error' | 'idle' 
   return 'idle';
 }
 
-/** 连接区：账号事实、登录/登出动作与扫码卡片。 */
+/** 连接区：账号事实、登录/登出动作；扫码登录在弹层里（`LoginDialog`）。 */
 export function ConnectionSection(props: {
   t: T;
   rpcCall: RpcCall;
@@ -44,19 +45,10 @@ export function ConnectionSection(props: {
   state: string;
   loggedIn: boolean;
   health: any;
-  showLoginPanel: boolean;
-  active: boolean;
-  login: any;
-  qrData: string | null;
-  qrLink: string | null;
-  copied: boolean;
-  code: string;
   busy: string;
-  copyLink: () => Promise<void>;
-  setCode: (value: string) => void;
+  onLogin: () => void;
 }) {
-  const { t, rpcCall, run, status, state, loggedIn, health, showLoginPanel, active, login } = props;
-  const { qrData, qrLink, copied, code, busy, copyLink, setCode } = props;
+  const { t, rpcCall, run, status, state, loggedIn, health, busy, onLogin } = props;
   // 只在真的接上了才说：未接入是默认状态，不必占一行。
   const bridgeLabel = status?.bridge?.registered ? t('connection.bridgeOn') : '';
 
@@ -66,110 +58,121 @@ export function ConnectionSection(props: {
         h('p', { className: 'wx-eyebrow' }, t('connection.eyebrow')),
         h('h4', { className: 'wx-section-title' }, loggedIn ? t('connection.titleConnected') : t('connection.titleConnect'))),
       h('span', { className: 'wx-version' }, `${t('connection.version')} ${status?.version ?? ''}`)),
-    // 没有二维码时不留右列：整张卡拉通，避免右半边空着、左半边挤到截断。
-    h('div', { className: `wx-connection-grid${showLoginPanel ? ' wx-connection-split' : ''}` },
-      h('div', { className: 'wx-connection-main' },
-        h('div', { className: 'wx-connection-status' },
-          h(StateDot, { state }),
-          h('div', null,
-            h('strong', null, loggedIn ? healthText(t, health) : t('connection.signedOut')),
-            loggedIn
-              ? (bridgeLabel !== '' ? h('span', null, bridgeLabel) : null)
-              : h('span', null, t('connection.signedOutHint')))),
-        h('div', { className: 'wx-facts' },
-          h(Fact, {
-            label: t('connection.account'),
-            value: status?.accountTail ?? t('status.signedOut'),
-            ...(typeof status?.account === 'string' && status.account !== '' ? { hint: status.account } : {}),
-          }),
-          h(Fact, { label: t('connection.signedInAt'), value: status?.loggedInAt ? formatTime(status.loggedInAt) : '—' }),
-          h(Fact, {
-            label: t('reminder.source'),
-            value: status?.ownFeatures ? t('reminder.sourcePlugin') : t('reminder.sourceCore'),
-          })),
-        !showLoginPanel
-          ? h('div', { className: 'wx-actions' },
-            // 登录与重新扫码是同一个动作，只差 variant 与文案。
-            h(Button, {
-              variant: loggedIn ? 'outline' : 'primary',
-              size: 'md',
-              disabled: busy !== '',
-              onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
-            }, busy === 'login' ? t('common.loading') : loggedIn ? t('login.restartScan') : t('login.start')),
-            loggedIn
-              ? h(Button, {
-                variant: 'ghost',
-                size: 'md',
-                disabled: busy !== '',
-                onClick: () => void run('logout', () => rpcCall(ENDPOINTS.logout)),
-              }, t('login.signOut'))
-              : null)
-          : null,
-        // 提示独立成行：宽版时拉通整行，不跟按钮挤在右侧格子里。
-        !showLoginPanel && loggedIn
-          ? h('span', { className: 'wx-action-hint' }, t('login.signOutHint'))
+    h('div', { className: 'wx-connection-main' },
+      h('div', { className: 'wx-connection-status' },
+        h(StateDot, { state }),
+        h('div', null,
+          h('strong', null, loggedIn ? healthText(t, health) : t('connection.signedOut')),
+          loggedIn
+            ? (bridgeLabel !== '' ? h('span', null, bridgeLabel) : null)
+            : h('span', null, t('connection.signedOutHint')))),
+      h('div', { className: 'wx-facts' },
+        h(Fact, {
+          label: t('connection.account'),
+          value: status?.accountTail ?? t('status.signedOut'),
+          ...(typeof status?.account === 'string' && status.account !== '' ? { hint: status.account } : {}),
+        }),
+        h(Fact, { label: t('connection.signedInAt'), value: status?.loggedInAt ? formatTime(status.loggedInAt) : '—' }),
+        h(Fact, {
+          label: t('reminder.source'),
+          value: t(reminderSourceKey(status?.superagent)),
+        })),
+      h('div', { className: 'wx-actions' },
+        // 登录与重新扫码是同一个动作，只差 variant 与文案；二维码在弹层里出。
+        h(Button, {
+          variant: loggedIn ? 'outline' : 'primary',
+          size: 'md',
+          disabled: busy !== '',
+          onClick: onLogin,
+        }, busy === 'login' ? t('common.loading') : loggedIn ? t('login.restartScan') : t('login.start')),
+        loggedIn
+          ? h(Button, {
+            variant: 'ghost',
+            size: 'md',
+            disabled: busy !== '',
+            onClick: () => void run('logout', () => rpcCall(ENDPOINTS.logout)),
+          }, t('login.signOut'))
           : null),
-
-      showLoginPanel
-        ? h('div', { className: 'wx-qr-card' },
-          h('div', { className: 'wx-qr-heading' },
-            h('span', { className: 'wx-qr-step' }, '01'),
-            h('div', null,
-              h('strong', null, t(describeLoginPhase(login.phase) || 'login.phase.waiting')),
-              h('span', null, t('login.scanHint')))),
-          h('div', { className: 'wx-qr-content' },
-            qrData
-              ? h('img', { className: 'wx-qr-img', src: qrData, alt: t('login.qrAlt') })
-              : h('div', { className: 'wx-qr-placeholder' }, t('login.qrLoading')),
-            h('div', { className: 'wx-qr-side' },
-              login.phase === 'failed' && login.error
-                ? h('p', { className: 'wx-error' }, String(login.error))
-                : null,
-              login.qrContent
-                ? h('code', { className: 'wx-link' }, String(login.qrContent))
-                : h('p', { className: 'wx-hint' }, t('login.linkHint')),
-              login.phase === 'need-verify-code'
-                ? h('div', { className: 'wx-code-row' },
-                  h(Input, {
-                    value: code,
-                    placeholder: t('login.verifyCode'),
-                    'aria-label': t('login.verifyCode'),
-                    onChange: (event: any) => setCode(event.target.value),
-                  }),
-                  h(Button, {
-                    variant: 'primary',
-                    size: 'sm',
-                    disabled: busy !== '' || code.trim() === '',
-                    onClick: () => void run('code', () => rpcCall(ENDPOINTS.loginCode, { code: code.trim() })),
-                  }, t('login.submitCode')))
-                : null,
-              h('div', { className: 'wx-actions' },
-                login.qrContent
-                  ? h(Button, { variant: 'ghost', size: 'sm', icon: h(IconCopy, null), onClick: () => void copyLink() },
-                    copied ? t('common.copied') : t('login.copyLink'))
-                  : null,
-                qrLink
-                  ? h(Button, {
-                    variant: 'ghost',
-                    size: 'sm',
-                    icon: h(IconLink, null),
-                    onClick: () => window.open(qrLink, '_blank', 'noreferrer'),
-                  }, t('login.openLink'))
-                  : null,
-                active
-                  ? h(Button, {
-                    variant: 'ghost',
-                    size: 'sm',
-                    disabled: busy !== '',
-                    onClick: () => void run('cancel', () => rpcCall(ENDPOINTS.loginCancel)),
-                  }, t('common.cancel'))
-                  : h(Button, {
-                    variant: 'ghost',
-                    size: 'sm',
-                    disabled: busy !== '',
-                    onClick: () => void run('login', () => rpcCall(ENDPOINTS.loginStart)),
-                  }, t('login.restart'))))))
+      // 提示独立成行：宽版时拉通整行，不跟按钮挤在右侧格子里。
+      loggedIn
+        ? h('span', { className: 'wx-action-hint' }, t('login.signOutHint'))
         : null));
+}
+
+/**
+ * 扫码登录弹层：二维码是唯一有底色的元素，其余按文字排。
+ *
+ * 关闭即取消这次登录（没有会话在等，留着只会让二维码一直轮询）；登录已结束（失败、
+ * 已绑定）时点关闭只是收起弹层，由调用方记住这次收起。
+ */
+export function LoginDialog(props: {
+  t: T;
+  rpcCall: RpcCall;
+  run: Run;
+  login: any;
+  qrData: string | null;
+  qrLink: string | null;
+  copied: boolean;
+  code: string;
+  busy: string;
+  active: boolean;
+  copyLink: () => Promise<void>;
+  setCode: (value: string) => void;
+  onClose: () => void;
+}) {
+  const { t, rpcCall, run, login, copied, code, busy, active, copyLink, setCode, onClose } = props;
+  const { qrData, qrLink } = props;
+
+  return h(Dialog, { open: true, label: t('login.title'), onClose },
+    h('div', { className: 'wx-login' },
+      h('div', { className: 'wx-login-head' },
+        h('strong', null, t(describeLoginPhase(login.phase) || 'login.phase.waiting')),
+        h('span', null, t('login.scanHint'))),
+      login.phase === 'failed' && login.error
+        ? h('p', { className: 'wx-error' }, String(login.error))
+        : null,
+      qrData
+        ? h('img', { className: 'wx-login-qr', src: qrData, alt: t('login.qrAlt') })
+        : h('div', { className: 'wx-login-qr wx-login-qr-empty' },
+          h('span', null, login.qrContent ? t('login.qrFallback') : t('login.qrLoading'))),
+      login.phase === 'need-verify-code'
+        ? h('div', { className: 'wx-code-row' },
+          h(Input, {
+            value: code,
+            placeholder: t('login.verifyCode'),
+            'aria-label': t('login.verifyCode'),
+            onChange: (event: any) => setCode(event.target.value),
+          }),
+          h(Button, {
+            variant: 'primary',
+            size: 'sm',
+            disabled: busy !== '' || code.trim() === '',
+            onClick: () => void run('code', () => rpcCall(ENDPOINTS.loginCode, { code: code.trim() })),
+          }, t('login.submitCode')))
+        : null,
+      // 链接只以按钮出现：复制到手机、或在手机上打开，不铺原文。
+      login.qrContent
+        ? h('div', { className: 'wx-actions' },
+          h(Button, { variant: 'ghost', size: 'sm', icon: h(IconCopy, null), onClick: () => void copyLink() },
+            copied ? t('common.copied') : t('login.copyLink')),
+          qrLink
+            ? h(Button, {
+              variant: 'ghost',
+              size: 'sm',
+              icon: h(IconLink, null),
+              onClick: () => window.open(qrLink, '_blank', 'noreferrer'),
+            }, t('login.openLink'))
+            : null)
+        : null,
+      h('button', {
+        type: 'button',
+        className: 'wx-login-foot',
+        disabled: busy !== '',
+        onClick: () => void run(
+          active ? 'cancel' : 'login',
+          () => rpcCall(active ? ENDPOINTS.loginCancel : ENDPOINTS.loginStart),
+        ),
+      }, active ? t('common.cancel') : t('login.restart'))));
 }
 
 /** 消息与提醒区：接入开关、提醒来源，以及独立模式才生效的提醒设置。 */
@@ -425,7 +428,7 @@ export function RuntimeSection(props: { t: T; status: any }) {
       h(Metric, { value: String(status?.pendingApprovals ?? 0), label: t('runtime.pendingApprovals') }),
       h(Metric, { value: String(status?.trackingTasks ?? 0), label: t('runtime.trackingTasks') }),
       h(Metric, {
-        value: status?.ownFeatures ? t('reminder.sourcePlugin') : t('reminder.sourceCore'),
+        value: t(reminderSourceKey(status?.superagent)),
         label: t('reminder.source'),
         wide: true,
       })),

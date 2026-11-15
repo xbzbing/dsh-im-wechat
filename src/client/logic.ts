@@ -103,6 +103,16 @@ export function standaloneSettingsLocked(input: { superagent: boolean; hostOlder
 /** 健康状态 → 字典键；宿主给了具体原因时保留原文。 */
 export type HealthLabel = { key: WeChatKey } | { text: string };
 
+/**
+ * 提醒来源 → 字典键。
+ *
+ * 只认「接入我的超级助理」这个开关：它管的是「谁负责发提醒」，与此刻是否登录、
+ * 是否停机无关。用 `ownFeatures` 判断会把「未登录」说成「由超级助理发送」。
+ */
+export function reminderSourceKey(superagent: unknown): WeChatKey {
+  return superagent === true ? 'reminder.sourceCore' : 'reminder.sourcePlugin';
+}
+
 /** 健康状态 → 展示用标签（键或宿主原文）。 */
 export function describeHealth(health: any): HealthLabel {
   if (!health || typeof health !== 'object') return { key: 'health.unknown' };

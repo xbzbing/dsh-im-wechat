@@ -28,6 +28,7 @@ import {
   ConnectionSection,
   DirectSection,
   ErrorSection,
+  LoginDialog,
   ReminderSection,
   RuntimeSection,
   healthDot,
@@ -196,6 +197,23 @@ export function WeixinSettingsPanel(props: any) {
   );
   // 服务端给的二维码内容只在 https 时才渲染成可点链接（防 javascript: 注入）。
   const qrLink = isHttpsUrl(login.qrContent) ? String(login.qrContent) : null;
+
+  /**
+   * 扫码弹层：登录在跑时打开；弹层里的「关闭」是取消这次登录，登录已结束（失败、已绑定）
+   * 时只是收起并记住，免得下一次轮询又把它顶出来。
+   */
+  const [loginDismissed, setLoginDismissed] = useState(false);
+  const startLogin = useCallback(() => {
+    setLoginDismissed(false);
+    void run('login', () => rpcCall(ENDPOINTS.loginStart));
+  }, [run, rpcCall]);
+  const closeLogin = useCallback(() => {
+    if (isLoginActive(login.phase)) {
+      void run('cancel', () => rpcCall(ENDPOINTS.loginCancel));
+      return;
+    }
+    setLoginDismissed(true);
+  }, [login.phase, run, rpcCall]);
 
   const copyLink = useCallback(async () => {
     setActionError('');
@@ -366,6 +384,7 @@ export function WeixinSettingsPanel(props: any) {
   const health = status?.health ?? {};
   const active = isLoginActive(login.phase);
   const showLoginPanel = active || login.phase === 'failed' || login.phase === 'binded';
+  const loginOpen = showLoginPanel && !loginDismissed;
   const stateLabel = statusUnavailable
     ? t('status.unavailable')
     : !enabled ? t('status.disabled') : loggedIn ? t('status.signedIn') : t('status.signedOut');
@@ -411,10 +430,13 @@ export function WeixinSettingsPanel(props: any) {
   return h('div', { className: 'wx-root', 'data-plugin': 'dsh-im-wechat' },
     header,
     banner,
-    h(ConnectionSection, {
-      t, rpcCall, run, status, state, loggedIn, health, showLoginPanel, active,
-      login, qrData, qrLink, copied, code, busy, copyLink, setCode,
-    }),
+    h(ConnectionSection, { t, rpcCall, run, status, state, loggedIn, health, busy, onLogin: startLogin }),
+    loginOpen
+      ? h(LoginDialog, {
+        t, rpcCall, run, login, qrData, qrLink, copied, code, busy, active,
+        copyLink, setCode, onClose: closeLogin,
+      })
+      : null,
     h(ReminderSection, {
       t, rpcCall, run, saveMinutes, onMinutesChange: (value: string) => {
         setMinutesDirty(true);

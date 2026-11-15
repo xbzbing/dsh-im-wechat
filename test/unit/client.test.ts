@@ -20,6 +20,7 @@ import {
   MENU_Z_INDEX,
   menuSurfaceStyle,
   placeMenu,
+  reminderSourceKey,
   standaloneSettingsLocked,
   unwrapResult,
   validateMinutes,
@@ -95,6 +96,14 @@ test('只属于独立模式的设置：接入核心后一律锁住', () => {
   // 另外两个锁：宿主版本对不上（不确定端点是否在）与有动作在跑。
   assert.equal(standaloneSettingsLocked({ superagent: false, hostOlder: true, busy: '' }), true);
   assert.equal(standaloneSettingsLocked({ superagent: false, hostOlder: false, busy: 'enabled' }), true);
+});
+
+test('提醒来源只看「接入超级助理」开关，不看此刻能不能发', () => {
+  // 开关管的是「谁负责发」；未登录或停机时 ownFeatures 为假，但那不等于接入了核心。
+  assert.equal(reminderSourceKey(true), 'reminder.sourceCore');
+  assert.equal(reminderSourceKey(false), 'reminder.sourcePlugin');
+  assert.equal(reminderSourceKey(undefined), 'reminder.sourcePlugin');
+  assert.equal(reminderSourceKey('yes'), 'reminder.sourcePlugin');
 });
 
 test('二维码渲染：正常内容出 data URL，超长内容退回 null', () => {
@@ -214,6 +223,7 @@ function dynamicLabels(): string[] {
     const label = describeHealth(health);
     if ('key' in label) labels.push(label.key);
   }
+  for (const superagent of [true, false, undefined]) labels.push(reminderSourceKey(superagent));
   const rejected = validateMinutes('0');
   if (!rejected.ok) labels.push(rejected.key);
   return labels;

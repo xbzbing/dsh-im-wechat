@@ -50,14 +50,15 @@ export const en: Record<WeChatKey, string> = {
   'connection.bridgeOn': 'Bridged to My Superagent',
 
   // 扫码登录
+  'login.title': 'Sign in to WeChat',
   'login.start': 'Sign in with QR code',
   'login.restartScan': 'Sign in again',
   'login.signOut': 'Sign out',
   'login.signOutHint': 'After signing out you must scan again to receive WeChat messages.',
   'login.scanHint': 'Scan the QR code with WeChat on your phone',
   'login.qrAlt': 'QR code',
-  'login.qrLoading': 'Preparing QR code…',
-  'login.linkHint': 'If the QR code is unavailable, copy the link below and open it in WeChat:',
+  'login.qrLoading': 'Preparing the sign-in QR code…',
+  'login.qrFallback': 'The QR code could not be drawn. Use the buttons below to copy the link and open it in WeChat.',
   'login.copyLink': 'Copy link',
   'login.openLink': 'Open link',
   'login.verifyCode': 'Verification code',

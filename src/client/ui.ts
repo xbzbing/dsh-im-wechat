@@ -64,6 +64,82 @@ export async function copyText(text: string): Promise<boolean> {
   return false;
 }
 
+// ------------------------------------------------------------ 弹层
+
+/**
+ * 居中弹层：遮罩铺满视口，卡片接管焦点。
+ *
+ * 打开时把焦点移进卡片并把页面滚动锁住，关闭后焦点还给原来的触发器；Esc、点遮罩都
+ * 交给 `onClose`，由调用方决定「关闭」是取消登录还是只收起。焦点陷阱只做首尾回环：
+ * 卡片自己（tabIndex=-1）是起点，Tab 进入第一个可聚焦元素。
+ */
+export function Dialog(props: any) {
+  const { open, label, onClose } = props;
+  const cardRef = useRef<any>(null);
+  const restoreRef = useRef<any>(null);
+  // 关闭回调每次渲染都是新函数：放进 ref，effect 只在开关变化时跑，免得反复抢焦点。
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return undefined;
+    restoreRef.current = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: any) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeRef.current?.();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const root = cardRef.current;
+      if (!root) return;
+      const nodes = Array.from(root.querySelectorAll(
+        'button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])',
+      )) as any[];
+      const focusable = nodes.filter((node) => node.disabled !== true && node.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === root)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    const focusCard = () => cardRef.current?.focus?.();
+    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(focusCard) : (focusCard(), 0);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (frame !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+      const previous = restoreRef.current;
+      restoreRef.current = null;
+      if (previous && typeof previous.focus === 'function') previous.focus();
+    };
+  }, [open]);
+
+  if (!open) return null;
+  const mask = h('div', {
+    className: 'wx-dialog-mask',
+    onClick: (event: any) => {
+      if (event.target === event.currentTarget) closeRef.current?.();
+    },
+  }, h('div', {
+    ref: cardRef,
+    className: 'wx-dialog',
+    role: 'dialog',
+    'aria-modal': 'true',
+    'aria-label': label,
+    tabIndex: -1,
+  }, props.children));
+  return portal ? portal(mask, document.body) : mask;
+}
+
 // ------------------------------------------------------------ 下拉菜单
 
 /**

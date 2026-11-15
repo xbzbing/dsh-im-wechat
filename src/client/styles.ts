@@ -62,22 +62,27 @@ export const STYLES = `
 .wx-banner { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 12px); font-size: 12px; line-height: 18px; }
 .wx-banner-warning { color: var(--dsw-alias-state-warn-label, var(--dsw-alias-label-primary)); background: var(--dsw-alias-state-warn-tertiary, var(--dsw-alias-bg-layer-2)); }
 
-/* 默认单列拉通：只有扫码时才分出右列放二维码，不留空白列。 */
-.wx-connection-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: stretch; }
-.wx-connection-split { grid-template-columns: minmax(240px, .88fr) minmax(300px, 1.12fr); }
-.wx-connection-main { min-width: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 20px; }
-/* 宽版（无二维码）：状态在左、操作在右，事实与提示各占整行，避免左列过窄截断时间。 */
-.wx-connection-grid:not(.wx-connection-split) .wx-connection-main {
+/* 弹层：遮罩压暗页面，卡片居中；Esc、点遮罩关闭与焦点回收由 ui.ts 的 Dialog 处理。 */
+.wx-dialog-mask { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; padding: 24px; background: rgba(15, 18, 24, .38); }
+.wx-dialog { display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(100%, 320px); max-height: calc(100vh - 48px); overflow: auto; padding: 22px 20px 16px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-xl, 20px); background: var(--dsw-alias-bg-layer-1); box-shadow: var(--dsw-elevation-prominent, 0 18px 48px rgba(0, 0, 0, .28)); color: var(--dsw-alias-label-primary); text-align: center; outline: none; }
+.wx-dialog:focus-visible { outline: none; }
+.wx-dialog .wx-login { align-items: center; text-align: center; }
+.wx-dialog .wx-login-head { align-items: center; }
+.wx-dialog .wx-actions { justify-content: center; }
+
+/* 连接区：状态在左、操作在右；事实行与提示各占整行，窄列也不会把时间挤成省略号。 */
+.wx-connection-main {
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 20px;
   row-gap: 18px;
 }
-.wx-connection-grid:not(.wx-connection-split) .wx-connection-status { grid-column: 1; grid-row: 1; }
-.wx-connection-grid:not(.wx-connection-split) .wx-actions { grid-column: 2; grid-row: 1; justify-content: flex-end; }
-.wx-connection-grid:not(.wx-connection-split) .wx-facts { grid-column: 1 / -1; grid-row: 2; }
-.wx-connection-grid:not(.wx-connection-split) .wx-action-hint { grid-column: 1 / -1; grid-row: 3; }
+.wx-connection-main > .wx-connection-status { grid-column: 1; grid-row: 1; }
+.wx-connection-main > .wx-actions { grid-column: 2; grid-row: 1; justify-content: flex-end; }
+.wx-connection-main > .wx-facts { grid-column: 1 / -1; grid-row: 2; }
+.wx-connection-main > .wx-action-hint { grid-column: 1 / -1; grid-row: 3; }
 .wx-connection-status { display: flex; align-items: flex-start; gap: 9px; }
 .wx-connection-status > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .wx-connection-status strong { font-size: 14px; font-weight: 600; line-height: 20px; }
@@ -92,19 +97,19 @@ export const STYLES = `
 .wx-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .wx-action-hint { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 
-.wx-qr-card { min-width: 0; padding: 14px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-lg, 16px); background: var(--dsw-alias-bg-layer-1); }
-.wx-qr-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
-.wx-qr-step { display: grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 8px; color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2)); font-size: 10px; font-weight: 600; }
-.wx-qr-heading div { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.wx-qr-heading strong { font-size: 13px; font-weight: 600; line-height: 18px; }
-.wx-qr-heading span { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
-.wx-qr-content { display: flex; align-items: flex-start; gap: 14px; }
-.wx-qr-img { width: 132px; height: 132px; flex: none; padding: 7px; border-radius: var(--dsw-radius-sm, 8px); background: #fff; image-rendering: pixelated; }
-.wx-qr-placeholder { display: grid; width: 132px; height: 132px; flex: none; place-items: center; padding: 12px; border: .5px dashed var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 8px); color: var(--dsw-alias-label-tertiary); text-align: center; font-size: 11px; }
-.wx-qr-side { min-width: 0; display: flex; flex: 1; flex-direction: column; align-items: flex-start; gap: 9px; }
-.wx-link { width: 100%; max-height: 52px; overflow: hidden; color: var(--dsw-alias-label-tertiary); font: 10px/16px var(--dsw-font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
-.wx-code-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; }
-.wx-code-row input { min-width: 120px; flex: 1; }
+/* 扫码登录（弹层内）：不套卡片，二维码是唯一有底色的元素。 */
+.wx-login { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.wx-login-head { display: flex; flex-direction: column; gap: 2px; }
+.wx-login-head strong { color: var(--dsw-alias-label-primary); font-size: 13px; font-weight: 600; line-height: 18px; }
+.wx-login-head span { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
+.wx-login-qr { display: block; width: 168px; height: 168px; flex: none; padding: 8px; border-radius: var(--dsw-radius-md, 12px); background: #fff; image-rendering: pixelated; }
+.wx-login-qr-empty { display: grid; place-items: center; padding: 14px; border: .5px dashed var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-tertiary); text-align: center; font-size: 11px; line-height: 16px; }
+.wx-login-foot { padding: 0; border: 0; border-radius: 4px; background: none; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 11px; line-height: 16px; cursor: pointer; transition: color .15s; }
+.wx-login-foot:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
+.wx-login-foot:disabled { opacity: .5; cursor: not-allowed; }
+.wx-login-foot:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; }
+.wx-code-row { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 240px; }
+.wx-code-row input { min-width: 0; flex: 1; }
 
 .wx-settings-list { display: flex; flex-direction: column; }
 .wx-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; min-height: 68px; padding: 14px 0; border-top: .5px solid var(--dsw-alias-border-l2); }
@@ -183,21 +188,18 @@ export const STYLES = `
 @media (max-width: 640px) {
   .wx-hero { align-items: flex-start; flex-direction: column; }
   .wx-hero-actions { width: 100%; justify-content: space-between; }
-  .wx-connection-split { grid-template-columns: 1fr; }
   /* 窄屏状态与按钮各占一行，按钮靠左排。 */
-  .wx-connection-grid:not(.wx-connection-split) .wx-connection-main {
+  .wx-connection-main {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 16px;
   }
-  .wx-connection-grid:not(.wx-connection-split) .wx-actions { justify-content: flex-start; }
+  .wx-connection-main > .wx-actions { justify-content: flex-start; }
 }
 @media (max-width: 420px) {
   .wx-panel, .wx-hero { padding: 16px; border-radius: var(--dsw-radius-lg, 16px); }
-  .wx-connection-grid { gap: 14px; }
-  .wx-qr-content { flex-direction: column; }
-  .wx-qr-img, .wx-qr-placeholder { width: 156px; height: 156px; }
+  .wx-login-qr { width: 148px; height: 148px; }
   .wx-setting-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .wx-setting-description { font-size: 11px; }
 }

@@ -10,6 +10,7 @@
 
 import { join } from 'node:path';
 
+import { MAX_TITLE_LENGTH } from '../../shared/limits.ts';
 import { readJsonIfPresent, writePrivateFile } from './files.ts';
 import type { StateLogger } from './files.ts';
 
@@ -24,7 +25,7 @@ export interface DirectBinding {
 }
 
 /** 标题只用于展示：超长截断，避免异常事件把状态文件撑大。 */
-const MAX_TITLE = 200;
+const MAX_TITLE = MAX_TITLE_LENGTH;
 
 export interface DirectBindingStoreOptions {
   dir: string;

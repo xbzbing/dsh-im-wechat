@@ -305,3 +305,22 @@ test('/sessions 超过快照上限时只列能存下的部分，并说明其余�
   assert.match(h.sent[0]!, /共 100 个，第 1\/10 页/);
   assert.match(h.sent[0]!, /只列出最近 100 个/);
 });
+
+test('/send 附图下载失败：有文字照常发并说明，只有图则拒绝', async () => {
+  const h = harness({
+    catalog: {
+      sessions: [{ sessionId: 'session-aaa', title: '目标', updatedAt: NOW, running: false, workspace: '' }],
+      available: true,
+    },
+  });
+  await h.commands.run({ ...plain, text: '/sessions' });
+  h.sent.length = 0;
+
+  await h.commands.run({ text: '/send 1 看图', hasImages: true, images: [] });
+  assert.equal(h.delivered.length, 1);
+  assert.match(h.sent[0]!, /（图片没有发出）/);
+
+  await h.commands.run({ text: '/send 1', hasImages: true, images: [] });
+  assert.equal(h.delivered.length, 1);
+  assert.match(h.sent[1]!, /图片没有下载到/);
+});

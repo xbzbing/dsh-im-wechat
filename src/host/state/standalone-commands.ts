@@ -9,6 +9,7 @@
 
 import { join } from 'node:path';
 
+import { MAX_TITLE_LENGTH } from '../../shared/limits.ts';
 import { readJsonIfPresent, writePrivateFile } from './files.ts';
 import type { StateLogger } from './files.ts';
 
@@ -18,7 +19,7 @@ export const MAX_LISTING = 100;
 /** 同时跟踪的会话上限（与 `/trace` 的提示一致）。 */
 export const MAX_TRACES = 10;
 
-const MAX_TITLE = 200;
+const MAX_TITLE = MAX_TITLE_LENGTH;
 
 export interface ListingEntry {
   sessionId: string;

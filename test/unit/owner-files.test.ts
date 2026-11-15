@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { OWNER_FILE_BYTES_MAX, OWNER_FILE_DATA_MAX, OWNER_FILES_BYTES_MAX, OWNER_FILES_MAX } from '../../src/host/superagent/protocol.ts';
 import { toOwnerMessageDraft } from '../../src/host/inbound.ts';
 import type { InboundOptions } from '../../src/host/inbound.ts';
 import { CDN, PDF, fileFetch, fileMessage, withDeclaredLen, withQuote } from './helpers/inbound-fixtures.ts';
@@ -127,4 +128,12 @@ test('空文件不上报：核心 Schema 要求 data 至少 4 个字符，带上
   const draft = await toOwnerMessageDraft(built.message, coreOptions(fileFetch(built.payloads).impl));
 
   assert.equal(draft, null, '没有可上报的内容');
+});
+
+test('本地常量与核心 Schema 对齐：3 个、8 MiB、16 MiB 与 base64 字符上限', async () => {
+  // 字符上限必须由字节上限算出来：4 × ceil(8 MiB / 3)，两边任何一处单独改动都会让整条草稿被拒。
+  assert.equal(OWNER_FILES_MAX, 3);
+  assert.equal(OWNER_FILE_BYTES_MAX, 8 * 1024 * 1024);
+  assert.equal(OWNER_FILES_BYTES_MAX, 16 * 1024 * 1024);
+  assert.equal(OWNER_FILE_DATA_MAX, 4 * Math.ceil(OWNER_FILE_BYTES_MAX / 3));
 });

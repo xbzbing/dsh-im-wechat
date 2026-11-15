@@ -27,6 +27,8 @@ export const OWNER_IMAGE_NAME_MAX = 200;
 export const OWNER_FILES_MAX = 3;
 /** 与核心 Schema 一致：单个文件解码后不超过 8 MiB。 */
 export const OWNER_FILE_BYTES_MAX = 8 * 1024 * 1024;
+/** 与核心 Schema 一致：单个文件 base64 字符上限（4 × ceil(8 MiB / 3)）。超一位整条草稿会被拒。 */
+export const OWNER_FILE_DATA_MAX = 11_184_812;
 /** 与核心 Schema 一致：单条合计解码后不超过 16 MiB。 */
 export const OWNER_FILES_BYTES_MAX = 16 * 1024 * 1024;
 

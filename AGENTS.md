@@ -21,7 +21,7 @@
 | `bin/dsh-wechat-send.mjs` | 出站命令入口，只把参数交给 `lib/src/host/cli.js`（ADR-0012） |
 | `src/host/command.ts` | 斜杠命令 `/wechat`：人用入口，复用 `cli.ts` 的解析与发送端口（ADR-0012） |
 | `src/client/` | Web 面板，esbuild 打成 `lib/client.js`，平台模块保持 external；模型三级下拉的纯逻辑在 `model-route.ts` |
-| `src/shared/` | 跨上下文的纯函数与纯类型：版本常量、二维码编码器、`media.ts` 图片类型、`question-text.ts` 提示语渲染（两条提问路径共用）、`limits.ts` 文件行数上限 |
+| `src/shared/` | 跨上下文的纯函数与纯类型：版本常量、二维码编码器、`media.ts` 图片类型、`question-text.ts` 提示语渲染（两条提问路径共用）、`limits.ts` 文件行数与标题长度上限 |
 | `test/unit/` | 单元测试（每测独立临时目录） |
 | `scripts/` | `build.mjs`（host tsc + client esbuild）、`verify-package.mjs`（打包自洽校验）、`assert-pack.mjs`（产物清单断言）、`dev-bridge.mjs`（不开面板的真机自测） |
 | `docs/adr/` | 架构决策记录：选了哪条路、否决了什么、代价是什么 |

@@ -184,6 +184,8 @@ export function ReminderSection(props: {
   onMinutesChange: (value: string) => void;
   enabled: boolean;
   superagent: boolean;
+  /** 核心服务在不在：不在时「接入我的超级助理」不可打开，只能用独立模式。 */
+  superagentAvailable: boolean;
   minutes: string;
   minutesDirty: boolean;
   minutesSaved: boolean;
@@ -200,7 +202,7 @@ export function ReminderSection(props: {
   busy: string;
 }) {
   const { t, rpcCall, run, saveMinutes, onMinutesChange } = props;
-  const { enabled, superagent, minutes, minutesDirty, minutesSaved, threshold, hostOlder, busy } = props;
+  const { enabled, superagent, superagentAvailable, minutes, minutesDirty, minutesSaved, threshold, hostOlder, busy } = props;
   const { questionReminders, questionDelay, questionDelayDirty, questionDelaySaved, questionDelayValue } = props;
   const { onQuestionDelayChange, saveQuestionDelay, toggleQuestionReminders } = props;
   const check = validateMinutes(minutes);
@@ -227,9 +229,9 @@ export function ReminderSection(props: {
       }),
       h(SwitchRow, {
         title: t('reminder.superagentTitle'),
-        description: t('reminder.superagentDescription'),
+        description: superagentAvailable ? t('reminder.superagentDescription') : t('reminder.superagentUnavailable'),
         checked: superagent,
-        disabled: busy !== '',
+        disabled: busy !== '' || !superagentAvailable,
         onChange: (next: boolean) => void run('superagent', () => rpcCall(ENDPOINTS.setSuperagent, { enabled: next })),
       }),
       h('div', { className: `wx-settings-list${superagent ? ' wx-panel-muted' : ''}` },

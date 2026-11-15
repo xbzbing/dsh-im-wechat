@@ -72,6 +72,20 @@ test('注册失败不静默：registrationError 可见，下次入站补注册�
   assert.equal(state.attempts, 2);
 });
 
+test('核心服务可用性可探测，出现与撤销都通知运行期', () => {
+  const { scope } = makeScope(0);
+  const binder = new BridgeBinder();
+  const events: boolean[] = [];
+  binder.watch(() => events.push(binder.serviceAvailable));
+  assert.equal(binder.serviceAvailable, false);
+
+  binder.attach(scope);
+  assert.equal(binder.serviceAvailable, true);
+  binder.detach();
+  assert.equal(binder.serviceAvailable, false);
+  assert.deepEqual(events, [true, false]);
+});
+
 test('持续失败时 receive 返回 null 且带错误；detach 后按「核心不在」处理', async () => {
   const { scope, state } = makeScope(Number.POSITIVE_INFINITY);
   const binder = new BridgeBinder();

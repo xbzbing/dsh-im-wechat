@@ -80,6 +80,7 @@ export const en: Record<WeChatKey, string> = {
   'reminder.enabledDescription': 'When disabled, WeChat messages are no longer received and deliveries are not sent here.',
   'reminder.superagentTitle': 'Connect to My Superagent',
   'reminder.superagentDescription': 'When off, the WeChat plugin sends questions and long-task reminders itself.',
+  'reminder.superagentUnavailable': 'My Superagent was not found, so only standalone mode is available. Install and enable the core plugin, then refresh this page to connect.',
   'reminder.thresholdTitle': 'Reminder threshold (minutes)',
   'reminder.thresholdDescription': 'A root-session turn triggers a reminder only when it runs longer than this; applies when this plugin sends the reminders.',
   'reminder.thresholdValue': 'Current threshold: {value} {unit}',

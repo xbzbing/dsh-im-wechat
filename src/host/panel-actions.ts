@@ -30,6 +30,8 @@ export interface PanelActionHost {
   stopTyping(): void;
   /** 按当前「接入我的超级助理」开关决定桥是否向核心注册。 */
   bindBridge(): void;
+  /** 宿主里有没有核心服务：没有时「接入我的超级助理」打开也不生效，只能走独立模式。 */
+  superagentAvailable(): boolean;
   syncOwnFeatures(reason: string): void;
   catalog(): WorkspaceCatalog;
   defaultWorkspaceId(): string;
@@ -58,6 +60,10 @@ export async function saveEnabled(host: PanelActionHost, enabled: boolean): Prom
 
 /** 保存「接入我的超级助理」开关：立即切换，不重连微信。 */
 export async function saveSuperagent(host: PanelActionHost, enabled: boolean): Promise<RuntimeStatus> {
+  // 没有核心可交，打开等于让入站无人处理（IM 沉默）；面板已禁用，这里挡住旧面板与直接调用。
+  if (enabled && !host.superagentAvailable()) {
+    throw Object.assign(new Error('未检测到「我的超级助理」，只能使用独立模式'), { code: 'superagent-unavailable' });
+  }
   host.setSuperagent(enabled);
   // 切出核心接入后不会再有交付进来收尾，先把在途的输入状态取消。
   if (!enabled) host.stopTyping();

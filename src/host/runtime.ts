@@ -230,7 +230,7 @@ export class WeixinRuntime {
       ownFeaturesActive: () => this.#ownFeaturesActive(),
       isOwner: (sender) => this.#owner.isOwner(sender),
       replyQuestion: (text, identity) => this.#reminders.reply(text, identity),
-      superagentEnabled: () => this.#superagent,
+      superagentEnabled: () => this.#superagentActive(),
       directAvailable: () => this.#direct.status().available,
       typingStart: (sender) => this.#typing.start(sender),
       typingStop: (sender) => this.#typing.stop(sender),
@@ -253,25 +253,18 @@ export class WeixinRuntime {
       save: (patch) => this.#localConfig.save(patch),
       reminders: () => this.#reminders,
       longTasks: () => this.#longTasks,
-      setEnabled: (value) => {
-        this.#enabled = value;
-      },
-      setSuperagent: (value) => {
-        this.#superagent = value;
-      },
+      setEnabled: (value) => { this.#enabled = value; },
+      setSuperagent: (value) => { this.#superagent = value; },
       startPipeline: () => this.#pipeline.start(),
       stopPipeline: () => this.#pipeline.stop(),
       stopTyping: () => this.#typing.stopAll(),
       bindBridge: () => this.#binder?.bind(this.#superagent ? this.#bridge : null),
+      superagentAvailable: () => this.#binder?.serviceAvailable ?? true,
       syncOwnFeatures: (reason) => this.#syncOwnFeatures(reason),
       catalog: () => listWorkspaces(this.#workspaceRegistry),
       defaultWorkspaceId: () => this.#defaultWorkspace.id,
-      setDirectWorkspaceId: (value) => {
-        this.#direct.setWorkspaceId(value);
-      },
-      setDirectBusyMode: (value) => {
-        this.#direct.setBusyMode(value);
-      },
+      setDirectWorkspaceId: (value) => { this.#direct.setWorkspaceId(value); },
+      setDirectBusyMode: (value) => { this.#direct.setBusyMode(value); },
       setDirectModel: (value) => this.#direct.useModel(value),
       applyDirectModel: () => this.#direct.model.applyToBoundSession(),
       models: () => this.#direct.model.view(),
@@ -279,9 +272,7 @@ export class WeixinRuntime {
     };
   }
 
-  get dir(): string {
-    return this.#dir;
-  }
+  get dir(): string { return this.#dir; }
 
   /** `agents` 服务接入（index.ts 的子 fiber）：根会话按会话来源判定，钉模型按会话 id 取 Agent。 */
   attachAgents(agents: HostAgents | null): void {
@@ -331,6 +322,8 @@ export class WeixinRuntime {
 
   attachBinder(binder: BridgeBinder): void {
     this.#binder = binder;
+    // 核心晚到/撤销时重判接管方：桥照常交给绑定器，它在核心出现后自己补注册。
+    binder.watch(() => { if (!this.#stopped) this.#syncOwnFeatures('接入方式已变化，提问交回 Web 端'); });
     if (this.#bridge) binder.bind(this.#superagent ? this.#bridge : null);
   }
 
@@ -392,7 +385,8 @@ export class WeixinRuntime {
     return buildStatus({
       version: PLUGIN_VERSION,
       enabled: this.#enabled,
-      superagent: this.#superagent,
+      superagent: this.#superagentActive(),
+      superagentAvailable: this.#binder?.serviceAvailable ?? true,
       ownFeatures: this.#ownFeaturesActive(),
       ...this.#reminders.status(),
       questionReminders: this.#reminders.enabled,
@@ -408,9 +402,14 @@ export class WeixinRuntime {
     });
   }
 
+  /** 真正接入核心：开关开着且核心服务在；没装核心时让位给独立模式（否则入站无人接）。 */
+  #superagentActive(): boolean {
+    return this.#superagent && (this.#binder?.serviceAvailable ?? true);
+  }
+
   /** 自有功能是否生效：启用 + 已登录 + 未接核心 + 未停机（核心接管后同一提醒会来两遍）。 */
   #ownFeaturesActive(): boolean {
-    return this.#enabled && !this.#superagent && this.#loginState !== null && !this.#stopped;
+    return this.#enabled && !this.#superagentActive() && this.#loginState !== null && !this.#stopped;
   }
 
   /** 开合跟着启停/登录/接入开关走；关掉时把在等的请求按真实原因交回 Web。 */

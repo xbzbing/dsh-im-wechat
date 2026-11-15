@@ -14,7 +14,7 @@ import type { BusyMode } from './config.ts';
 import type { ModelRef } from '../shared/models.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 7;
+export const HOST_CONTRACT = 8;
 
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {
@@ -33,8 +33,10 @@ export interface RuntimeStatus {
   contract: number;
   version: string;
   enabled: boolean;
-  /** 是否接入「我的超级助理」。关掉后插件自带的问题与长任务提醒接管。 */
+  /** 是否接入「我的超级助理」：开关开着且核心服务在；核心缺席时恒为 false。 */
   superagent: boolean;
+  /** 宿主里有没有核心服务（装了但没启用也算没有）；面板据此禁用接入开关。 */
+  superagentAvailable: boolean;
   /** 自有功能（问题提醒、长任务提醒）是否生效。 */
   ownFeatures: boolean;
   /** 登录态里是否记录了扫码的微信用户（没记录就无法确认主人，自有提醒会静默失效）。 */
@@ -81,6 +83,7 @@ export interface StatusInput {
   version: string;
   enabled: boolean;
   superagent: boolean;
+  superagentAvailable: boolean;
   ownFeatures: boolean;
   pendingQuestions: number;
   pendingApprovals: number;
@@ -106,6 +109,7 @@ export function buildStatus(input: StatusInput): RuntimeStatus {
     version: input.version,
     enabled: input.enabled,
     superagent: input.superagent,
+    superagentAvailable: input.superagentAvailable,
     ownFeatures: input.ownFeatures,
     ownerKnown: typeof login?.userId === 'string' && login.userId !== '',
     pendingQuestions: input.pendingQuestions,

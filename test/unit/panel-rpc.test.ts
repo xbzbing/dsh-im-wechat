@@ -32,6 +32,7 @@ function harness(options: { recordSave?: boolean } = {}): Harness {
     stopPipeline: async () => undefined,
     stopTyping: () => undefined,
     bindBridge: () => undefined,
+    superagentAvailable: () => true,
     syncOwnFeatures: () => undefined,
     catalog: () => ({ items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true }),
     defaultWorkspaceId: () => '',
@@ -161,6 +162,18 @@ test('登录动作转发给运行期', async () => {
   await call(h, envelope(ENDPOINTS.SUPERAGENT_SET, { enabled: false }));
   await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: 45 }));
   assert.deepEqual(h.calls, ['startLogin', 'code: 123456 ', 'enabled:false', 'superagent:false', 'longtask:45']);
+});
+
+test('没装核心时 superagent.set 打开被挡住，关掉照常落盘', async () => {
+  const h = harness();
+  h.host.superagentAvailable = () => false;
+  const rejected = await call(h, envelope(ENDPOINTS.SUPERAGENT_SET, { enabled: true }));
+  assert.equal(rejected.result.ok, false);
+  assert.equal(rejected.result.error.code, 'superagent-unavailable');
+  assert.deepEqual(h.calls, [], '拒绝时不能改运行期状态');
+  const off = await call(h, envelope(ENDPOINTS.SUPERAGENT_SET, { enabled: false }));
+  assert.equal(off.result.ok, true);
+  assert.deepEqual(h.calls, ['superagent:false']);
 });
 
 test('登出与取消登录两个端点也转发给运行期', async () => {

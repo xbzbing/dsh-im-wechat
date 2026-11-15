@@ -379,6 +379,8 @@ export function WeixinSettingsPanel(props: any) {
   const loggedIn = status?.loggedIn === true;
   const enabled = status?.enabled !== false;
   const superagent = status?.superagent !== false;
+  // 旧 Host 没有这个字段：按「可用」处理，不能替它做主把开关锁死。
+  const superagentAvailable = status?.superagentAvailable !== false;
   // 接入超级助理时默认收起独立模式；用户手动展开后不再被状态刷新合上。
   const directExpanded = directOpen ?? !superagent;
   const health = status?.health ?? {};
@@ -442,7 +444,7 @@ export function WeixinSettingsPanel(props: any) {
         setMinutesDirty(true);
         setMinutes(value);
       },
-      enabled, superagent, minutes, minutesDirty, minutesSaved: savedKey === 'minutes',
+      enabled, superagent, superagentAvailable, minutes, minutesDirty, minutesSaved: savedKey === 'minutes',
       threshold, hostOlder, busy,
       questionReminders, questionDelay, questionDelayDirty, questionDelaySaved: savedKey === 'questionDelay',
       questionDelayValue,

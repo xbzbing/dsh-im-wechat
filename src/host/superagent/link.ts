@@ -34,6 +34,7 @@ export interface RegisteredBridge {
 
 export class BridgeBinder {
   readonly #logger: LinkLogger | undefined;
+  readonly #watchers = new Set<() => void>();
   #service: MySuperagentService | null = null;
   #bridge: WeixinBridge | null = null;
   #registration: RegisteredBridge | null = null;
@@ -51,16 +52,37 @@ export class BridgeBinder {
     if (!this.#service) return;
     this.#tryRegister();
     scope.effect?.(() => () => this.detach(), 'dsh-im-wechat: 撤销微信桥注册');
+    this.#notify();
   }
 
   /** 核心服务撤销或插件停用。 */
   detach(): void {
+    const hadService = this.#service !== null;
     this.#registration?.dispose();
     this.#registration = null;
     this.#handle = null;
     this.#service = null;
     this.#registrationError = undefined;
     this.#bridge?.detachHandle();
+    if (hadService) this.#notify();
+  }
+
+  /**
+   * 核心服务在不在：面板据此决定「接入我的超级助理」能不能打开。
+   *
+   * 判据是 Cordis 服务而不是包清单——装了但没启用的核心同样没有消费方，
+   * 这时打开开关只会让入站没人处理。
+   */
+  get serviceAvailable(): boolean {
+    return this.#service !== null;
+  }
+
+  /** 核心服务出现/撤销时的回调；运行期据此重判自有功能要不要接管。 */
+  watch(listener: () => void): () => void {
+    this.#watchers.add(listener);
+    return () => {
+      this.#watchers.delete(listener);
+    };
   }
 
   /**
@@ -102,6 +124,17 @@ export class BridgeBinder {
 
   get features(): readonly string[] {
     return this.#registration?.features ?? [];
+  }
+
+  /** 监听者由运行期注册，通知失败不该连带核心服务接入失败。 */
+  #notify(): void {
+    for (const listener of [...this.#watchers]) {
+      try {
+        listener();
+      } catch (error) {
+        this.#logger?.warn?.('微信桥可用性通知失败', error instanceof Error ? error.message : error);
+      }
+    }
   }
 
   #tryRegister(): void {

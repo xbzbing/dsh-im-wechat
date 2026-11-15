@@ -78,6 +78,7 @@ export const zh = {
   'reminder.enabledDescription': '停用后不再收取微信消息，核心的交付也不会发到这个渠道。',
   'reminder.superagentTitle': '接入我的超级助理',
   'reminder.superagentDescription': '关闭后由微信插件自己发送问题与长任务提醒。',
+  'reminder.superagentUnavailable': '未检测到「我的超级助理」，当前只能使用独立模式。安装并启用核心插件后刷新本页即可接入。',
   'reminder.thresholdTitle': '提醒阈值（分钟）',
   'reminder.thresholdDescription': '根会话的一个回合超过这个时长才发提醒；只在本插件发送提醒时生效。',
   'reminder.thresholdValue': '当前阈值：{value} {unit}',

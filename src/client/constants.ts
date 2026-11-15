@@ -21,7 +21,7 @@ export const PANEL_ID = 'dsh-im-wechat';
 export const BUNDLE_CONFIG_SLOT = 'plugins.bundle.config';
 
 /** 与 host 半 `HOST_CONTRACT` 一致；对不上就提示重启。 */
-export const REQUIRED_CONTRACT = 7;
+export const REQUIRED_CONTRACT = 8;
 
 /** 静默时的自动刷新周期。 */
 export const REFRESH_INTERVAL_MS = 15_000;

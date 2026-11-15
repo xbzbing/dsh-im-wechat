@@ -147,6 +147,9 @@ export interface OwnerMessageDraft {
   text: string;
   at: number;
   replyTo?: string;
+  /** 同一条消息将来被引用时会出现在 `replyTo` 里的平台 id；`messageId` 是渠道内的合成 id
+   *  （含账号与发送者），核心不能拿它跟 `replyTo` 比较。核心缺省时回退用 `messageId`。 */
+  platformMessageId?: string;
   /** 只在核心声明 `owner-images` 时携带。 */
   images?: OwnerImage[];
 }

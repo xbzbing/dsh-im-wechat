@@ -13,6 +13,8 @@ test('纯文本消息原样转成草稿', async () => {
   );
   assert.deepEqual(draft, {
     messageId: 'weixin:v1:bot:owner-1:mid:1',
+    // 平台 id 与渠道 id 不是一回事：核心按它认回「用户引用了哪一条」。
+    platformMessageId: '1',
     sender: 'owner-1',
     text: '/status',
     at: 5,
@@ -429,4 +431,44 @@ test('过长的中文文件名按字节截断，扩展名保留', async () => {
   const name = result.files[0]?.name ?? '';
   assert.ok(Buffer.byteLength(name, 'utf8') <= 200, '不超过宿主再清洗时的余量');
   assert.ok(name.endsWith('.pdf'), '扩展名不能被截掉');
+});
+
+test('草稿同时带自己的平台 id 与被引用 id：核心才认得出引用了哪一条', async () => {
+  const draft = await toOwnerMessageDraft(
+    {
+      message_id: '1700000000000000001', from_user_id: 'owner-1', create_time_ms: 5,
+      item_list: [{ type: 1, text_item: { text: '这个文件的作者是谁？' }, ref_msg: { svr_id: '1700000000000000002' } }],
+    },
+    { account: 'bot' },
+  );
+  assert.equal(draft?.messageId, 'weixin:v1:bot:owner-1:mid:1700000000000000001');
+  assert.equal(draft?.platformMessageId, '1700000000000000001');
+  assert.equal(draft?.replyTo, '1700000000000000002');
+});
+
+test('没有平台 message_id 时不编一个平台 id', async () => {
+  const draft = await toOwnerMessageDraft(
+    { message_id: undefined, client_id: 'c-1', from_user_id: 'owner-1', create_time_ms: 5, item_list: [{ type: 1, text_item: { text: '在吗' } }] },
+    { account: 'bot' },
+  );
+  assert.equal(draft?.messageId, 'weixin:v1:bot:owner-1:cid:c-1');
+  assert.equal(draft && 'platformMessageId' in draft, false);
+});
+
+test('同一条消息：入站草稿的平台 id 与它被引用时的 replyTo 逐字相同', async () => {
+  // 核心按 platformMessageId 建目录、按 replyTo 查；这两个字符串只要有一边多一个空格，
+  // 引用就永远认不回来。所以这里钉的是「同一条消息、两侧取值一致」。
+  const original = await toOwnerMessageDraft(
+    { message_id: '1700000000000000009', from_user_id: 'owner-1', create_time_ms: 5, item_list: [{ type: 1, text_item: { text: '原来那句' } }] },
+    { account: 'bot' },
+  );
+  const quoting = await toOwnerMessageDraft(
+    {
+      message_id: '1700000000000000010', from_user_id: 'owner-1', create_time_ms: 6,
+      item_list: [{ type: 1, text_item: { text: '引用它' }, ref_msg: { svr_id: '1700000000000000009' } }],
+    },
+    { account: 'bot' },
+  );
+  assert.ok(original?.platformMessageId);
+  assert.equal(original.platformMessageId, quoting?.replyTo);
 });

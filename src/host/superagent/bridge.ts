@@ -17,6 +17,7 @@ import type { SendFailure } from '../ilink/send.ts';
 import type { SessionGuard } from '../ilink/session-guard.ts';
 import type { ContextTokenStore } from '../state/context-tokens.ts';
 import {
+  FEATURE_OWNER_FILES,
   FEATURE_OWNER_IMAGES,
   FEATURE_OWNER_LOOKUP,
   PROTOCOL_V1,
@@ -206,9 +207,10 @@ export class WeixinBridge implements BridgeProvider {
   }
 
   /** 核心声明 `owner-images` 时才下载入站图片（ADR-0004）。 */
-  get imagesEnabled(): boolean {
-    return this.#features.has(FEATURE_OWNER_IMAGES);
-  }
+  get imagesEnabled(): boolean { return this.#features.has(FEATURE_OWNER_IMAGES); }
+
+  /** 核心声明 `owner-files` 时才把入站文件上报给它（ADR-0030）；与图片各自独立声明。 */
+  get filesEnabled(): boolean { return this.#features.has(FEATURE_OWNER_FILES); }
 
   /** 核心声明 `owner-lookup` 时才可用；否则不判断身份，交由核心拒收。 */
   get ownerLookup(): ((sender: string) => boolean) | undefined {

@@ -12,6 +12,8 @@ export const PROTOCOL_V1 = 'my-superagent/v1';
 
 /** 核心声明它时才会接受 `OwnerMessageDraft.images`（ADR-0004）。 */
 export const FEATURE_OWNER_IMAGES = 'owner-images';
+/** 核心声明它时才会接受 `OwnerMessageDraft.files`（ADR-0030）。 */
+export const FEATURE_OWNER_FILES = 'owner-files';
 /** 核心声明它时才提供 `BridgeHandle.isOwner`，桥据此只为主人下载图片。 */
 export const FEATURE_OWNER_LOOKUP = 'owner-lookup';
 
@@ -21,6 +23,14 @@ export const OWNER_IMAGES_MAX = 9;
 export const OWNER_IMAGE_DATA_MAX = 14_000_000;
 /** 与核心 Schema 一致：文件名不超过 200 字。 */
 export const OWNER_IMAGE_NAME_MAX = 200;
+/** 与核心 Schema 一致：最多 3 个。 */
+export const OWNER_FILES_MAX = 3;
+/** 与核心 Schema 一致：单个文件解码后不超过 8 MiB。 */
+export const OWNER_FILE_BYTES_MAX = 8 * 1024 * 1024;
+/** 与核心 Schema 一致：单个文件 base64 字符上限（4 × ceil(8 MiB / 3)）。超一位整条草稿会被拒。 */
+export const OWNER_FILE_DATA_MAX = 11_184_812;
+/** 与核心 Schema 一致：单条合计解码后不超过 16 MiB。 */
+export const OWNER_FILES_BYTES_MAX = 16 * 1024 * 1024;
 
 export interface InteractionOption {
   readonly label: string;
@@ -140,6 +150,16 @@ export interface OwnerImage {
   name?: string;
 }
 
+/** 用户随消息发来的文件。上限见上面的三个常量：3 个、单个 8 MiB、合计 16 MiB。 */
+export interface OwnerFile {
+  /** 叶子名：≤200 字，不含路径分隔符与控制字符（桥在发送前清洗）。 */
+  name: string;
+  /** 仅用于展示；核心不按它解析内容，桥不填。 */
+  mediaType?: string;
+  /** 标准 base64（带填充，长度为 4 的倍数）。 */
+  data: string;
+}
+
 export interface OwnerMessageDraft {
   messageId: string;
   sender: string;
@@ -152,6 +172,9 @@ export interface OwnerMessageDraft {
   platformMessageId?: string;
   /** 只在核心声明 `owner-images` 时携带。 */
   images?: OwnerImage[];
+  /** 只在核心声明 `owner-files` 时携带：上限与清洗在桥侧做完，
+   *  一条草稿被核心拒收就是整条消息（连文字）一起丢，不能指望核心兜底。 */
+  files?: OwnerFile[];
 }
 
 export interface InteractionAnswerDraft {

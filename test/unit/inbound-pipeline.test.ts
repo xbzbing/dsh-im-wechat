@@ -9,7 +9,9 @@ import type { PromptPart } from '../../src/host/prompt-parts.ts';
 import type { CommandInput } from '../../src/host/standalone/commands.ts';
 import type { WeixinMessage } from '../../src/host/ilink/types.ts';
 import type { WeixinBridge } from '../../src/host/superagent/bridge.ts';
-import { CDN, PNG, fileMessage, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
+import type { BridgeBinder } from '../../src/host/superagent/link.ts';
+import type { OwnerMessageDraft } from '../../src/host/superagent/protocol.ts';
+import { CDN, PDF, PNG, fileMessage, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
 
 interface Submitted {
   sender: string;
@@ -23,11 +25,16 @@ function harness(options: {
   isOwner?: (sender: string) => boolean;
   ownFeatures?: boolean | (() => boolean);
   superagent?: boolean;
+  /** 接入核心：给一个已注册的绑定器，并把草稿收进 `received`。 */
+  core?: boolean;
+  /** 覆盖桥的能力声明与身份查询（默认只有 account）。 */
+  bridge?: Partial<WeixinBridge>;
   replyQuestion?: (text: string) => boolean;
   directAvailable?: boolean;
   submitResult?: SubmitResult;
   commandHandled?: boolean;
 } = {}) {
+  const received: OwnerMessageDraft[] = [];
   const submitted: Submitted[] = [];
   const typing: string[] = [];
   const typingStopped: string[] = [];
@@ -44,8 +51,16 @@ function harness(options: {
     now: () => 1_760_000_000_000,
     fetch: options.fetch,
     cdnBaseUrl: CDN,
-    bridge: () => ({ account: 'bot' }) as unknown as WeixinBridge,
-    binder: () => null,
+    bridge: () => ({ account: 'bot', ...options.bridge }) as unknown as WeixinBridge,
+    binder: () => (options.core === true
+      ? {
+        receive: async (draft: OwnerMessageDraft) => {
+          received.push(draft);
+          return { accepted: true };
+        },
+        registrationError: undefined,
+      } as unknown as BridgeBinder
+      : null),
     ownFeaturesActive: () => (typeof options.ownFeatures === 'function' ? options.ownFeatures() : options.ownFeatures ?? true),
     isOwner: options.isOwner ?? ((sender: string) => sender === 'owner-1'),
     replyQuestion: (text: string) => {
@@ -67,7 +82,7 @@ function harness(options: {
     setHealth: () => {},
     noteError: () => {},
   });
-  return { pipeline, submitted, typing, typingStopped, commands, replies };
+  return { pipeline, submitted, received, typing, typingStopped, commands, replies };
 }
 
 const signal = new AbortController().signal;
@@ -337,6 +352,43 @@ test('独立模式：宿主没有会话服务时不下载文件', async () => {
 
   assert.equal(fetch.calls(), 0);
   assert.deepEqual(submitted, []);
+});
+
+test('核心模式：声明 owner-files 时把文件随草稿交给核心', async () => {
+  const built = fileMessage(1, { names: ['报告.pdf'], text: '看下这个 pdf' });
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, received, typing } = harness({
+    fetch: fetch.impl,
+    superagent: true,
+    core: true,
+    bridge: { filesEnabled: true, ownerLookup: (sender: string) => sender === 'owner-1' },
+  });
+
+  await pipeline.route(built.message, signal);
+
+  assert.equal(received.length, 1);
+  assert.equal(received[0]?.text, '看下这个 pdf');
+  assert.equal(received[0]?.files?.[0]?.name, '报告.pdf');
+  assert.deepEqual(Buffer.from(received[0]?.files?.[0]?.data ?? '', 'base64'), PDF);
+  assert.deepEqual(typing, ['owner-1'], '核心受理后开输入状态');
+});
+
+test('核心模式：没声明 owner-files 时文件不上报，文字照常交给核心', async () => {
+  const built = fileMessage(1, { names: ['报告.pdf'], text: '看下这个 pdf' });
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, received } = harness({
+    fetch: fetch.impl,
+    superagent: true,
+    core: true,
+    bridge: { ownerLookup: (sender: string) => sender === 'owner-1' },
+  });
+
+  await pipeline.route(built.message, signal);
+
+  assert.equal(received.length, 1);
+  assert.equal(received[0]?.text, '看下这个 pdf');
+  assert.equal(received[0]?.files, undefined);
+  assert.equal(fetch.calls(), 0);
 });
 
 /** 一条「引用某条消息 + 一句文字」的入站消息。 */

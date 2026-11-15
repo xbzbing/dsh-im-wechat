@@ -4,8 +4,8 @@
  * 桥在这里**只做搬运**：文本原样交出去，命令匹配由核心做（AGENTS.md「安全红线」）。
  * 唯一有立场的地方是附件——下载有边界（ADR-0004）：核心模式要核心声明 `owner-images`
  * 并判明发送者是主人，独立模式没有核心可声明，用登录态判明的主人（ADR-0017）。
- * 文件走独立模式自己的路（ADR-0028）：不进核心草稿，由 `downloadOwnerFiles` 下载后
- * 交给直连会话换成宿主的暂存回执。
+ * 文件：独立模式走自己的路（ADR-0028），由 `downloadOwnerFiles` 下载后交给直连会话
+ * 换成宿主的暂存回执；核心模式在它声明 `owner-files` 时按 base64 上报（ADR-0030）。
  */
 
 import { DEFAULT_CDN_BASE_URL } from './ilink/api.ts';
@@ -14,11 +14,14 @@ import type { FileItem, ImageItem, WeixinItem, WeixinMessage } from './ilink/typ
 import { messageIdentity, messageText, refIdOf } from './ilink/identity.ts';
 import { MAX_FILE_BYTES, downloadFile, downloadImage } from './ilink/media.ts';
 import {
+  OWNER_FILE_BYTES_MAX,
+  OWNER_FILES_BYTES_MAX,
+  OWNER_FILES_MAX,
   OWNER_IMAGE_DATA_MAX,
   OWNER_IMAGE_NAME_MAX,
   OWNER_IMAGES_MAX,
 } from './superagent/protocol.ts';
-import type { OwnerImage, OwnerMessageDraft } from './superagent/protocol.ts';
+import type { OwnerFile, OwnerImage, OwnerMessageDraft } from './superagent/protocol.ts';
 
 export interface InboundLogger {
   warn?(...args: unknown[]): unknown;
@@ -44,14 +47,14 @@ export interface FileDownloadOptions {
   logger?: InboundLogger;
   /** 单条消息的文件总量上限（默认 `MAX_FILE_BYTES`；测试注入更小的值）。 */
   maxBytes?: number;
+  /** 单个文件的上限（核心模式传 8 MiB）；缺省只受 `maxBytes` 总量约束。 */
+  maxFileBytes?: number;
   /** 主人才下载（ADR-0028：与图片同一道闸）。 */
   senderIsOwner: (sender: string) => boolean;
 }
 
-/** 一条消息最多收几个文件：再多也只是没人看的附件（ADR-0028）。 */
-export const OWNER_FILES_MAX = 3;
-
-/** 文件名的字节上限；宿主按 UTF-8 255 字节再清洗一次叶子名，这里留出余量。 */
+/** 文件名的字节上限；宿主按 UTF-8 255 字节再清洗一次叶子名，这里留出余量。
+ *  按字节截断的 200 一定不超过核心的 200 字上限（一个字符至少占一个字节）。 */
 const FILE_NAME_MAX_BYTES = 200;
 
 /** 文件阶段的总时限：3 个文件各自 15 秒会把长轮询卡到 45 秒（图片是并发，最多一张的超时）。 */
@@ -86,6 +89,8 @@ export interface InboundOptions extends Omit<ImageDownloadOptions, 'senderIsOwne
   account: string;
   /** 核心声明了 `owner-images` 才下载图片。 */
   imagesEnabled?: boolean;
+  /** 核心声明了 `owner-files` 才把文件上报给它（ADR-0030）。 */
+  filesEnabled?: boolean;
   /** 核心声明了 `owner-lookup` 时传入；不传或判不了则不下载，图片按纯文本处理（ADR-0004）。 */
   senderIsOwner?: (sender: string) => boolean;
   now?: () => number;
@@ -141,8 +146,8 @@ function replyTo(message: WeixinMessage): string | undefined {
 /**
  * 把一条 iLink 消息转成核心的草稿。
  *
- * 返回 `null` 表示「这条没有可交付的内容」：既没有文本也没有可用的图片。
- * 文件不在草稿里（核心协议没有文件能力，ADR-0028）：接入核心时 `file_item` 照旧不处理。
+ * 返回 `null` 表示「这条没有可交付的内容」：既没有文本，也没有可用的图片或文件。
+ * 文件只在核心声明 `owner-files` 时出现在草稿里（ADR-0030）；没声明就照旧不处理。
  */
 export async function toOwnerMessageDraft(
   message: WeixinMessage,
@@ -154,7 +159,8 @@ export async function toOwnerMessageDraft(
   const sender = typeof message.from_user_id === 'string' ? message.from_user_id : '';
   const text = messageText(message.item_list);
   const images = await collectImages(message, options);
-  if (text.trim() === '' && images.length === 0) return null;
+  const files = await collectFiles(message, options);
+  if (text.trim() === '' && images.length === 0 && files.length === 0) return null;
 
   const at = typeof message.create_time_ms === 'number' && Number.isFinite(message.create_time_ms)
     ? message.create_time_ms
@@ -171,6 +177,7 @@ export async function toOwnerMessageDraft(
     ...(platformMessageId ? { platformMessageId } : {}),
     ...(quoted ? { replyTo: quoted } : {}),
     ...(images.length > 0 ? { images } : {}),
+    ...(files.length > 0 ? { files } : {}),
   };
 }
 
@@ -180,6 +187,38 @@ async function collectImages(message: WeixinMessage, options: InboundOptions): P
   // 核心声明缺席（或判不了身份）与判出非主人一样整条不下载（ADR-0004）：
   // fail-open 会让任意微信用户发图就驱动本机出站下载。
   return downloadOwnerImages(message, { ...options, senderIsOwner });
+}
+
+/**
+ * 核心模式：把主人这条消息里的文件组装成核心草稿要的 `OwnerFile`（ADR-0030）。
+ *
+ * 与图片同一道闸（`filesEnabled` + `senderIsOwner`），但上限是核心 Schema 那一组：
+ * 单文件 8 MiB、单条合计 16 MiB。核心会拒收超限的草稿，而一条被拒就是整条消息
+ * （连文字）一起丢，所以桥在发送前按同一组上限剔掉——不能指望核心兜底。
+ * 剔掉的文件只进日志：核心模式没有面向主人的回执渠道。
+ */
+async function collectFiles(message: WeixinMessage, options: InboundOptions): Promise<OwnerFile[]> {
+  const { senderIsOwner } = options;
+  if (options.filesEnabled !== true || !senderIsOwner) return [];
+  const result = await downloadOwnerFiles(message, {
+    ...options,
+    senderIsOwner,
+    maxBytes: OWNER_FILES_BYTES_MAX,
+    maxFileBytes: OWNER_FILE_BYTES_MAX,
+  });
+  for (const dropped of result.dropped) {
+    options.logger?.warn?.(`微信文件未上报：${dropped.name}（${dropped.reason}）`);
+  }
+  const files: OwnerFile[] = [];
+  for (const file of result.files) {
+    // 核心 Schema 要求 `data` 至少 4 个字符：空文件会连累整条草稿，不上报。
+    if (file.bytes.length === 0) {
+      options.logger?.warn?.(`微信文件未上报：${file.name}（内容为空）`);
+      continue;
+    }
+    files.push({ name: file.name, data: Buffer.from(file.bytes).toString('base64') });
+  }
+  return files;
 }
 
 /**
@@ -270,6 +309,11 @@ function truncateName(name: string): string {
   return `${out}${ext}`;
 }
 
+/** 字节数翻成微信里的人话（只用于原因，两处上限共用）。 */
+function sizeText(bytes: number): string {
+  return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
+}
+
 /** 下载层的原因翻成微信里的人话：不带分类码与裸字节数。 */
 function fileReason(reason: string, limitText: string): string {
   if (reason.includes('上限')) return `超过 ${limitText} 上限`;
@@ -279,11 +323,12 @@ function fileReason(reason: string, limitText: string): string {
 }
 
 /**
- * 下载主人这条消息里的文件（独立模式，ADR-0028）。
+ * 下载主人这条消息里的文件（独立模式 ADR-0028；核心模式由 `collectFiles` 复用）。
  *
  * 准入只有一道闸：`senderIsOwner`。文件数量与总量都有限：最多 `OWNER_FILES_MAX` 个、
- * 合计 `MAX_FILE_BYTES` 字节，按顺序下载并共享同一份预算（处理完一个再下一个，
- * 内存峰值是已收下的明文加上当前这一个文件的密文）。单个文件失败只跳过它，原因随结果
+ * 合计 `maxBytes` 字节，按顺序下载并共享同一份预算（处理完一个再下一个，
+ * 内存峰值是已收下的明文加上当前这一个文件的密文）。`maxFileBytes` 再给单个文件
+ * 加一道闸：核心模式传 8 MiB，超了只丢那个文件。单个文件失败只跳过它，原因随结果
  * 返回，由提交层拼成一条微信提示——文件不像图片那样可以静默少一张。
  */
 export async function downloadOwnerFiles(
@@ -296,7 +341,9 @@ export async function downloadOwnerFiles(
   if (items.length === 0) return NO_FILES;
 
   const total = options.maxBytes ?? MAX_FILE_BYTES;
-  const limitText = `${Math.max(1, Math.round(total / (1024 * 1024)))} MB`;
+  const limitText = sizeText(total);
+  const perFile = options.maxFileBytes ?? total;
+  const perFileText = sizeText(perFile);
   const files: InboundFile[] = [];
   const dropped: DroppedFile[] = [];
   let remaining = total;
@@ -317,22 +364,34 @@ export async function downloadOwnerFiles(
     }
     const declared = Number.parseInt(item.len ?? '', 10);
     // `len` 是明文大小：够判断就不必先拉一遍密文（大文件可以到 GB 级）。
+    if (Number.isFinite(declared) && declared > perFile) {
+      dropped.push({ name, reason: `超过 ${perFileText} 上限` });
+      continue;
+    }
     if (Number.isFinite(declared) && declared > remaining) {
       dropped.push({ name, reason: `超过 ${limitText} 上限` });
       continue;
     }
+    // 单文件与总量取更紧的那个作为下载上限；原因按它报，别让主人以为总量还有空。
+    const bound = Math.min(remaining, perFile);
+    const boundText = perFile <= remaining ? perFileText : limitText;
     const result = await downloadFile(item, {
       cdnBaseUrl: options.cdnBaseUrl ?? DEFAULT_CDN_BASE_URL,
       ...(options.fetch ? { fetch: options.fetch } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       timeoutMs: budgetLeft,
       // 密文比明文最多多补一个 AES 块：给下载留出这点余量，扣预算按明文算。
-      maxBytes: remaining + 16,
+      maxBytes: bound + 16,
     });
     if (!result.ok) {
       // 日志只记分类后的 reason：不带 URL、不带密钥、不带字节。
       options.logger?.warn?.(`微信文件未采用：${result.reason}`);
-      dropped.push({ name, reason: fileReason(result.reason, limitText) });
+      dropped.push({ name, reason: fileReason(result.reason, boundText) });
+      continue;
+    }
+    // `len` 可能是谎报的：解密后再按单文件与总量各判一次。
+    if (result.data.length > perFile) {
+      dropped.push({ name, reason: `超过 ${perFileText} 上限` });
       continue;
     }
     if (result.data.length > remaining) {

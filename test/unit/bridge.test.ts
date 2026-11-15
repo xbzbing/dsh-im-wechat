@@ -204,7 +204,7 @@ test('能力声明：纯文本、分条上限、无交互卡、需要先有入�
   assert.equal(bridge.capabilities.outbound.maxMessagesPerWindow, 10);
 });
 
-test('核心能力声明决定图片下载与身份查询', () => {
+test('核心能力声明决定图片与文件上报、身份查询', () => {
   const bridge = new WeixinBridge({
     account: ACCOUNT,
     api: () => null,
@@ -213,6 +213,7 @@ test('核心能力声明决定图片下载与身份查询', () => {
     ownerId: () => OWNER,
   });
   assert.equal(bridge.imagesEnabled, false);
+  assert.equal(bridge.filesEnabled, false);
   assert.equal(typeof bridge.ownerLookup, 'undefined');
 
   const handle = {
@@ -222,13 +223,19 @@ test('核心能力声明决定图片下载与身份查询', () => {
   } as unknown as BridgeHandle;
   bridge.attachHandle(handle, ['owner-images', 'owner-lookup']);
   assert.equal(bridge.imagesEnabled, true);
+  // 图片能力不等于文件能力：核心没声明 owner-files 就不能发 files。
+  assert.equal(bridge.filesEnabled, false);
   const lookup = bridge.ownerLookup;
   assert.equal(typeof lookup, 'function');
   assert.equal(lookup?.(OWNER), true);
   assert.equal(lookup?.('stranger'), false);
 
+  bridge.attachHandle(handle, ['owner-images', 'owner-lookup', 'owner-files']);
+  assert.equal(bridge.filesEnabled, true);
+
   bridge.detachHandle();
   assert.equal(bridge.imagesEnabled, false);
+  assert.equal(bridge.filesEnabled, false);
 });
 
 test('交付进入投递流程就回调 onDelivered（收起正在输入）', async () => {

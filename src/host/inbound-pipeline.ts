@@ -214,6 +214,7 @@ export class InboundPipeline {
       account: bridge.account,
       cdnBaseUrl: deps.cdnBaseUrl,
       imagesEnabled: bridge.imagesEnabled,
+      filesEnabled: bridge.filesEnabled,
       ...(ownerLookup ? { senderIsOwner: ownerLookup } : {}),
       ...(deps.fetch ? { fetch: deps.fetch } : {}),
       signal,

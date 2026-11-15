@@ -81,6 +81,13 @@ export type SubmitResult = 'ignored' | 'unavailable' | 'queued' | 'steered' | 'f
 const DEFAULT_SUBMIT_TIMEOUT_MS = 30_000;
 const QUEUE_NOTICE = '已交给会话，这一轮结束后把回答发给你。';
 const STEER_NOTICE = '已插进正在跑的这一轮，本轮回答仍由原回合送回。';
+/**
+ * 连续插话的提示间隔：两条消息挨得太近（小于这个间隔）时不重复提示。
+ *
+ * 主人连发几条补充说明时，每条都回一句「已插进本轮」会刷屏；只有隔了一会儿、
+ * 前一轮还在思考时才值得确认一次。
+ */
+export const STEER_NOTICE_MIN_GAP_MS = 30_000;
 const IMAGE_DROPPED_NOTICE = '图片没有发出去（当前会话的模型可能不支持看图），已按文字发送。';
 const IMAGE_DROPPED_SUFFIX = '（图片没有发出去，已按文字发送）';
 const IMAGE_ONLY_REJECTED = '图片没有发出去：当前会话的模型可能不支持看图，换个模型或改用文字再发一次。';
@@ -111,6 +118,8 @@ export class DirectChat {
   #answer = '';
   /** 建会话进行中，避免连发两条建出两个会话。 */
   #creating: Promise<string> | null = null;
+  /** 上一次受理成功的时间（任意提交方式），用来决定插话提示要不要发。 */
+  #lastSubmitAt = 0;
 
   constructor(options: DirectChatOptions) {
     this.#controller = options.controller;
@@ -182,8 +191,15 @@ export class DirectChat {
       }
       imageDropped = true;
     }
+    const submittedAt = this.#now();
+    const gap = submittedAt - this.#lastSubmitAt;
+    this.#lastSubmitAt = submittedAt;
     if (mode === 'steer') {
-      await this.#send(withImageDropped(STEER_NOTICE, imageDropped));
+      // 连发：间隔太短就不回执，只在「隔了一会儿仍在思考」时才确认一次。
+      // 第一次提交没有上一条可比，按「隔了很久」处理：会话是重启前就在跑的。
+      if (gap >= STEER_NOTICE_MIN_GAP_MS || gap < 0) {
+        await this.#send(withImageDropped(STEER_NOTICE, imageDropped));
+      }
       return 'steered';
     }
     // 排队的回合开跑前宿主可能还在处理上一条，提示只在「当前确实在跑」时给，

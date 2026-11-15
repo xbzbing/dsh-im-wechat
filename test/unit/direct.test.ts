@@ -70,6 +70,7 @@ async function setup(
     controller?: FakeController | null;
     submitTimeoutMs?: number;
     applyModel?: (sessionId: string) => void;
+    now?: () => number;
   } = {},
 ) {
   const dir = tempDir(t);
@@ -88,7 +89,7 @@ async function setup(
     },
     isOwner: (sender) => sender === 'owner-1',
     ownerLabel: () => 'abc123',
-    now: () => 1_700_000_000_000,
+    now: options.now ?? (() => 1_700_000_000_000),
     ...(options.submitTimeoutMs !== undefined ? { submitTimeoutMs: options.submitTimeoutMs } : {}),
     ...(options.applyModel !== undefined ? { applyModel: options.applyModel } : {}),
   });
@@ -382,4 +383,25 @@ test('独立模式：绑定记下会话标题，宿主改名后跟着更新并�
   const reloaded = new DirectBindingStore({ dir: join((store as unknown as { path(): string }).path(), '..') });
   await reloaded.hydrate();
   assert.equal(reloaded.get()?.title, '改过的名字');
+});
+
+test('独立模式：连续插话只在间隔超过 30 秒时提示一次', async (t) => {
+  // 连发几条补充说明时，每条都回一句「已插进本轮」会刷屏。
+  let clock = 1_700_000_000_000;
+  const controller = fakeController();
+  controller.setRunning(true);
+  const { chat, sent } = await setup(t, { controller, busyMode: 'steer', now: () => clock });
+
+  assert.equal(await chat.submit('owner-1', text('第一条')), 'steered');
+  assert.equal(sent.length, 1);
+  clock += 5_000;
+  assert.equal(await chat.submit('owner-1', text('第二条')), 'steered');
+  assert.equal(sent.length, 1, '5 秒后的连发不再提示');
+  clock += 20_000;
+  assert.equal(await chat.submit('owner-1', text('第三条')), 'steered');
+  assert.equal(sent.length, 1, '距上一条 20 秒仍算连发');
+  clock += 30_000;
+  assert.equal(await chat.submit('owner-1', text('第四条')), 'steered');
+  assert.equal(sent.length, 2, '隔了 30 秒、前一轮还在跑，才再确认一次');
+  assert.match(sent[1]!, /已插进正在跑的这一轮/);
 });

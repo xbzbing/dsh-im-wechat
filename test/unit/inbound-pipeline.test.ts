@@ -29,6 +29,7 @@ function harness(options: {
   const typing: string[] = [];
   const typingStopped: string[] = [];
   const commands: CommandInput[] = [];
+  const replies: string[] = [];
   const pipeline = new InboundPipeline({
     enabled: () => true,
     stopped: () => false,
@@ -44,7 +45,10 @@ function harness(options: {
     binder: () => null,
     ownFeaturesActive: () => (typeof options.ownFeatures === 'function' ? options.ownFeatures() : options.ownFeatures ?? true),
     isOwner: options.isOwner ?? ((sender: string) => sender === 'owner-1'),
-    replyQuestion: options.replyQuestion ?? (() => false),
+    replyQuestion: (text: string) => {
+      replies.push(text);
+      return options.replyQuestion === undefined ? false : options.replyQuestion(text);
+    },
     superagentEnabled: () => options.superagent ?? false,
     directAvailable: () => options.directAvailable ?? true,
     runCommand: async (input) => {
@@ -60,7 +64,7 @@ function harness(options: {
     setHealth: () => {},
     noteError: () => {},
   });
-  return { pipeline, submitted, typing, typingStopped, commands };
+  return { pipeline, submitted, typing, typingStopped, commands, replies };
 }
 
 const signal = new AbortController().signal;
@@ -249,5 +253,20 @@ test('独立模式：非主人的命令不交给命令层', async () => {
   const { pipeline, submitted, commands } = harness({ commandHandled: true, isOwner: () => false });
   await pipeline.route(textMessage('/help').message, signal);
   assert.deepEqual(commands, []);
+  assert.deepEqual(submitted, []);
+});
+
+test('独立模式：待答问题不会把命令吞成答案', async () => {
+  const { pipeline, commands, replies } = harness({ commandHandled: true, replyQuestion: () => true });
+  await pipeline.route(textMessage('/help').message, signal);
+  assert.equal(commands.length, 1);
+  assert.deepEqual(replies, [], '命令先于「回答问题」处理');
+});
+
+test('独立模式：普通文字仍先给回答问题，再交给会话', async () => {
+  const { pipeline, commands, replies, submitted } = harness({ commandHandled: true, replyQuestion: () => true });
+  await pipeline.route(textMessage('我的答案是 2').message, signal);
+  assert.deepEqual(commands, []);
+  assert.deepEqual(replies, ['我的答案是 2']);
   assert.deepEqual(submitted, []);
 });

@@ -124,23 +124,13 @@ export class InboundPipeline {
     if (!bridge) return;
     const sender = typeof message.from_user_id === 'string' ? message.from_user_id : '';
 
-    // 自有功能先认领：这条文本可能是主人在回答微信里的问题。
-    // 只认已确认主人的消息——陌生人的文本绝不能把主人的问题答掉。
-    if (deps.ownFeaturesActive() && deps.isOwner(sender)) {
-      const text = messageText(message.item_list);
-      // 身份用于跨重启去重：同一条重投的「批准」不能再批一次（见 consumed-replies.ts）。
-      const identity = messageIdentity(deps.connection()?.account ?? '', message);
-      if (text.trim() !== '' && deps.replyQuestion(text, identity)) return;
-    }
+    const ownerMessage = deps.ownFeaturesActive() && deps.isOwner(sender);
+    const standalone = !deps.superagentEnabled() || !binder;
+    const text = messageText(message.item_list);
 
-    // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；
-    // 没配会话控制器、或不是主人时照旧到此为止。主人发的图片按 ADR-0017 下载成
-    // 附件 part，与文字一起交给会话；下载失败的图当这条没有图。
-    if (!deps.superagentEnabled() || !binder) {
-      if (!deps.ownFeaturesActive()) return;
-      if (!deps.isOwner(sender)) return;
-      // 命令先于图片下载：只有 /send 收图，其余命令先回一句「图没有发出」。
-      const text = messageText(message.item_list);
+    // 命令先于「回答问题」与图片下载：一条待答的问题不能把 /help 之类的命令吞成答案；
+    // 只有 /send 收图，其余命令先回一句「图没有发出」。只在独立模式解析（AGENTS.md）。
+    if (ownerMessage && standalone) {
       const parsed = parseCommand(text);
       if (parsed !== null) {
         const hasImages = message.item_list?.some((item) => item?.type === MessageItemType.IMAGE) === true;
@@ -155,6 +145,22 @@ export class InboundPipeline {
           : [];
         if (await deps.runCommand({ text, hasImages, images })) return;
       }
+    }
+
+    // 自有功能认领：这条文本可能是主人在回答微信里的问题。
+    // 只认已确认主人的消息——陌生人的文本绝不能把主人的问题答掉。
+    if (ownerMessage) {
+      // 身份用于跨重启去重：同一条重投的「批准」不能再批一次（见 consumed-replies.ts）。
+      const identity = messageIdentity(deps.connection()?.account ?? '', message);
+      if (text.trim() !== '' && deps.replyQuestion(text, identity)) return;
+    }
+
+    // 没有接入核心（或核心不在）：独立模式把消息直接交给绑定的会话（ADR-0009）；
+    // 没配会话控制器、或不是主人时照旧到此为止。主人发的图片按 ADR-0017 下载成
+    // 附件 part，与文字一起交给会话；下载失败的图当这条没有图。
+    if (standalone) {
+      if (!deps.ownFeaturesActive()) return;
+      if (!deps.isOwner(sender)) return;
       // 宿主没有会话服务时独立模式接不了：先判，别白白下载图片、开输入状态。
       if (!deps.directAvailable()) return;
       const images = await downloadOwnerImages(message, {

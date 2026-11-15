@@ -28,6 +28,7 @@ function harness(options: {
   catalog?: SessionCatalog;
   attachedImages?: boolean;
   queued?: boolean;
+  deliverFails?: boolean;
 } = {}): Harness {
   const sent: string[] = [];
   const listing: ListingEntry[] = [];
@@ -47,6 +48,9 @@ function harness(options: {
   };
   const watcher = {
     list: () => traces,
+    removeSend: (sessionId: string) => {
+      watchCalls.push(['removeSend', sessionId]);
+    },
     add: async (...args: unknown[]) => {
       watchCalls.push(['add', ...args]);
       return 'added';
@@ -73,9 +77,10 @@ function harness(options: {
       state.bound = false;
     },
     bound: () => state.bound,
-    deliver: async (sessionId, content) => {
+    deliver: async (sessionId, content, onAdmitted) => {
       delivered.push({ sessionId, content: content as { type: string; text?: string }[] });
-      return { queued: options.queued ?? false };
+      onAdmitted({ queued: options.queued ?? false });
+      if (options.deliverFails === true) throw new Error('宿主拒绝了这条消息');
     },
     send: async (text) => {
       sent.push(text);
@@ -256,7 +261,8 @@ test('/trace 开始跟踪、列表与停止都走同一个序号', async () => {
   assert.match(h.sent[0]!, /已开始跟踪「A」（20 分钟）/);
 
   await h.commands.run({ ...plain, text: '/trace stop 1' });
-  assert.deepEqual(h.watchCalls[1], ['remove', '1']);
+  // 序号按 /sessions 快照解释，不把 1 原样丢给跟踪列表。
+  assert.deepEqual(h.watchCalls[1], ['remove', 'session-aaa']);
   assert.match(h.sent[1]!, /已停止跟踪/);
 
   await h.commands.run({ ...plain, text: '/trace 1 0' });
@@ -268,4 +274,34 @@ test('/trace 没有跟踪时的列表与未知命令', async () => {
   await h.commands.run({ ...plain, text: '/trace' });
   assert.match(h.sent[0]!, /当前没有跟踪的会话/);
   assert.equal(await h.commands.run({ ...plain, text: '/stop' }), false);
+});
+
+test('/send 提交失败：说清原因并撤销观察，不留下等不到的条目', async () => {
+  const h = harness({
+    catalog: {
+      sessions: [{ sessionId: 'session-aaa', title: '目标', updatedAt: NOW, running: false, workspace: '' }],
+      available: true,
+    },
+    deliverFails: true,
+  });
+  await h.commands.run({ ...plain, text: '/sessions' });
+  h.sent.length = 0;
+  await h.commands.run({ ...plain, text: '/send 1 你好' });
+  assert.match(h.sent[0]!, /没能把消息交给会话：宿主拒绝了这条消息/);
+  assert.deepEqual(h.watchCalls.at(-1), ['removeSend', 'session-aaa']);
+});
+
+test('/sessions 超过快照上限时只列能存下的部分，并说明其余去哪看', async () => {
+  const sessions = Array.from({ length: 150 }, (_, index) => ({
+    sessionId: `session-${String(index + 1).padStart(4, '0')}`,
+    title: `会话 ${index + 1}`,
+    updatedAt: NOW - index * 1000,
+    running: false,
+    workspace: '',
+  }));
+  const h = harness({ catalog: { sessions, available: true } });
+  await h.commands.run({ ...plain, text: '/sessions' });
+  assert.equal(h.listing.length, 100);
+  assert.match(h.sent[0]!, /共 100 个，第 1\/10 页/);
+  assert.match(h.sent[0]!, /只列出最近 100 个/);
 });

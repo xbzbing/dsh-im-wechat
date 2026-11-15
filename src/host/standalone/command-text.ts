@@ -29,10 +29,10 @@ export const HELP_TEXT = [
   '| 命令 | 作用 |',
   '| --- | --- |',
   '| `/new`（或 `/reset`） | 开新会话，旧对话仍留在 DSH 历史里 |',
-  '| `/sessions [页码]`（或 `/list`） | 列出最近活跃的会话，每页 10 个；序号在你下次发 `/sessions` 之前不变 |',
+  `| \`/sessions [页码]\`（或 \`/list\`） | 列出最近活跃的会话，每页 ${SESSION_PAGE_SIZE} 个；序号在你下次发 \`/sessions\` 之前不变 |`,
   '| `/send <序号或会话 id> <内容>` | 往指定会话发消息（可以附图，附图时可以不写内容），并把那一轮回答发回微信 |',
   '| `/trace <序号或会话 id> [分钟]` | 跟踪一个会话（默认 30 分钟）：它每轮结束把提问和回答发给你 |',
-  '| `/trace` | 列出正在跟踪的会话；`/trace stop [序号]` 停止一个或全部 |',
+  '| `/trace` | 列出正在跟踪的会话；`/trace stop [序号或会话 id]` 停止一个或全部（序号按 `/sessions` 快照） |',
   '| `/help` | 显示这份说明 |',
   '',
   '**使用说明**',
@@ -106,6 +106,8 @@ export interface SessionPageView {
   /** 快照里的会话数（翻页能翻到的）。 */
   listed: number;
   now: number;
+  /** 宿主的会话比快照多，后面的没有列出。 */
+  truncated?: boolean;
 }
 
 /** `/sessions` 的 Markdown：一张表，表头说总数和页码，表尾给翻页与用法。 */
@@ -127,6 +129,7 @@ export function renderSessionList(view: SessionPageView): string {
     '',
   ];
   if (view.page < view.pages) lines.push(`发 \`/sessions ${view.page + 1}\` 看下一页。`, '');
+  if (view.truncated === true) lines.push(`只列出最近 ${view.listed} 个，其余请到 DSH 网页端查看。`, '');
   lines.push(
     '发 `/send <序号> <内容>` 往会话发消息，`/trace <序号>` 跟踪它；也可以用 id 代替序号。',
     '序号在你下次发 `/sessions` 之前不变。',
@@ -134,15 +137,28 @@ export function renderSessionList(view: SessionPageView): string {
   return lines.join('\n');
 }
 
-/** `/trace` 的跟踪列表；序号、标题、开始跟踪、剩余时长。 */
-export function renderTraceList(entries: readonly TraceEntry[], now: number): string {
+/**
+ * `/trace` 的跟踪列表；序号跟最近一次 `/sessions` 的快照一致，不在快照里的显示 `—`。
+ *
+ * `/trace stop <序号>` 也按这份编号解释，主人不用在两套序号之间换算。
+ */
+export function renderTraceList(
+  entries: readonly TraceEntry[],
+  now: number,
+  listing: readonly { sessionId: string }[] = [],
+): string {
+  const numberOf = (sessionId: string): string => {
+    const index = listing.findIndex((row) => row.sessionId === sessionId);
+    return index >= 0 ? String(index + 1) : '—';
+  };
   return [
     `**正在跟踪**（${entries.length} 个）`,
     '',
     '| # | 会话 | id | 开始跟踪 | 剩余 |',
     '| --- | --- | --- | --- | --- |',
-    ...entries.map((entry, index) => `| ${index + 1} | ${tableCell(entry.title, SESSION_TITLE_MAX) || '未命名会话'} | ${shortSessionId(entry.sessionId)} | ${describeAge(entry.since, now)} | ${describeRemaining(entry.until, now)} |`),
+    ...entries.map((entry) => `| ${numberOf(entry.sessionId)} | ${tableCell(entry.title, SESSION_TITLE_MAX) || '未命名会话'} | ${shortSessionId(entry.sessionId)} | ${describeAge(entry.since, now)} | ${describeRemaining(entry.until, now)} |`),
     '',
-    '发 `/trace stop <序号>` 停止其中一个，`/trace stop` 全部停止。',
+    '序号跟最近一次 `/sessions` 的快照一致；不在快照里的会话用 id 前几位停止。',
+    '发 `/trace stop <序号或会话 id>` 停止其中一个，`/trace stop` 全部停止。',
   ].join('\n');
 }

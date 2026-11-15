@@ -85,6 +85,18 @@ test('会话表格：单元格转义竖线、压掉换行、长标题截断', ()
   assert.match(markdown, /\| 1 \| 标题 \| 12345678 \| 空闲 \| 时间未知 \| ws \|/);
   assert.equal(SESSION_PAGE_SIZE, 10);
   assert.match(renderTraceList([{ sessionId: 'session-1', title: '', since: 0, until: 60_000 }], 0), /未命名会话/);
+  // 跟踪列表的序号跟 /sessions 快照一致；不在快照里的显示 —。
+  const trace = renderTraceList(
+    [
+      { sessionId: 'session-b', title: 'B', since: 0, until: 60_000 },
+      { sessionId: 'session-x', title: 'X', since: 0, until: 60_000 },
+    ],
+    0,
+    [{ sessionId: 'session-a' }, { sessionId: 'session-b' }],
+  );
+  assert.match(trace, /\| 2 \| B \|/);
+  assert.match(trace, /\| — \| X \|/);
+  assert.match(trace, /序号跟最近一次 `\/sessions` 的快照一致/);
 });
 
 test('短 id：去掉 session- 前缀，表格里的写法能直接用来定位', () => {

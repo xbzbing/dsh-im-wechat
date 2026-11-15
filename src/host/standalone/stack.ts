@@ -104,7 +104,7 @@ export class DirectStack {
       store: this.#commandStore,
       reset: () => this.#chat.reset(),
       bound: () => this.#store.get() !== null,
-      deliver: (sessionId, content) => this.#deliver(sessionId, content),
+      deliver: (sessionId, content, onAdmitted) => this.#deliver(sessionId, content, onAdmitted),
       send: options.send,
       maxText,
       ...(options.logger ? { logger: options.logger } : {}),
@@ -190,9 +190,13 @@ export class DirectStack {
     await this.#chat.reset();
   }
 
-  /** 会话事件：直连会话的回合与标题、命令跟踪的会话。 */
+  /** 直连会话事件：只处理绑定会话自己的回合与标题。 */
   handleEvent(sessionId: string, event: unknown): void {
     this.#chat.handleEvent(sessionId, event);
+  }
+
+  /** 命令观察者事件：`/send`、`/trace` 的目标可以是任意会话。 */
+  handleWatchEvent(sessionId: string, event: unknown): void {
     this.#watcher.handleEvent(sessionId, event);
   }
 
@@ -200,11 +204,17 @@ export class DirectStack {
    * 往任意会话提交（`/send`）：不钉面板里的模型——目标会话的模型可能是主人在 Web
    * 端挑过的，从微信发一句话就改掉是越权。
    */
-  async #deliver(sessionId: string, content: readonly PromptPart[]): Promise<{ queued: boolean }> {
+  async #deliver(
+    sessionId: string,
+    content: readonly PromptPart[],
+    onAdmitted: (info: { queued: boolean }) => void,
+  ): Promise<void> {
     const controller = this.#controller();
     if (controller === null) throw new Error('宿主未提供会话服务');
     const busy = await this.#isBusy(controller, sessionId);
     const mode: BusyMode = busy && this.#busyMode === 'steer' ? 'steer' : 'queue';
+    // 先登记观察再提交：宿主受理后可能立刻发出 turn/start，晚一步就漏掉这一段。
+    onAdmitted({ queued: busy && mode === 'queue' });
     const result = await controller.prompt({
       requestId: randomUUID(),
       sessionId,
@@ -213,7 +223,6 @@ export class DirectStack {
       clientTimeZone: clientTimeZone(),
     }, AbortSignal.timeout(DELIVER_TIMEOUT_MS));
     if (result.accepted !== true) throw new Error('会话没有接受这条消息');
-    return { queued: busy && mode === 'queue' };
   }
 
   /** 从宿主列表补一次绑定会话的标题；没有绑定或宿主读不到时什么都不做。 */

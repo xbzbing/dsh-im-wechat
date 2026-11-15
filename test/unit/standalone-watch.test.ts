@@ -130,14 +130,15 @@ test('跟踪：重新跟踪顺延时间，超过上限拒绝新增', async () =>
   assert.equal(await h.watcher.add('s-extra', '多出来的', 10), 'full');
 });
 
-test('跟踪：按序号或 id 前缀停止，歧义前缀不停', async () => {
+test('跟踪：按 id 前缀停止，歧义前缀与数字都不在这里解释', async () => {
   const h = harness();
   await h.watcher.add('session-aaa', 'A', 30);
   await h.watcher.add('session-bbb', 'B', 30);
   // `session` 前缀匹配两条，歧义：不停。
   assert.deepEqual(await h.watcher.remove('session'), []);
-  // 序号 1 是列表里的第一条。
-  assert.deepEqual((await h.watcher.remove('1')).map((entry) => entry.sessionId), ['session-aaa']);
+  // 数字是 /sessions 快照的编号，由命令层先定位；观察者不认识数字。
+  assert.deepEqual(await h.watcher.remove('1'), []);
+  assert.deepEqual((await h.watcher.remove('session-aaa')).map((entry) => entry.sessionId), ['session-aaa']);
   assert.deepEqual((await h.watcher.remove('session-bbb')).map((entry) => entry.sessionId), ['session-bbb']);
   assert.equal(h.traces.length, 0);
   assert.equal(h.watcher.list().length, 0);
@@ -204,8 +205,59 @@ test('跟踪与 /send 落在同一会话：排队跳过上一轮只影响 /send�
   // 我们这一轮：两边各推一条。
   fold(h.watcher, 's-1', { prompt: '第二条', answer: '新回答' });
   await h.watcher.drain();
-  assert.equal(h.sent.length, 3);
-  // 两条各自独立：/send 先入队，跟踪紧随其后。
-  assert.match(h.sent[1]!, /来自会话「会话一」/);
-  assert.match(h.sent[2]!, /跟踪 ·「会话一」/);
+  // 同一轮不重复推：跟踪那条带着提问与回答，/send 不再另发一份。
+  assert.equal(h.sent.length, 2);
+  assert.match(h.sent[1]!, /跟踪 ·「会话一」/);
+  assert.doesNotMatch(h.sent[1]!, /来自会话/);
+});
+
+test('跟踪：启动时从持久态重读，构造后才 hydrate 的条目也能恢复', async () => {
+  const h = harness();
+  // 模拟 store.hydrate() 在 watcher 构造之后才把条目读进来。
+  h.traces.push({ sessionId: 's-1', title: '会话一', since: h.clock.now, until: h.clock.now + 60_000 });
+  assert.equal(h.watcher.list().length, 0, '构造时还没有条目');
+  h.watcher.start();
+  assert.equal(h.watcher.list().length, 1);
+  assert.equal(h.timers.size, 1);
+});
+
+test('/send：没有事件也会按定时器收尾，不留下永远等不到的条目', async () => {
+  const h = harness();
+  h.watcher.trackSend('s-1', '会话一', '问');
+  assert.equal(h.timers.size, 1);
+  h.clock.now += 30 * 60_000;
+  const [id] = [...h.timers.keys()];
+  await h.runTimer(id);
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0]!, /没有在 30 分钟内结束/);
+  // 再来一条超时提醒也不会重复发。
+  h.watcher.handleEvent('s-1', { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+  await h.watcher.drain();
+  assert.equal(h.sent.length, 1);
+});
+
+test('/send：提交失败撤销观察，不再等回答', async () => {
+  const h = harness();
+  h.watcher.trackSend('s-1', '会话一', '问');
+  h.watcher.removeSend('s-1');
+  assert.equal(h.timers.size, 0);
+  h.watcher.handleEvent('s-1', { type: 'turn/end', data: { reason: { kind: 'completed' } } });
+  await h.watcher.drain();
+  assert.deepEqual(h.sent, []);
+});
+
+test('跟踪：到期与重新跟踪竞态时，新计时不被旧定时器打断', async () => {
+  const h = harness();
+  await h.watcher.add('s-1', '会话一', 10);
+  const [id, timer] = [...h.timers.entries()][0]!;
+  const oldCallback = timer.callback;
+  await h.watcher.add('s-1', '会话一', 20);
+  // 旧定时器即便已经排队执行，也不能删掉重新计时后的条目。
+  oldCallback();
+  await h.watcher.drain();
+  assert.equal(h.watcher.list().length, 1);
+  assert.equal(h.sent.length, 0);
+  // 新定时器还在。
+  assert.equal(h.timers.size, 1);
+  assert.notEqual([...h.timers.keys()][0], id);
 });

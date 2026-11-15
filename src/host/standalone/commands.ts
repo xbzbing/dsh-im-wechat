@@ -4,7 +4,7 @@
  * 只在没有接入核心时生效（接入后命令由核心解析，AGENTS.md 的安全红线）；只有主人
  * 的文本能走到这里。命令本身不进会话、不经过模型，回复也直接发回微信。
  *
- * 语义与核心侧同一套习惯（这里不写进代码的是它来自哪个插件）：序号按最近一次
+ * 语义与核心侧同一套习惯：序号按最近一次
  * `/sessions` 的快照解释，序号在下次重新列出之前不变；`/send` 与 `/trace` 都用
  * 序号或会话 id（完整或唯一前缀）定位。
  */
@@ -27,7 +27,7 @@ import {
   MAX_TRACE_MINUTES,
 } from './session-watch.ts';
 import type { SessionWatcher } from './session-watch.ts';
-import { MAX_TRACES } from '../state/standalone-commands.ts';
+import { MAX_LISTING, MAX_TRACES } from '../state/standalone-commands.ts';
 import type { ListingEntry } from '../state/standalone-commands.ts';
 
 /** 可识别的命令名（不含 `/`）；帮助文案与解析规则都以它为准。 */
@@ -69,8 +69,15 @@ export interface CommandPorts {
   reset: () => Promise<void>;
   /** 当前有没有绑定直连会话（`/new` 的回执要区分「已重置」与「还没有」）。 */
   bound: () => boolean;
-  /** 往指定会话提交一条消息；返回这一轮是排队还是插话。 */
-  deliver: (sessionId: string, content: readonly PromptPart[]) => Promise<{ queued: boolean }>;
+  /**
+   * 往指定会话提交一条消息。`onAdmitted` 在提交前同步调用，携带这一轮是排队还是
+   * 插话——观察者要在这个时间点登记，晚了会漏掉宿主紧接着发出的回合事件。
+   */
+  deliver: (
+    sessionId: string,
+    content: readonly PromptPart[],
+    onAdmitted: (info: { queued: boolean }) => void,
+  ) => Promise<void>;
   send: (text: string) => Promise<boolean>;
   now?: () => number;
   maxText?: number;
@@ -135,13 +142,16 @@ export class StandaloneCommands {
       await this.#say(`读取会话列表失败：${catalog.reason ?? '未知错误'}`);
       return;
     }
+    // 快照能存多少就列多少：先展示 150 行再只落盘 100 行，序号 101+ 是寻址不到的。
+    const visible = catalog.sessions.slice(0, MAX_LISTING);
+    const truncated = catalog.sessions.length > visible.length;
     let listing: readonly ListingEntry[] | null = requested > 0 ? this.#ports.store.listing() : null;
     if (listing === null || listing.length === 0) {
-      if (catalog.sessions.length === 0) {
+      if (visible.length === 0) {
         await this.#say('当前没有可用的会话。');
         return;
       }
-      listing = catalog.sessions.map((row) => ({ sessionId: row.sessionId, title: row.title }));
+      listing = visible.map((row) => ({ sessionId: row.sessionId, title: row.title }));
       await this.#ports.store.setListing(listing);
     }
     const pages = Math.max(1, Math.ceil(listing.length / SESSION_PAGE_SIZE));
@@ -152,7 +162,7 @@ export class StandaloneCommands {
     }
     const offset = (page - 1) * SESSION_PAGE_SIZE;
     const rows = listing.slice(offset, offset + SESSION_PAGE_SIZE).map((entry) => {
-      const fresh = catalog.sessions.find((row) => row.sessionId === entry.sessionId);
+      const fresh = visible.find((row) => row.sessionId === entry.sessionId);
       return fresh ?? {
         sessionId: entry.sessionId,
         title: entry.title,
@@ -168,6 +178,7 @@ export class StandaloneCommands {
       offset,
       listed: listing.length,
       now: this.#now(),
+      truncated,
     }));
   }
 
@@ -194,11 +205,13 @@ export class StandaloneCommands {
     }
     const content = withImageHint(buildPromptContent(body, input.images));
     try {
-      const result = await this.#ports.deliver(picked.sessionId, content);
-      this.#ports.watcher.trackSend(picked.sessionId, picked.title, body, result.queued);
+      await this.#ports.deliver(picked.sessionId, content, (info) => {
+        this.#ports.watcher.trackSend(picked.sessionId, picked.title, body, info.queued);
+      });
       const dropped = input.hasImages && input.images.length === 0 ? '（图片没有发出）' : '';
       await this.#say(`已交给会话「${picked.title || '未命名会话'}」${dropped}，这一轮结束后把回答发给你。`);
     } catch (error) {
+      this.#ports.watcher.removeSend(picked.sessionId);
       this.#ports.logger?.warn?.('独立模式 /send 失败', messageOf(error));
       await this.#say(`没能把消息交给会话：${messageOf(error)}`);
     }
@@ -213,13 +226,19 @@ export class StandaloneCommands {
         await this.#say('当前没有跟踪的会话。发 `/trace <序号>` 开始跟踪，序号见 `/sessions`。');
         return;
       }
-      await this.#say(renderTraceList(entries, this.#now()));
+      await this.#say(renderTraceList(entries, this.#now(), this.#ports.store.listing()));
       return;
     }
 
     if (args[0]!.toLowerCase() === 'stop') {
       const target = args.slice(1).join(' ');
-      const removed = await watcher.remove(target);
+      // 序号按 `/sessions` 快照定位；id 前缀不在快照里时（会话已删）再用原串找跟踪。
+      let resolved = target;
+      if (target !== '') {
+        const picked = await this.#pick(target);
+        if (!('miss' in picked)) resolved = picked.sessionId;
+      }
+      const removed = await watcher.remove(resolved);
       if (removed.length === 0) {
         await this.#say(target === ''
           ? '当前没有跟踪的会话。'

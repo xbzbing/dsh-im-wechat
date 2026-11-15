@@ -203,6 +203,7 @@ export class WeixinRuntime {
       ownerUserId: () => this.#loginState?.userId ?? '',
       typingStop: (userId) => this.#typing.stop(userId),
       forwardPresented: (event) => forwardPresentedImages(event, this.#owner, this.#logger),
+      watchHandle: (sessionId, event) => this.#direct.handleWatchEvent(sessionId, event),
       directHandle: (sessionId, event) => this.#direct.handleEvent(sessionId, event),
     };
     this.#pipeline = new InboundPipeline({

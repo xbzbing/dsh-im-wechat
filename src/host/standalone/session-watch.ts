@@ -105,6 +105,7 @@ export class SessionWatcher {
   readonly #sends = new Map<string, SendWatch>();
   readonly #turns = new Map<string, TurnState>();
   readonly #timers = new Map<string, unknown>();
+  readonly #sendTimers = new Map<string, unknown>();
   readonly #queues = new Map<string, Promise<void>>();
 
   constructor(options: SessionWatchOptions) {
@@ -118,8 +119,9 @@ export class SessionWatcher {
     this.#traces = [...this.#store.traces()];
   }
 
-  /** 启动：丢掉停机期间到期的跟踪，按到期时间排定时器。 */
+  /** 启动：从持久态重读跟踪（构造时 store 还没 hydrate），丢掉到期的并排定时器。 */
   start(): number {
+    this.#traces = [...this.#store.traces()];
     const now = this.#now();
     const kept = this.#traces.filter((entry) => entry.until > now);
     const dropped = this.#traces.length - kept.length;
@@ -133,6 +135,8 @@ export class SessionWatcher {
   stop(): void {
     for (const handle of this.#timers.values()) this.#clearTimer(handle);
     this.#timers.clear();
+    for (const handle of this.#sendTimers.values()) this.#clearTimer(handle);
+    this.#sendTimers.clear();
   }
 
   /** 未到期的跟踪；序号即 `/trace stop <序号>` 用的序号。 */
@@ -161,8 +165,11 @@ export class SessionWatcher {
   }
 
   /**
-   * 停止跟踪。`target` 为空停全部；否则按 `list()` 的 1 起序号或会话 id 前缀找一个，
+   * 停止跟踪。`target` 为空停全部；否则按会话 id（完整或唯一前缀）找一个，
    * 找不到或前缀有歧义时什么都不停。返回停掉的条目。
+   *
+   * 序号不在这里解释：编号来自 `/sessions` 快照，由命令层先定位成 sessionId
+   * 再传进来，避免「跟踪列表序号」与「会话列表序号」两套编号。
    */
   async remove(target = ''): Promise<TraceEntry[]> {
     const entries = this.list();
@@ -171,11 +178,8 @@ export class SessionWatcher {
     if (token === '') {
       removed = entries;
     } else {
-      const index = /^\d+$/.test(token) ? Number.parseInt(token, 10) : 0;
-      const byIndex = index >= 1 && index <= entries.length ? entries[index - 1] : undefined;
       const prefixed = entries.filter((entry) => sessionIdMatches(entry.sessionId, token));
-      const picked = byIndex ?? (prefixed.length === 1 ? prefixed[0] : undefined);
-      removed = picked ? [picked] : [];
+      removed = prefixed.length === 1 ? prefixed : [];
     }
     if (removed.length === 0) return [];
     const kept = entries.filter((entry) => !removed.includes(entry));
@@ -187,13 +191,20 @@ export class SessionWatcher {
 
   /** `/send` 受理后开始等目标会话这一轮结束。 */
   trackSend(sessionId: string, title: string, prompt: string, queued = false): void {
-    this.#sends.set(sessionId, {
-      title,
-      until: this.#now() + SEND_TIMEOUT_MS,
-      pendingStart: queued,
-    });
+    this.#clearSendTimer(sessionId);
+    const until = this.#now() + SEND_TIMEOUT_MS;
+    this.#sends.set(sessionId, { title, until, pendingStart: queued });
+    const handle = this.#setTimer(() => this.#expireSend(sessionId, until), SEND_TIMEOUT_MS);
+    this.#sendTimers.set(sessionId, handle);
     // 插话（steer）时这一轮已经开始了，等不到 turn/start：先把提问记下来。
     this.#turns.set(sessionId, { prompt: prompt.trim(), answer: '', sawPrompt: true });
+  }
+
+  /** 提交失败时撤销刚登记的观察（不留下一个永远等不到的条目）。 */
+  removeSend(sessionId: string): void {
+    if (!this.#sends.delete(sessionId)) return;
+    this.#clearSendTimer(sessionId);
+    if (!this.#traces.some((entry) => entry.sessionId === sessionId)) this.#turns.delete(sessionId);
   }
 
   /** `session/event` 回调：同步折叠，不抛错。 */
@@ -277,17 +288,38 @@ export class SessionWatcher {
     this.#turns.delete(sessionId);
     const currentSend = this.#sends.get(sessionId);
     // 排队跳过的那一轮不能把观察一起删掉：我们这条还在队列里，等它自己的回合。
-    if (currentSend !== undefined && !skipSend) this.#sends.delete(sessionId);
+    if (currentSend !== undefined && !skipSend) {
+      this.#sends.delete(sessionId);
+      this.#clearSendTimer(sessionId);
+    }
     const currentTrace = this.#traces.find((entry) => entry.sessionId === sessionId);
     if (currentSend === undefined && currentTrace === undefined) return;
     const snapshot: TurnState = { ...turn };
     const reason = asRecord(data.reason);
-    if (currentSend !== undefined && !skipSend) {
-      this.#enqueue(sessionId, () => this.#deliverSend(currentSend.title || UNTITLED, snapshot, reason));
-    }
+    // 同一会话既被跟踪又有 /send 时只推一条：跟踪那条已经带着提问与回答，再发一遍
+    // 「来自会话……」只会让同一轮的两个副本挤在一起。
     if (currentTrace !== undefined) {
       this.#enqueue(sessionId, () => this.#deliverTrace(currentTrace.title || UNTITLED, snapshot, reason));
+    } else if (currentSend !== undefined && !skipSend) {
+      this.#enqueue(sessionId, () => this.#deliverSend(currentSend.title || UNTITLED, snapshot, reason));
     }
+  }
+
+  #clearSendTimer(sessionId: string): void {
+    const handle = this.#sendTimers.get(sessionId);
+    if (handle !== undefined) this.#clearTimer(handle);
+    this.#sendTimers.delete(sessionId);
+  }
+
+  #expireSend(sessionId: string, until: number): void {
+    const watch = this.#sends.get(sessionId);
+    if (watch === undefined || watch.until !== until) return;
+    this.#sends.delete(sessionId);
+    this.#sendTimers.delete(sessionId);
+    if (!this.#traces.some((entry) => entry.sessionId === sessionId)) this.#turns.delete(sessionId);
+    this.#enqueue(sessionId, () => this.#deliver(
+      `「${watch.title || UNTITLED}」这一轮没有在 ${Math.round(SEND_TIMEOUT_MS / 60_000)} 分钟内结束，不再等它了。`,
+    ));
   }
 
   #retitle(sessionId: string, title: string): void {
@@ -306,8 +338,10 @@ export class SessionWatcher {
   #schedule(entry: TraceEntry): void {
     this.#unschedule(entry.sessionId);
     const delay = Math.max(0, entry.until - this.#now());
-    const handle = this.#setTimer(() => {
-      void this.#expire(entry.sessionId);
+    const until = entry.until;
+    let handle: unknown;
+    handle = this.#setTimer(() => {
+      void this.#expire(entry.sessionId, until, handle);
     }, delay);
     this.#timers.set(entry.sessionId, handle);
   }
@@ -318,13 +352,17 @@ export class SessionWatcher {
     this.#timers.delete(sessionId);
   }
 
-  async #expire(sessionId: string): Promise<void> {
+  async #expire(sessionId: string, until: number, handle: unknown): Promise<void> {
     const entry = this.#traces.find((row) => row.sessionId === sessionId);
-    if (entry === undefined) return;
+    // 到期前被重新跟踪过（`until` 已变）：这次到期作废，新定时器负责。
+    if (entry === undefined || entry.until !== until) {
+      if (this.#timers.get(sessionId) === handle) this.#timers.delete(sessionId);
+      return;
+    }
     const kept = this.#traces.filter((row) => row.sessionId !== sessionId);
     this.#traces = kept;
+    if (this.#timers.get(sessionId) === handle) this.#timers.delete(sessionId);
     await this.#persist(kept);
-    this.#timers.delete(sessionId);
     this.#enqueue(sessionId, () => this.#deliver(
       `跟踪「${entry.title || UNTITLED}」已到期，已停止。要继续跟踪请再发 /trace <序号> [分钟]。`,
     ));

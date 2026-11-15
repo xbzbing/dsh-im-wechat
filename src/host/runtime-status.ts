@@ -14,7 +14,7 @@ import type { BusyMode } from './config.ts';
 import type { ModelRef } from '../shared/models.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 6;
+export const HOST_CONTRACT = 7;
 
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {

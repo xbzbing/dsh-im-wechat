@@ -57,7 +57,8 @@ export function ConnectionSection(props: {
 }) {
   const { t, rpcCall, run, status, state, loggedIn, health, showLoginPanel, active, login } = props;
   const { qrData, qrLink, copied, code, busy, copyLink, setCode } = props;
-  const bridgeLabel = status?.bridge?.registered ? t('connection.bridgeOn') : t('connection.bridgeOff');
+  // 只在真的接上了才说：未接入是默认状态，不必占一行。
+  const bridgeLabel = status?.bridge?.registered ? t('connection.bridgeOn') : '';
 
   return h('section', { className: 'wx-panel wx-connection-panel' },
     h('div', { className: 'wx-section-head' },
@@ -74,7 +75,11 @@ export function ConnectionSection(props: {
             h('strong', null, loggedIn ? healthText(t, health) : t('connection.signedOut')),
             h('span', null, loggedIn ? bridgeLabel : t('connection.signedOutHint')))),
         h('div', { className: 'wx-facts' },
-          h(Fact, { label: t('connection.account'), value: status?.accountTail ?? t('status.signedOut') }),
+          h(Fact, {
+            label: t('connection.account'),
+            value: status?.accountTail ?? t('status.signedOut'),
+            ...(typeof status?.account === 'string' && status.account !== '' ? { hint: status.account } : {}),
+          }),
           h(Fact, { label: t('connection.signedInAt'), value: status?.loggedInAt ? formatTime(status.loggedInAt) : '—' }),
           h(Fact, {
             label: t('reminder.source'),
@@ -176,10 +181,12 @@ export function ReminderSection(props: {
   superagent: boolean;
   minutes: string;
   minutesDirty: boolean;
+  minutesSaved: boolean;
   threshold: unknown;
   questionReminders: boolean;
   questionDelay: string;
   questionDelayDirty: boolean;
+  questionDelaySaved: boolean;
   questionDelayValue: unknown;
   onQuestionDelayChange: (value: string) => void;
   saveQuestionDelay: () => Promise<void>;
@@ -188,8 +195,8 @@ export function ReminderSection(props: {
   busy: string;
 }) {
   const { t, rpcCall, run, saveMinutes, onMinutesChange } = props;
-  const { enabled, superagent, minutes, minutesDirty, threshold, hostOlder, busy } = props;
-  const { questionReminders, questionDelay, questionDelayDirty, questionDelayValue } = props;
+  const { enabled, superagent, minutes, minutesDirty, minutesSaved, threshold, hostOlder, busy } = props;
+  const { questionReminders, questionDelay, questionDelayDirty, questionDelaySaved, questionDelayValue } = props;
   const { onQuestionDelayChange, saveQuestionDelay, toggleQuestionReminders } = props;
   const check = validateMinutes(minutes);
   const canSaveMinutes = check.ok && check.value !== (typeof threshold === 'number' ? threshold : -1);
@@ -237,6 +244,7 @@ export function ReminderSection(props: {
           placeholder: '5',
           disabled: ownLocked || !questionReminders,
           canSave: canSaveQuestionDelay,
+          saved: questionDelaySaved,
           onChange: onQuestionDelayChange,
           onSave: saveQuestionDelay,
           error: !questionCheck.ok && questionDelay.trim() !== '' ? t(questionCheck.key, questionCheck.params) : null,
@@ -255,6 +263,7 @@ export function ReminderSection(props: {
           placeholder: '30',
           disabled: ownLocked,
           canSave: canSaveMinutes,
+          saved: minutesSaved,
           onChange: onMinutesChange,
           onSave: saveMinutes,
           error: !check.ok && minutes.trim() !== '' ? t(check.key, check.params) : null,
@@ -277,6 +286,7 @@ export function DirectSection(props: {
   directExpanded: boolean;
   direct: any;
   workspaceId: string;
+  workspaceSaved: boolean;
   workspaces: { id: string; title: string; path: string }[];
   workspacesReady: boolean;
   /** 宿主的模型目录（`null` 表示还没读到）。 */
@@ -291,12 +301,13 @@ export function DirectSection(props: {
   onModelChange: (value: string) => void;
   onEffortChange: (value: string) => void;
   saveModel: () => Promise<void>;
+  modelSaved: boolean;
   hostOlder: boolean;
   busy: string;
 }) {
   const { t, saveDirect, onWorkspaceChange, onToggleExpand } = props;
-  const { superagent, directExpanded, direct, workspaceId, workspaces, workspacesReady, hostOlder, busy } = props;
-  const { models, modelProvider, modelId, modelEffort, modelCleared, saveModel } = props;
+  const { superagent, directExpanded, direct, workspaceId, workspaceSaved, workspaces, workspacesReady, hostOlder, busy } = props;
+  const { models, modelProvider, modelId, modelEffort, modelCleared, saveModel, modelSaved } = props;
   const { onProviderChange, onModelChange, onEffortChange } = props;
   const directBusy = direct?.busyMode === 'steer';
   // 同形的禁用条件只算一次：四份拷贝已经漂移过（重置绑定曾少了 available 判断）。
@@ -344,6 +355,7 @@ export function DirectSection(props: {
             items: workspaceOptions(workspaces, workspaceId, t('direct.defaultWorkspace')),
             placeholder: t('direct.workspaceUnselected'),
             disabled: directLocked || !workspacesReady,
+            saved: workspaceSaved,
             onChange: onWorkspaceChange,
             onSave: () => saveDirect({ workspaceId }),
           }),
@@ -358,6 +370,7 @@ export function DirectSection(props: {
             // 目录整体读不到时不让人乱选：能列出目录才谈「选目录里的模型」。
             disabled: directLocked || models === null || models.available === false,
             canSave: modelSaveable(modelProvider, modelId),
+            saved: modelSaved,
             onChangeProvider: onProviderChange,
             onChangeModel: onModelChange,
             onChangeEffort: onEffortChange,
@@ -367,9 +380,15 @@ export function DirectSection(props: {
             ? h('div', { className: 'wx-setting-row' },
               h('div', { className: 'wx-setting-copy' },
                 h('span', { className: 'wx-setting-title' }, t('direct.currentSession')),
-                h('span', { className: 'wx-setting-description' },
-                  `${String(direct.sessionId ?? '').slice(0, 18)}…${direct.running ? ` · ${t('direct.running')}` : ''}${
-                    boundWorkspace ? ` · ${boundWorkspace.title}` : ''}`)),
+                // 会话名完整显示（标题行不截断），id 用小字放在下一行，方便复制排障。
+                h('span', { className: 'wx-session-name' },
+                  typeof direct.sessionTitle === 'string' && direct.sessionTitle !== ''
+                    ? direct.sessionTitle
+                    : t('direct.unnamedSession')),
+                h('span', { className: 'wx-session-meta' },
+                  h('code', { className: 'wx-session-id' }, String(direct.sessionId ?? '')),
+                  direct.running ? h('span', null, t('direct.running')) : null,
+                  boundWorkspace ? h('span', null, boundWorkspace.title) : null)),
               h(Button, {
                 variant: 'ghost',
                 size: 'sm',

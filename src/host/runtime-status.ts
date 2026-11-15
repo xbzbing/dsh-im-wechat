@@ -66,6 +66,8 @@ export interface RuntimeStatus {
   };
   loggedIn: boolean;
   accountTail?: string;
+  /** 完整账号：只作为面板「账号」的悬停提示，正文仍显示尾号。 */
+  account?: string;
   /** 上次扫码成功的时间；面板的「登录时间」用它。 */
   loggedInAt?: number;
   login: LoginSnapshot;
@@ -114,7 +116,9 @@ export function buildStatus(input: StatusInput): RuntimeStatus {
     direct: input.direct,
     longTaskThresholdMinutes: input.longTaskThresholdMinutes,
     loggedIn: login !== null,
-    ...(login ? { accountTail: accountTail(login.account), loggedInAt: login.loggedInAt } : {}),
+    ...(login
+      ? { accountTail: accountTail(login.account), account: login.account, loggedInAt: login.loggedInAt }
+      : {}),
     login: input.loginSnapshot,
     health: input.health,
     bridge: bridgeView(input.bridge),

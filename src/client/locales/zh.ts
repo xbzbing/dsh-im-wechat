@@ -17,6 +17,7 @@ export const zh = {
   'common.expand': '展开',
   'common.collapse': '收起',
   'common.minutes': '分钟',
+  'common.saved': '已保存',
 
   // 状态
   'status.signedIn': '已登录',
@@ -45,7 +46,6 @@ export const zh = {
   'connection.signedOut': '尚未登录微信',
   'connection.signedOutHint': '扫码登录后开始接收和发送消息。',
   'connection.bridgeOn': '已接入超级助理',
-  'connection.bridgeOff': '未接入超级助理',
 
   // 扫码登录
   'login.start': '扫码登录',
@@ -123,6 +123,7 @@ export const zh = {
   'direct.running': '运行中',
   'direct.resetBinding': '重置绑定',
   'direct.noSession': '尚未绑定会话，下一条消息将按所选工作区新建。',
+  'direct.unnamedSession': '未命名会话',
   'direct.unavailable': '宿主未提供会话服务，独立模式不可用。',
 
   // 运行概览

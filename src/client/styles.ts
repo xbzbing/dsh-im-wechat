@@ -87,6 +87,8 @@ export const STYLES = `
 .wx-fact { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .wx-fact span { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 .wx-fact strong { overflow: hidden; color: var(--dsw-alias-label-primary); font-size: 12px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+/* 悬停看全文：账号这类值平时只显示尾号，可悬停的给一点视觉提示。 */
+.wx-fact strong[title] { cursor: help; text-decoration: underline dotted; text-decoration-color: var(--dsw-alias-border-l2); text-underline-offset: 2px; }
 .wx-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .wx-action-hint { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 
@@ -159,6 +161,13 @@ export const STYLES = `
 .wx-panel-muted { opacity: .72; }
 .wx-unit { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .wx-draft-hint { margin: 0 0 -2px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+/* 保存成功的即时反馈：两秒后由面板清掉。 */
+.wx-saved { color: var(--dsw-alias-state-success-label, var(--dsw-alias-label-secondary)); font-size: 11px; line-height: 16px; white-space: nowrap; animation: wx-saved-in .18s ease-out; }
+@keyframes wx-saved-in { from { opacity: 0; transform: translateY(1px); } to { opacity: 1; transform: none; } }
+/* 当前会话：名字完整显示，id 用小字单独一行，长 id 可换行、可复制。 */
+.wx-session-name { color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 19px; overflow-wrap: anywhere; }
+.wx-session-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+.wx-session-id { color: var(--dsw-alias-label-tertiary); font: 11px/16px var(--dsw-font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
 
 .wx-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .wx-metric { min-width: 0; min-height: 78px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 12px; border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 12px); background: var(--dsw-alias-bg-layer-1); }

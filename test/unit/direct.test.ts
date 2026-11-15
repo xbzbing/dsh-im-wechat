@@ -367,3 +367,19 @@ test('独立模式：已有绑定时也会在提交前补钉（宿主重启后�
   assert.deepEqual(applied, ['s-bound']);
   assert.deepEqual((controller as FakeController).prompts.map((item) => item.sessionId), ['s-bound']);
 });
+
+test('独立模式：绑定记下会话标题，宿主改名后跟着更新并落盘', async (t) => {
+  const { chat, store } = await setup(t);
+  await chat.submit('owner-1', text('第一条'));
+  assert.equal(store.get()?.title, '微信 · abc123');
+
+  chat.handleEvent('s-1', { type: 'session/title', data: { title: '改过的名字' } });
+  assert.equal(store.get()?.title, '改过的名字');
+
+  // 标题落盘是异步的（事件回调不阻塞）：等写链清空再重读。
+  await store.flush();
+  // 重新读盘：标题不是只在内存里，重启后面板仍显示完整会话名。
+  const reloaded = new DirectBindingStore({ dir: join((store as unknown as { path(): string }).path(), '..') });
+  await reloaded.hydrate();
+  assert.equal(reloaded.get()?.title, '改过的名字');
+});

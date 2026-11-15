@@ -32,16 +32,14 @@ import type { ApprovalNext, ApprovalRequest } from './approvals.ts';
 import { DEFAULT_LONG_TASK_MINUTES, LongTaskNotifier } from './long-tasks.ts';
 import { RootAgents } from './host-agents.ts';
 import type { HostAgents } from './host-agents.ts';
-import { DirectChat } from './direct.ts';
 import type { DirectController } from './direct.ts';
-import { DirectModelChoice } from './direct-model.ts';
+import { DirectStack } from './standalone/stack.ts';
 import { WeixinBridge } from './superagent/bridge.ts';
 import type { BridgeHealth } from './superagent/protocol.ts';
 import { BridgeBinder } from './superagent/link.ts';
 import { ContextTokenStore } from './state/context-tokens.ts';
 import { LoginStateStore, accountTail } from './state/login-state.ts';
 import type { LoginState } from './state/login-state.ts';
-import { DirectBindingStore } from './state/direct-binding.ts';
 import { SyncCursorStore } from './state/sync-cursor.ts';
 import { ConsumedReplies } from './state/consumed-replies.ts';
 import { ReminderGate } from './send-gate.ts';
@@ -53,7 +51,7 @@ import {
   normalizePluginConfig,
   resolveConfigDir,
 } from './config.ts';
-import type { BusyMode, PluginConfig } from './config.ts';
+import type { PluginConfig } from './config.ts';
 import { BotAgentStore, resolveBotAgent } from './bot-agent.ts';
 import { CHANNEL_VERSION, PLUGIN_VERSION } from '../shared/version.ts';
 
@@ -92,15 +90,11 @@ export class WeixinRuntime {
   /** 面板设置动作的端口：五个 setter 都走 `panel-actions.ts`。 */
   readonly #panel: PanelActionHost;
   readonly #longTasks: LongTaskNotifier;
-  readonly #directStore: DirectBindingStore;
-  /** 独立模式直连会话用哪个模型（ADR-0025）；`null` 表示跟随 DSH 的默认模型。 */
-  readonly #model: DirectModelChoice;
-  readonly #direct: DirectChat;
+  /** 独立模式的全部状态与操作：绑定、模型、直连会话（ADR-0009、ADR-0025）。 */
+  readonly #direct: DirectStack;
   #sessionController: DirectController | null = null;
   #agents: HostAgents | null = null;
   #workspaceRegistry: WorkspaceRegistry | null = null;
-  #directWorkspaceId = '';
-  #directBusyMode: BusyMode = DEFAULT_DIRECT_BUSY_MODE;
   readonly #defaultWorkspace: DefaultWorkspace;
   readonly #sessionEvents: SessionEventDeps;
   #stopped = false;
@@ -168,25 +162,27 @@ export class WeixinRuntime {
       logger: this.#logger,
       thresholdMinutes: this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
     });
-    this.#directWorkspaceId = this.#config.directWorkspaceId ?? '';
-    this.#directBusyMode = this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE;
-    this.#model = new DirectModelChoice({
-      initial: this.#config.directModel ?? null,
-      agents: () => this.#agents,
-      boundSession: () => this.#direct.binding()?.sessionId,
-      catalog: () => this.#sessionController,
+    this.#defaultWorkspace = new DefaultWorkspace({
+      // 工作区与状态目录分开（ADR-0021）：会话 cwd 里不能有 login.json。
+      path: deps.workspaceDir ?? resolveWorkspaceDir(),
+      registry: () => this.#workspaceRegistry,
+      noteError: (message) => this.#noteError(message),
+      // 恢复成功后把旧的失败横幅清掉，否则一次瞬时失败会挂到下次扫码。
+      clearError: () => { this.#errors.clearWhere((message) => message.startsWith(WORKSPACE_ERROR_PREFIX)); },
       logger: this.#logger,
+      ...(deps.workspaceTimeoutMs !== undefined ? { timeoutMs: deps.workspaceTimeoutMs } : {}),
     });
-    this.#directStore = new DirectBindingStore({ dir: this.#dir, logger: this.#logger, now: this.#now });
-    this.#direct = new DirectChat({
+    this.#direct = new DirectStack({
+      dir: this.#dir,
       controller: () => this.#sessionController,
-      store: this.#directStore,
-      workspaceId: () => (this.#directWorkspaceId.trim() !== '' ? this.#directWorkspaceId : this.#defaultWorkspace.id),
-      busyMode: () => this.#directBusyMode,
-      applyModel: (sessionId) => this.#model.applyToSession(sessionId),
+      agents: () => this.#agents,
       send: (text) => this.#owner.send(text),
       isOwner: (sender) => this.#owner.isOwner(sender),
       ownerLabel: () => accountTail(this.#loginState?.userId ?? ''),
+      defaultWorkspaceId: () => this.#defaultWorkspace.id,
+      model: this.#config.directModel ?? null,
+      workspaceId: this.#config.directWorkspaceId ?? '',
+      busyMode: this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE,
       logger: this.#logger,
       now: this.#now,
       ...(this.#config.maxText !== undefined ? { maxText: this.#config.maxText } : {}),
@@ -199,16 +195,6 @@ export class WeixinRuntime {
       now: this.#now,
       verifyPin: this.#config.verifyPin === true,
       onConfirmed: (state) => this.#handleConfirmed(state),
-    });
-    this.#defaultWorkspace = new DefaultWorkspace({
-      // 工作区与状态目录分开（ADR-0021）：会话 cwd 里不能有 login.json。
-      path: deps.workspaceDir ?? resolveWorkspaceDir(),
-      registry: () => this.#workspaceRegistry,
-      noteError: (message) => this.#noteError(message),
-      // 恢复成功后把旧的失败横幅清掉，否则一次瞬时失败会挂到下次扫码。
-      clearError: () => { this.#errors.clearWhere((message) => message.startsWith(WORKSPACE_ERROR_PREFIX)); },
-      logger: this.#logger,
-      ...(deps.workspaceTimeoutMs !== undefined ? { timeoutMs: deps.workspaceTimeoutMs } : {}),
     });
     this.#sessionEvents = {
       ownFeaturesActive: () => this.#ownFeaturesActive(),
@@ -275,14 +261,14 @@ export class WeixinRuntime {
       catalog: () => listWorkspaces(this.#workspaceRegistry),
       defaultWorkspaceId: () => this.#defaultWorkspace.id,
       setDirectWorkspaceId: (value) => {
-        this.#directWorkspaceId = value;
+        this.#direct.setWorkspaceId(value);
       },
       setDirectBusyMode: (value) => {
-        this.#directBusyMode = value;
+        this.#direct.setBusyMode(value);
       },
-      setDirectModel: (value) => this.#model.use(value),
-      applyDirectModel: () => this.#model.applyToBoundSession(),
-      models: () => this.#model.view(),
+      setDirectModel: (value) => this.#direct.useModel(value),
+      applyDirectModel: () => this.#direct.model.applyToBoundSession(),
+      models: () => this.#direct.model.view(),
       resetDirect: () => this.#direct.reset(),
     };
   }
@@ -353,11 +339,11 @@ export class WeixinRuntime {
       enabled: stored.questionReminders ?? this.#config.questionReminders ?? true,
       delayMinutes: stored.questionDelayMinutes ?? this.#config.questionDelayMinutes ?? DEFAULT_QUESTION_DELAY_MINUTES,
     });
-    this.#directWorkspaceId = stored.directWorkspaceId ?? this.#config.directWorkspaceId ?? '';
-    this.#directBusyMode = stored.directBusyMode ?? this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE;
+    this.#direct.setWorkspaceId(stored.directWorkspaceId ?? this.#config.directWorkspaceId ?? '');
+    this.#direct.setBusyMode(stored.directBusyMode ?? this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE);
     // 面板写进去的 null 是「主人显式清掉了」，与字段缺席（沿用 profile 配置）不同。
-    this.#model.use(stored.directModel !== undefined ? stored.directModel : this.#config.directModel ?? null);
-    await this.#directStore.hydrate();
+    this.#direct.useModel(stored.directModel !== undefined ? stored.directModel : this.#config.directModel ?? null);
+    await this.#direct.hydrate();
     this.#loginState = await this.#loginStore.load();
     if (!this.#loginState) {
       this.#health = { state: 'down', code: 'auth-expired', reason: '尚未登录微信' };
@@ -383,6 +369,7 @@ export class WeixinRuntime {
     this.#api = null;
     this.#binder?.bind(null);
     this.#bridge = null;
+    await this.#direct.flush();
     await this.#tokenStore.flush();
     if (api) await api.notifyStop().catch(() => undefined);
   }
@@ -397,7 +384,7 @@ export class WeixinRuntime {
       questionReminders: this.#reminders.enabled,
       questionDelayMinutes: this.#reminders.delayMinutes,
       trackingTasks: this.#longTasks.tracking,
-      direct: { ...this.#direct.status(), model: this.#model.snapshot() },
+      direct: this.#direct.status(),
       longTaskThresholdMinutes: this.#longTasks.thresholdMinutes,
       login: this.#loginState,
       loginSnapshot: this.#loginController.snapshot(),

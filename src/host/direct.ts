@@ -201,6 +201,16 @@ export class DirectChat {
     const entry = event as { type?: unknown; data?: unknown };
     const data = (entry.data !== null && typeof entry.data === 'object' ? entry.data : {}) as Record<string, unknown>;
     switch (entry.type) {
+      case 'session/title': {
+        // 标题会随 Web 端改名而变：面板显示完整会话名，不要停在建会话时那一版。
+        const title = typeof data.title === 'string' ? data.title : '';
+        if (title.trim() !== '') {
+          void this.#store.setTitle(title).catch((error: unknown) => {
+            this.#logger?.warn?.('独立模式会话标题落盘失败', messageOf(error));
+          });
+        }
+        return;
+      }
       case 'turn/start':
         this.#running = true;
         this.#answer = '';
@@ -245,8 +255,8 @@ export class DirectChat {
       const workspaceId = this.#workspaceId().trim();
       const created = await controller.create(workspaceId === '' ? {} : { workspaceId });
       const sessionId = created.sessionId;
-      await this.#store.set(sessionId, workspaceId);
       const title = `微信 · ${this.#ownerLabel()}`.trim();
+      await this.#store.set(sessionId, workspaceId, title);
       await controller.rename?.({ sessionId, title }).catch((error: unknown) => {
         this.#logger?.warn?.('独立模式会话改名失败', messageOf(error));
       });

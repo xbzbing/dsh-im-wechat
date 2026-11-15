@@ -61,6 +61,8 @@ export interface RuntimeStatus {
     available: boolean;
     /** 直连会话用哪个模型与推理等级；`null` 表示跟随 DSH 的默认模型（ADR-0025、ADR-0026）。 */
     model: ModelRef | null;
+    /** 宿主记下的会话标题；还没收到 `session/title` 时没有。 */
+    sessionTitle?: string;
   };
   loggedIn: boolean;
   accountTail?: string;

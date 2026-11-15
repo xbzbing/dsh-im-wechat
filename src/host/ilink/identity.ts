@@ -14,12 +14,13 @@
 import { createHash } from 'node:crypto';
 
 import { MessageItemType } from './types.ts';
-import type { WeixinItem, WeixinMessage } from './types.ts';
+import type { RefMessage, WeixinItem, WeixinMessage } from './types.ts';
 
 /** 协议允许的十进制整数（`-0` 归一成 `0`）。 */
 const DECIMAL_INTEGER = /^-?(?:0|[1-9]\d*)$/;
 
-function normalizeMessageId(value: string | number | undefined): string | null {
+/** 协议里的 64 位整数 id 统一成字符串；不是十进制整数（`v1:legacy` 之类）就当没有。 */
+export function normalizeMessageId(value: string | number | undefined): string | null {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!DECIMAL_INTEGER.test(trimmed)) return null;
@@ -27,6 +28,18 @@ function normalizeMessageId(value: string | number | undefined): string | null {
   }
   if (typeof value === 'number' && Number.isSafeInteger(value)) return String(value);
   return null;
+}
+
+/** 一条引用先看哪个 id：`svr_id` 优先（新版客户端只带它），旧版形态退回 `message_item.msg_id`；空白值不算。 */
+export function refIdOf(ref: RefMessage | undefined): string | number | undefined {
+  if (ref === undefined) return undefined;
+  return nonBlankId(ref.svr_id) ?? nonBlankId(ref.message_item?.msg_id);
+}
+
+/** 引用里的两个 id 都可能带空白或非有限数；不合法时返回 undefined，让调用方按自己的规则归一。 */
+function nonBlankId(value: string | number | undefined): string | number | undefined {
+  if (typeof value === 'string') return value.trim() === '' ? undefined : value;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 /** 各 item 的 `msg_id`，排序后作为媒体身份的一部分。 */

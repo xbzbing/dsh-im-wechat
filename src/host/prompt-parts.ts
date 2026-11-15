@@ -11,7 +11,7 @@
 import type { ImageMediaType } from '../shared/media.ts';
 
 export type PromptPart =
-  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'text'; readonly text: string; readonly quote?: true }
   | { readonly type: 'image'; readonly mediaType: ImageMediaType; readonly data: string; readonly name?: string }
   | { readonly type: 'file'; readonly receiptId: string };
 
@@ -51,24 +51,38 @@ export function buildPromptContent(text: string, images: readonly PromptImage[])
   return parts;
 }
 
+/**
+ * 把引用标头放到最前面（ADR-0029）。
+ *
+ * 标头打 `quote` 标记：它是插件替主人写的一行，不是主人写的字。补提示只按主人的文字
+ * 判断（「引用 + 附件」仍要补一句「请看这个文件」），提交被拒后的纯文字重发也不带它。
+ */
+export function withQuote(parts: readonly PromptPart[], line: string | undefined): PromptPart[] {
+  if (line === undefined) return [...parts];
+  return [{ type: 'text', text: line, quote: true }, ...parts];
+}
+
 /** 有附件没文字时补一句提示；其余内容原样返回。 */
 export function withAttachmentHint(parts: readonly PromptPart[]): PromptPart[] {
   if (parts.length === 0) return [];
   const hasImage = parts.some((part) => part.type === 'image');
   const hasFile = parts.some((part) => part.type === 'file');
-  const hasText = parts.some((part) => part.type === 'text');
+  const hasText = parts.some((part) => part.type === 'text' && part.quote !== true);
   if (hasText || (!hasImage && !hasFile)) return [...parts];
   const hint = hasImage && hasFile
     ? DEFAULT_ATTACHMENT_PROMPT
     : hasFile ? DEFAULT_FILE_PROMPT : DEFAULT_IMAGE_PROMPT;
-  return [{ type: 'text', text: hint }, ...parts];
+  // 提示跟在引用标头后面：先说是哪条消息，再说「请看这个文件」。
+  const rest = parts.findIndex((part) => part.type !== 'text' || part.quote !== true);
+  const at = rest === -1 ? parts.length : rest;
+  return [...parts.slice(0, at), { type: 'text', text: hint }, ...parts.slice(at)];
 }
 
-/** 内容里的真实文字（不含补的提示）：重试纯文字只发这一段。 */
+/** 内容里的真实文字（不含补的提示与引用标头）：重试纯文字只发这一段。 */
 export function textContent(parts: readonly PromptPart[]): string {
   const texts: string[] = [];
   for (const part of parts) {
-    if (part.type === 'text') texts.push(part.text);
+    if (part.type === 'text' && part.quote !== true) texts.push(part.text);
   }
   return texts.join('\n');
 }

@@ -18,6 +18,7 @@
   - `ref_msg.message_item.msg_id`：旧版形态；`title` 只是展示文案，不是 id。
   - `ref_msg` 里没有可用 id 时，桥不猜，草稿不带 `replyTo`。
 - 三个 id（`message_id`、`msg_id`、`svr_id`）都可能是 64 位整数，解析时按无损字符串处理（`ilink/json.ts` 的 `INTEGER_KEYS`）；取整会认到错的那条交付。
+- 被引用消息的**正文与附件都不会被重发**：新版客户端只给 `svr_id`，`title` 只是展示摘要，`partial_text` 只标记选中的片段与它的 md5。要还原内容只能自己留一份——官方实现落 SQLite（写入按入站 `message_id`、查询按 `svr_id`，见其仓库 `docs/quote-cache_zh_CN.md` 与 `messaging/quote-store.ts`），本插件只在内存里留最近若干条（窗口与上界见 [ADR-0029](../adr/0029-独立模式的引用还原.md)）。两处都说明入站 `message_id` 与引用里的 `svr_id` 是同一套 id。
 
 ## 请求壳与 `bot_agent`
 
@@ -79,4 +80,5 @@
 ## 出处
 
 - 入站解密与出站上传对照腾讯官方 `openclaw-weixin` 的 `cdn/upload.ts`、`src/api/api.ts` 与 Dart SDK `weixin_clawbot` 的 `CdnMediaUploader`。
+- 引用缓存的键与生命周期对照官方 `messaging/quote-store.ts`、`messaging/inbound.ts` 与 `docs/quote-cache_zh_CN.md`：写入键是入站 `message_id`，查询键是 `ref_msg.svr_id`（缺了退回 `message_item.msg_id`）。
 - `image_item` 字段表来自 2026-11-09 的真机反证：第一版按「社区实现」多带了顶层 `aeskey`、漏了 `encrypt_type`，结果是发送成功但微信端不显示。

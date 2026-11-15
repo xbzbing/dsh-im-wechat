@@ -14,11 +14,12 @@ import type { PollHealth } from './ilink/poll.ts';
 import type { SessionGuard } from './ilink/session-guard.ts';
 import { MessageItemType } from './ilink/types.ts';
 import type { WeixinMessage } from './ilink/types.ts';
-import { messageIdentity, messageText } from './ilink/identity.ts';
+import { messageIdentity, messageText, normalizeMessageId } from './ilink/identity.ts';
 import { downloadOwnerFiles, downloadOwnerImages, toOwnerMessageDraft } from './inbound.ts';
 import type { InboundFiles } from './inbound.ts';
-import { buildPromptContent } from './prompt-parts.ts';
+import { buildPromptContent, withQuote } from './prompt-parts.ts';
 import type { PromptPart } from './prompt-parts.ts';
+import { QuoteMemory, quoteOf, quotedContent } from './quotes.ts';
 import { parseCommand } from './standalone/commands.ts';
 import type { CommandInput } from './standalone/commands.ts';
 import { messageOf } from './host-context.ts';
@@ -66,6 +67,8 @@ export interface InboundPipelineDeps {
 /** 收消息的整条流水线：起停长轮询，把每条消息按上面的顺序送到该去的地方。 */
 export class InboundPipeline {
   readonly #deps: InboundPipelineDeps;
+  /** 「这条消息带了什么」：引用还原用（ADR-0029），只在内存里，随插件起停。 */
+  readonly #quotes = new QuoteMemory();
   #abort: AbortController | null = null;
   #task: Promise<void> | null = null;
 
@@ -179,7 +182,19 @@ export class InboundPipeline {
         logger: deps.logger,
         senderIsOwner: deps.isOwner,
       });
-      const content = buildPromptContent(text, images);
+      // 引用还原（ADR-0029）：先记下这条消息带了什么，再把它的引用还原成一行标头。
+      // 引用说的「这个文件」在会话里可能有多个候选，不指认清楚模型只能挑最近那个。
+      const now = deps.now();
+      this.#quotes.remember(
+        normalizeMessageId(message.message_id) ?? undefined,
+        quotedContent({ text, images: images.length, files: files.files.map((file) => file.name) }),
+        now,
+      );
+      const quote = quoteOf(message);
+      // 只有引用、没有别的可交付内容时不提交：标头不单独成一条消息（与加这一行之前一致）。
+      const deliverable = text.trim() !== '' || images.length > 0 || files.files.length > 0;
+      const quoted = quote === undefined || !deliverable ? undefined : this.#quotes.line(quote, now);
+      const content = withQuote(buildPromptContent(text, images), quoted);
       // 附件阶段等了十几秒，这里按同一个判据重新看一眼：这期间停用、登出、停机或
       // 打开「接入超级助理」都会让独立模式失效，不能再开新提交。
       if (!deps.ownFeaturesActive()) return;

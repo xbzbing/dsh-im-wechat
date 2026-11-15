@@ -7,8 +7,9 @@ import type { SubmitResult } from '../../src/host/direct.ts';
 import type { InboundFiles } from '../../src/host/inbound.ts';
 import type { PromptPart } from '../../src/host/prompt-parts.ts';
 import type { CommandInput } from '../../src/host/standalone/commands.ts';
+import type { WeixinMessage } from '../../src/host/ilink/types.ts';
 import type { WeixinBridge } from '../../src/host/superagent/bridge.ts';
-import { CDN, fileMessage, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
+import { CDN, PNG, fileMessage, imageFetch, imageMessage, imageOnlyMessage } from './helpers/inbound-fixtures.ts';
 
 interface Submitted {
   sender: string;
@@ -336,4 +337,85 @@ test('独立模式：宿主没有会话服务时不下载文件', async () => {
 
   assert.equal(fetch.calls(), 0);
   assert.deepEqual(submitted, []);
+});
+
+/** 一条「引用某条消息 + 一句文字」的入站消息。 */
+function quotingMessage(
+  ref: { svr_id?: string; title?: string },
+  text: string,
+): WeixinMessage {
+  return {
+    message_id: '4001',
+    from_user_id: 'owner-1',
+    create_time_ms: 1_760_000_000_001,
+    item_list: [{ type: 1, text_item: { text }, ref_msg: ref }],
+  };
+}
+
+function quotedText(content: readonly PromptPart[] | undefined): string {
+  const first = content?.[0];
+  return first?.type === 'text' ? first.text : '';
+}
+
+test('独立模式：引用上一条消息里的文件时，标头点名那个文件', async () => {
+  const built = fileMessage(1, { names: ['报告.pdf'] });
+  const fetch = imageFetch(built.payloads);
+  const { pipeline, submitted } = harness({ fetch: fetch.impl });
+
+  await pipeline.route(built.message, signal);
+  await pipeline.route(quotingMessage({ svr_id: '3001' }, '这个文件的作者是谁？'), signal);
+
+  assert.deepEqual(submitted[1]?.content, [
+    { type: 'text', text: '[引用：文件 报告.pdf]', quote: true },
+    { type: 'text', text: '这个文件的作者是谁？' },
+  ]);
+});
+
+test('独立模式：引用先是文字的消息时带摘要', async () => {
+  const { pipeline, submitted } = harness();
+
+  await pipeline.route(textMessage('原文是这句话').message, signal);
+  await pipeline.route(quotingMessage({ svr_id: '3001' }, '这句什么意思？'), signal);
+
+  assert.equal(quotedText(submitted[1]?.content), '[引用：「原文是这句话」]');
+  assert.deepEqual(submitted[1]?.content?.[1], { type: 'text', text: '这句什么意思？' });
+});
+
+test('独立模式：引用认不出来时只有标题，就带上标题', async () => {
+  const { pipeline, submitted } = harness();
+
+  await pipeline.route(quotingMessage({ svr_id: '9999', title: '被引用的消息' }, '这句什么意思？'), signal);
+
+  assert.equal(quotedText(submitted[0]?.content), '[引用：「被引用的消息」]');
+});
+
+test('独立模式：只引用、没有别的可交付内容时不提交', async () => {
+  const { pipeline, submitted } = harness();
+
+  await pipeline.route(quotingMessage({ svr_id: '3001' }, ''), signal);
+
+  assert.deepEqual(submitted, [], '标头不单独成一条消息');
+});
+
+test('独立模式：引用 + 只有图片时，标头与图片一起提交', async () => {
+  const built = imageOnlyMessage();
+  const fetch = imageFetch([built.payload, built.payload]);
+  const { pipeline, submitted } = harness({ fetch: fetch.impl });
+
+  await pipeline.route(built.message, signal);
+  const [imageItem] = built.message.item_list ?? [];
+  await pipeline.route({
+    ...built.message,
+    message_id: '4002',
+    item_list: [{ ...imageItem, ref_msg: { svr_id: '2004' } }],
+  }, signal);
+
+  const content = submitted[1]?.content ?? [];
+  assert.equal(quotedText(content), '[引用：图片]');
+  assert.deepEqual(content.slice(1), [{
+    type: 'image',
+    mediaType: 'image/png',
+    data: PNG.toString('base64'),
+    name: 'weixin-only.png',
+  }]);
 });

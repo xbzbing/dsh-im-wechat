@@ -8,6 +8,7 @@ import {
   buildPromptContent,
   textContent,
   withAttachmentHint,
+  withQuote,
 } from '../../src/host/prompt-parts.ts';
 
 const IMAGE = { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'weixin-a.png' } as const;
@@ -64,4 +65,25 @@ test('有文字时文件与图片都不补提示；取出真实文字时忽略�
   assert.deepEqual(withAttachmentHint(parts), parts);
   assert.equal(textContent(parts), '总结一下');
   assert.equal(textContent([FILE_PART]), '');
+});
+
+const QUOTE_PART = { type: 'text', text: '[引用：文件 报告.pdf]', quote: true } as const;
+
+test('引用标头放在最前面，并打上 quote 标记', () => {
+  assert.deepEqual(withQuote([{ type: 'text', text: '这个文件讲什么' }], '[引用：文件 报告.pdf]'), [
+    QUOTE_PART,
+    { type: 'text', text: '这个文件讲什么' },
+  ]);
+  assert.deepEqual(withQuote([IMAGE_PART], undefined), [IMAGE_PART]);
+});
+
+test('只有引用没有主人文字时，提示跟在标头后面', () => {
+  assert.deepEqual(withAttachmentHint([QUOTE_PART, FILE_PART]), [QUOTE_PART, { type: 'text', text: DEFAULT_FILE_PROMPT }, FILE_PART]);
+  assert.deepEqual(withAttachmentHint([QUOTE_PART, IMAGE_PART]), [QUOTE_PART, { type: 'text', text: DEFAULT_IMAGE_PROMPT }, IMAGE_PART]);
+});
+
+test('引用标头不算主人写的字：取出真实文字与补提示都按主人的文字判断', () => {
+  assert.equal(textContent([QUOTE_PART, FILE_PART]), '');
+  assert.equal(textContent([QUOTE_PART, { type: 'text', text: '这个文件讲什么' }]), '这个文件讲什么');
+  assert.deepEqual(withAttachmentHint([QUOTE_PART, FILE_PART])[0], QUOTE_PART);
 });

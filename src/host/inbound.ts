@@ -11,7 +11,7 @@
 import { DEFAULT_CDN_BASE_URL } from './ilink/api.ts';
 import { MessageItemType } from './ilink/types.ts';
 import type { FileItem, ImageItem, WeixinItem, WeixinMessage } from './ilink/types.ts';
-import { messageIdentity, messageText } from './ilink/identity.ts';
+import { messageIdentity, messageText, refIdOf } from './ilink/identity.ts';
 import { MAX_FILE_BYTES, downloadFile, downloadImage } from './ilink/media.ts';
 import {
   OWNER_IMAGE_DATA_MAX,
@@ -126,13 +126,12 @@ function platformId(value: string | number | undefined): string | undefined {
 }
 
 // 用户引用了一条消息时，被引用消息的平台 id 在这里；核心靠它认回是哪次交付。
-// 新版客户端只带 `svr_id`（优先），旧版带 `message_item.msg_id`。
+// 取值顺序在 `refIdOf`；这里的遍历规则是「第一条有可用 id 的引用」，与 `quoteOf`
+// 取「第一条有内容的引用」不是同一条，两处各留各的循环。
 function replyTo(message: WeixinMessage): string | undefined {
   for (const item of message.item_list ?? []) {
-    const ref = item.ref_msg;
-    if (ref === undefined) continue;
-    const id = platformId(ref.svr_id) ?? platformId(ref.message_item?.msg_id);
-    if (id !== undefined) return id;
+    const id = refIdOf(item.ref_msg);
+    if (id !== undefined) return platformId(id);
   }
   return undefined;
 }

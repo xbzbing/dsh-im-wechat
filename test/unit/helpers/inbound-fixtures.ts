@@ -27,6 +27,22 @@ export function imageFetch(payloads: Buffer[]): { impl: typeof globalThis.fetch;
   return { impl, calls: () => calls };
 }
 
+/**
+ * 按 `encrypt_query_param` 取文件的假 CDN：跳过的文件不消费调用次数，返回的密文不会错位。
+ * 文件项的下载参数是 `f-<序号>`。
+ */
+export function fileFetch(payloads: readonly Buffer[]): { impl: typeof globalThis.fetch; calls: () => number } {
+  let calls = 0;
+  const impl = (async (input: string | URL | Request) => {
+    calls += 1;
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const param = new URL(url).searchParams.get('encrypted_query_param') ?? '';
+    const index = Number.parseInt(param.replace(/^f-/, ''), 10);
+    return new Response(new Uint8Array(payloads[index] ?? Buffer.alloc(0)));
+  }) as unknown as typeof globalThis.fetch;
+  return { impl, calls: () => calls };
+}
+
 /** 一条「一句文字 + count 张图」的消息，附上这些图密文的明文。 */
 export function imageMessage(count: number): { message: WeixinMessage; payload: Buffer } {
   const key = randomBytes(16);
@@ -68,19 +84,21 @@ export function imageOnlyMessage(): { message: WeixinMessage; payload: Buffer } 
 /** 一条「一句文字 + count 个文件」的消息，返回每个文件密文的明文（按 item 顺序）。 */
 export function fileMessage(
   count: number,
-  options: { names?: readonly string[]; text?: string } = {},
+  options: { names?: readonly string[]; text?: string; payloads?: readonly Buffer[] } = {},
 ): { message: WeixinMessage; payloads: Buffer[] } {
   const items: unknown[] = options.text === undefined ? [] : [{ type: 1, text_item: { text: options.text } }];
   const payloads: Buffer[] = [];
   for (let index = 0; index < count; index += 1) {
     const key = randomBytes(16);
+    const plaintext = options.payloads?.[index] ?? PDF;
     const item: FileItem = {
       media: { encrypt_query_param: `f-${index}`, aes_key: key.toString('base64') },
       file_name: options.names?.[index] ?? `file-${index}.pdf`,
-      len: String(PDF.length),
+      // `len` 是明文字节数；默认与真实明文一致，用 `withDeclaredLen` 改写成谎报值。
+      len: String(plaintext.length),
     };
     items.push({ type: 4, msg_id: `file-${index}`, file_item: item });
-    payloads.push(encrypt(PDF, key));
+    payloads.push(encrypt(plaintext, key));
   }
   return {
     message: {
@@ -91,4 +109,18 @@ export function fileMessage(
     },
     payloads,
   };
+}
+
+/** 改写第 index 个文件项声明的明文大小：测「`len` 不可信时按解码后的字节再判一次」。 */
+export function withDeclaredLen(message: WeixinMessage, index: number, len: string): WeixinMessage {
+  const itemList = (message.item_list ?? []).map((entry, at) => (at === index && entry.file_item
+    ? { ...entry, file_item: { ...entry.file_item, len } }
+    : entry));
+  return { ...message, item_list: itemList };
+}
+
+/** 给第一条内容项挂一个引用，返回新消息：用于确认文件上报不影响 `replyTo`。 */
+export function withQuote(message: WeixinMessage, svrId: string): WeixinMessage {
+  const itemList = (message.item_list ?? []).map((entry, at) => (at === 0 ? { ...entry, ref_msg: { svr_id: svrId } } : entry));
+  return { ...message, item_list: itemList };
 }

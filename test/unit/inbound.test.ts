@@ -385,27 +385,6 @@ test('文件项缺少 media 引用时记一条原因', async () => {
   assert.match(result.dropped[0]?.reason ?? '', /缺少 media/);
 });
 
-test('接入核心时文件不进草稿：只有文件的消息不产出草稿', async () => {
-  const built = fileMessage(1);
-  const fetch = imageFetch(built.payloads);
-  const draft = await toOwnerMessageDraft(built.message, {
-    account: 'bot',
-    cdnBaseUrl: CDN,
-    fetch: fetch.impl,
-    imagesEnabled: true,
-    senderIsOwner: () => true,
-  });
-  assert.equal(fetch.calls(), 0, '核心协议没有文件能力，不下载');
-  assert.equal(draft, null);
-});
-
-test('接入核心时文字与文件一起发：草稿只带文字', async () => {
-  const built = fileMessage(1, { text: '看下这个 pdf' });
-  const draft = await toOwnerMessageDraft(built.message, { account: 'bot' });
-  assert.equal(draft?.text, '看下这个 pdf');
-  assert.equal(draft?.images, undefined);
-});
-
 test('超过 3 个文件的部分合成一条原因，不静默丢掉', async () => {
   const built = fileMessage(5);
   const fetch = imageFetch(built.payloads);

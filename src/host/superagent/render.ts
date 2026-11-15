@@ -115,6 +115,13 @@ export function utf8Bytes(point: string): number {
   return 4;
 }
 
+/** 整段文本的 UTF-8 字节数：与 `splitText` 的默认度量同一口径。 */
+export function textBytes(text: string): number {
+  let total = 0;
+  for (const point of text) total += utf8Bytes(point);
+  return total;
+}
+
 /**
  * 按 `measure` 计的宽度切分，优先在换行处断开。
  *

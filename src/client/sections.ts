@@ -286,7 +286,7 @@ export function ReminderSection(props: {
 /** 独立模式区：插话、工作区、模型与推理等级、绑定（ADR-0009、ADR-0025、ADR-0026）。 */
 export function DirectSection(props: {
   t: T;
-  saveDirect: (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean }) => Promise<void>;
+  saveDirect: (patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean; replyStatus?: boolean }) => Promise<void>;
   onWorkspaceChange: (value: string) => void;
   onToggleExpand: () => void;
   superagent: boolean;
@@ -353,6 +353,13 @@ export function DirectSection(props: {
             checked: directBusy,
             disabled: directLocked,
             onChange: (next: boolean) => void saveDirect({ busyMode: next ? 'steer' : 'queue' }),
+          }),
+          h(SwitchRow, {
+            title: t('direct.replyStatusTitle'),
+            description: t('direct.replyStatusDescription'),
+            checked: direct?.replyStatus === true,
+            disabled: directLocked,
+            onChange: (next: boolean) => void saveDirect({ replyStatus: next }),
           }),
           h(PickerRow, {
             t,

@@ -38,6 +38,8 @@ export interface PanelActionHost {
   setDirectWorkspaceId(value: string): void;
   setDirectBusyMode(value: BusyMode): void;
   setDirectModel(value: ModelRef | null): void;
+  /** 独立模式回复末尾是否附加状态信息（面板开关）。 */
+  setReplyStatus(value: boolean): void;
   /** 把刚保存的模型钉到已绑定的会话上（没有绑定或已清空时什么都不做）。 */
   applyDirectModel(): void;
   /** 宿主的模型目录：保存前校验，读不到时不可用（不拦保存）。 */
@@ -108,7 +110,7 @@ export async function saveQuestionSettings(
  */
 export async function saveDirect(
   host: PanelActionHost,
-  patch: { workspaceId?: string; busyMode?: BusyMode; reset?: boolean; model?: ModelRef | null },
+  patch: { workspaceId?: string; busyMode?: BusyMode; reset?: boolean; model?: ModelRef | null; replyStatus?: boolean },
 ): Promise<RuntimeStatus> {
   const workspaceId = typeof patch.workspaceId === 'string' ? patch.workspaceId.trim() : undefined;
   // 工作区是外部输入：宿主能列出来就必须是其中的一个，避免绑定一个不存在的 id。
@@ -125,6 +127,7 @@ export async function saveDirect(
     : workspaceId;
   if (chosen !== undefined) host.setDirectWorkspaceId(chosen);
   if (busyMode !== undefined) host.setDirectBusyMode(busyMode);
+  if (patch.replyStatus !== undefined) host.setReplyStatus(patch.replyStatus);
   if (patch.model !== undefined) {
     await assertModel(host, patch.model);
     host.setDirectModel(patch.model);
@@ -134,6 +137,7 @@ export async function saveDirect(
     ...(chosen !== undefined ? { directWorkspaceId: chosen } : {}),
     ...(busyMode !== undefined ? { directBusyMode: busyMode } : {}),
     ...(patch.model !== undefined ? { directModel: patch.model } : {}),
+    ...(patch.replyStatus !== undefined ? { replyStatus: patch.replyStatus } : {}),
   });
   // 值已经落盘才去钉会话：钉不上（会话没起）只是这次没换，配置本身仍然有效。
   if (patch.model !== undefined) host.applyDirectModel();

@@ -187,6 +187,7 @@ export class WeixinRuntime {
       model: this.#config.directModel ?? null,
       workspaceId: this.#config.directWorkspaceId ?? '',
       busyMode: this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE,
+      replyStatus: this.#config.replyStatus ?? false,
       logger: this.#logger,
       now: this.#now,
       ...(this.#config.maxText !== undefined ? { maxText: this.#config.maxText } : {}),
@@ -265,6 +266,7 @@ export class WeixinRuntime {
       defaultWorkspaceId: () => this.#defaultWorkspace.id,
       setDirectWorkspaceId: (value) => { this.#direct.setWorkspaceId(value); },
       setDirectBusyMode: (value) => { this.#direct.setBusyMode(value); },
+      setReplyStatus: (value) => { this.#direct.setReplyStatus(value); },
       setDirectModel: (value) => this.#direct.useModel(value),
       applyDirectModel: () => this.#direct.model.applyToBoundSession(),
       models: () => this.#direct.model.view(),
@@ -347,6 +349,7 @@ export class WeixinRuntime {
     });
     this.#direct.setWorkspaceId(stored.directWorkspaceId ?? this.#config.directWorkspaceId ?? '');
     this.#direct.setBusyMode(stored.directBusyMode ?? this.#config.directBusyMode ?? DEFAULT_DIRECT_BUSY_MODE);
+    this.#direct.setReplyStatus(stored.replyStatus ?? this.#config.replyStatus ?? false);
     // 面板写进去的 null 是「主人显式清掉了」，与字段缺席（沿用 profile 配置）不同。
     this.#direct.useModel(stored.directModel !== undefined ? stored.directModel : this.#config.directModel ?? null);
     await this.#direct.hydrate();
@@ -420,13 +423,9 @@ export class WeixinRuntime {
   }
 
   /** 扫码登录的四个动作：开始（返回含二维码的快照）、等状态机结束、提交验证码、取消。 */
-  async startLogin(): Promise<LoginSnapshot> {
-    return this.#loginController.start();
-  }
+  async startLogin(): Promise<LoginSnapshot> { return this.#loginController.start(); }
 
-  async waitForLoginSettled(): Promise<void> {
-    await this.#loginController.waitForSettled();
-  }
+  async waitForLoginSettled(): Promise<void> { await this.#loginController.waitForSettled(); }
 
   submitLoginCode(code: string): LoginSnapshot {
     this.#loginController.submitVerifyCode(code);

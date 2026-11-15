@@ -39,6 +39,7 @@ function harness(options: { recordSave?: boolean } = {}): Harness {
     setDirectWorkspaceId: (value: string) => calls.push(`directWorkspace:${value}`),
     setDirectBusyMode: (value: string) => calls.push(`directBusyMode:${value}`),
     setDirectModel: (value: unknown) => calls.push(`directModel:${JSON.stringify(value)}`),
+    setReplyStatus: (value: boolean) => calls.push(`replyStatus:${value}`),
     applyDirectModel: () => calls.push('applyDirectModel'),
     models: async () => ({
       available: true,
@@ -186,10 +187,10 @@ test('登出与取消登录两个端点也转发给运行期', async () => {
 
 test('独立模式设置转发给运行期，非法值在边界挡住', async () => {
   const h = harness();
-  await call(h, envelope(ENDPOINTS.DIRECT_SET, { workspaceId: 'w1', busyMode: 'steer' }));
-  assert.deepEqual(h.calls, ['directWorkspace:w1', 'directBusyMode:steer']);
+  await call(h, envelope(ENDPOINTS.DIRECT_SET, { workspaceId: 'w1', busyMode: 'steer', replyStatus: true }));
+  assert.deepEqual(h.calls, ['directWorkspace:w1', 'directBusyMode:steer', 'replyStatus:true']);
   await call(h, envelope(ENDPOINTS.DIRECT_SET, { reset: true }));
-  assert.deepEqual(h.calls, ['directWorkspace:w1', 'directBusyMode:steer', 'resetDirect']);
+  assert.deepEqual(h.calls, ['directWorkspace:w1', 'directBusyMode:steer', 'replyStatus:true', 'resetDirect']);
   const list = await call(h, envelope(ENDPOINTS.WORKSPACES_LIST));
   assert.deepEqual((list.result as { value: unknown }).value, { items: [{ id: 'w1', title: '工作区一', path: '/tmp/w1' }], available: true });
   const badMode = await call(h, envelope(ENDPOINTS.DIRECT_SET, { busyMode: 'interrupt' }));
@@ -198,6 +199,8 @@ test('独立模式设置转发给运行期，非法值在边界挡住', async ()
   assert.equal(badWorkspace.result.error.code, 'invalid-config');
   const badReset = await call(h, envelope(ENDPOINTS.DIRECT_SET, { reset: 'yes' }));
   assert.equal(badReset.result.error.code, 'invalid-config');
+  const badReplyStatus = await call(h, envelope(ENDPOINTS.DIRECT_SET, { replyStatus: 'yes' }));
+  assert.equal(badReplyStatus.result.error.code, 'invalid-config');
 });
 
 test('独立模式的模型：能存（含推理等级）、能清空（null），非法形状在边界挡住', async () => {

@@ -65,6 +65,8 @@ export interface PluginConfig {
   directBusyMode?: BusyMode;
   /** 独立模式的微信会话用哪个模型与推理等级；缺省跟随 DSH 的默认模型（ADR-0025、ADR-0026）。 */
   directModel?: ModelRef;
+  /** 独立模式回复末尾是否附加模型、推理等级、消耗 token 与时间；默认关。 */
+  replyStatus?: boolean;
 }
 
 const MIN_MAX_TEXT = 200;
@@ -131,6 +133,8 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (directBusyMode !== undefined) config.directBusyMode = directBusyMode;
   const directModel = normalizeModelRef(record.directModel);
   if (directModel !== undefined) config.directModel = directModel;
+  const replyStatus = asBoolean(record.replyStatus);
+  if (replyStatus !== undefined) config.replyStatus = replyStatus;
   const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
   const typingIndicator = asBoolean(record.typingIndicator);
@@ -175,6 +179,8 @@ export interface StoredConfig {
    * 静态配置的值，看起来像没保存成功。
    */
   directModel?: ModelRef | null;
+  /** 面板上改的「回复附加状态信息」开关；缺省用静态配置或默认关。 */
+  replyStatus?: boolean;
 }
 
 export const STORED_CONFIG_VERSION = 1;
@@ -214,6 +220,7 @@ export class LocalConfigStore {
     const directModel = record.directModel === null
       ? null
       : normalizeModelRef(record.directModel) ?? undefined;
+    const replyStatus = asBoolean(record.replyStatus);
     this.#document = {
       version: STORED_CONFIG_VERSION,
       ...(enabled !== undefined ? { enabled } : {}),
@@ -224,6 +231,7 @@ export class LocalConfigStore {
       ...(directWorkspaceId !== undefined ? { directWorkspaceId } : {}),
       ...(directBusyMode !== undefined ? { directBusyMode } : {}),
       ...(directModel !== undefined ? { directModel } : {}),
+      ...(replyStatus !== undefined ? { replyStatus } : {}),
     };
     return this.#document;
   }
@@ -238,6 +246,7 @@ export class LocalConfigStore {
     directWorkspaceId?: string;
     directBusyMode?: BusyMode;
     directModel?: ModelRef | null;
+    replyStatus?: boolean;
   }): Promise<StoredConfig> {
     this.#document = { ...this.#document, ...patch, version: STORED_CONFIG_VERSION };
     await writePrivateFile(this.#path, `${JSON.stringify(this.#document, null, 2)}\n`);

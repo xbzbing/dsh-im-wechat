@@ -277,6 +277,7 @@ export function WeixinSettingsPanel(props: any) {
     busyMode?: 'queue' | 'steer';
     reset?: boolean;
     model?: { provider: string; model: string; reasoningEffort?: string } | null;
+    replyStatus?: boolean;
   }) => {
     const saved = patch.model !== undefined ? 'model' : patch.workspaceId !== undefined ? 'workspace' : '';
     await applyAction('direct', () => rpcCall(ENDPOINTS.setDirect, patch), () => {

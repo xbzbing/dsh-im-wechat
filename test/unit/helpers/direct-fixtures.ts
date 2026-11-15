@@ -74,6 +74,10 @@ export async function setup(
     submitTimeoutMs?: number;
     applyModel?: (sessionId: string) => void;
     now?: () => number;
+    /** 是否在回复末尾附加状态信息（默认关）。 */
+    replyStatus?: () => boolean;
+    /** 单条消息上限（UTF-8 字节），默认走生产值。 */
+    maxText?: number;
   } = {},
 ) {
   const dir = tempDir(t);
@@ -93,6 +97,8 @@ export async function setup(
     isOwner: (sender) => sender === 'owner-1',
     ownerLabel: () => 'abc123',
     now: options.now ?? (() => 1_700_000_000_000),
+    ...(options.replyStatus !== undefined ? { replyStatus: options.replyStatus } : {}),
+    ...(options.maxText !== undefined ? { maxText: options.maxText } : {}),
     ...(options.submitTimeoutMs !== undefined ? { submitTimeoutMs: options.submitTimeoutMs } : {}),
     ...(options.applyModel !== undefined ? { applyModel: options.applyModel } : {}),
   });

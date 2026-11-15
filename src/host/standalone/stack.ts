@@ -48,6 +48,8 @@ export interface DirectStackOptions {
   model: ModelRef | null;
   workspaceId: string;
   busyMode: BusyMode;
+  /** 初始值：是否在独立模式回复末尾附加状态信息；`start()` 后由本地配置覆盖。 */
+  replyStatus?: boolean;
   logger?: DirectLogger;
   now?: () => number;
   maxText?: number;
@@ -66,6 +68,7 @@ export class DirectStack {
   readonly #logger: DirectLogger | undefined;
   #workspaceId: string;
   #busyMode: BusyMode;
+  #replyStatus: boolean;
 
   constructor(options: DirectStackOptions) {
     this.#defaultWorkspaceId = options.defaultWorkspaceId;
@@ -73,6 +76,7 @@ export class DirectStack {
     this.#controller = options.controller;
     this.#workspaceId = options.workspaceId;
     this.#busyMode = options.busyMode;
+    this.#replyStatus = options.replyStatus ?? false;
     const maxText = options.maxText ?? MAX_TEXT_BYTES;
     // 两个对象互相要读对方（模型钉在会话上，会话绑定读模型），先建绑定仓库。
     this.#store = new DirectBindingStore({
@@ -125,6 +129,7 @@ export class DirectStack {
       applyModel: (sessionId) => this.model.applyToSession(sessionId),
       send: options.send,
       isOwner: options.isOwner,
+      replyStatus: () => this.#replyStatus,
       ownerLabel: options.ownerLabel,
       ...(options.logger ? { logger: options.logger } : {}),
       ...(options.now ? { now: options.now } : {}),
@@ -174,6 +179,11 @@ export class DirectStack {
 
   setBusyMode(value: BusyMode): void {
     this.#busyMode = value;
+  }
+
+  /** 面板开关：是否在独立模式回复末尾附加状态信息。 */
+  setReplyStatus(value: boolean): void {
+    this.#replyStatus = value;
   }
 
   /** 实际建会话用的工作区：显式选择优先，否则落到自动创建的默认工作区。 */

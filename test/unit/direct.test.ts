@@ -316,3 +316,115 @@ test('独立模式：连续插话只在间隔超过 30 秒时提示一次', asyn
   assert.equal(sent.length, 2, '隔了 30 秒、前一轮还在跑，才再确认一次');
   assert.match(sent[1]!, /已插进正在跑的这一轮/);
 });
+
+/** 跑一回合：可选的模型选择、助手消息与失败的尝试，最后 turn/end。 */
+async function runTurn(
+  chat: DirectChat,
+  options: {
+    text?: string;
+    model?: string;
+    usage?: Record<string, number>;
+    selection?: { model: string; reasoningEffort?: string };
+    attempts?: Record<string, number>[];
+    sessionId?: string;
+  } = {},
+) {
+  const sessionId = options.sessionId ?? 's-1';
+  chat.handleEvent(sessionId, { type: 'turn/start', data: { turn: 1 } });
+  if (options.selection) {
+    chat.handleEvent(sessionId, { type: 'model/selection', data: { provider: 'p', ...options.selection } });
+  }
+  for (const usage of options.attempts ?? []) {
+    chat.handleEvent(sessionId, {
+      type: 'assistant/attempt',
+      data: { turn: 1, step: 1, stream: [{ type: 'chunk', time: 1, chunk: { type: 'usage', usage } }] },
+    });
+  }
+  if (options.text !== undefined) {
+    const message = { source: { provider: 'p', model: options.model ?? 'm' }, content: [{ type: 'text', text: options.text }] };
+    chat.handleEvent(sessionId, {
+      type: 'assistant/message',
+      data: { message, ...(options.usage !== undefined ? { usage: options.usage } : {}) },
+    });
+  }
+  chat.handleEvent(sessionId, { type: 'turn/end', data: { turn: 1 } });
+  await flush();
+}
+
+test('独立模式：状态信息开关关着时，回复不附加状态行', async (t) => {
+  const { chat, sent } = await setup(t);
+  await chat.submit('owner-1', text('开始'));
+  await runTurn(chat, { text: '答案', selection: { model: 'm', reasoningEffort: 'high' }, usage: { inputTokens: 9, outputTokens: 1 } });
+  assert.deepEqual(sent, ['答案']);
+});
+
+test('独立模式：打开状态信息后，回复末尾追加模型、推理、消耗与时间', async (t) => {
+  const at = new Date(2026, 10, 5, 9, 7).getTime();
+  const { chat, sent } = await setup(t, { replyStatus: () => true, now: () => at });
+  await chat.submit('owner-1', text('开始'));
+  await runTurn(chat, { text: '答案', selection: { model: 'm', reasoningEffort: 'high' }, usage: { inputTokens: 9, outputTokens: 1 } });
+  assert.deepEqual(sent, ['答案\n\n---\n模型 m · 推理 high · 消耗 10 tokens · 时间 11-05 09:07']);
+});
+
+test('独立模式：拿不到模型与用量时整行不出现', async (t) => {
+  const { chat, sent } = await setup(t, { replyStatus: () => true });
+  await chat.submit('owner-1', text('开始'));
+  // 只有正文、没有来源也没有用量（老宿主或被打断的回合）。
+  chat.handleEvent('s-1', { type: 'turn/start', data: { turn: 1 } });
+  chat.handleEvent('s-1', { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '答案' }] } } });
+  chat.handleEvent('s-1', { type: 'turn/end', data: { turn: 1 } });
+  await flush();
+  assert.deepEqual(sent, ['答案']);
+});
+
+test('独立模式：失败重试的那次尝试也算进消耗', async (t) => {
+  const at = new Date(2026, 10, 5, 9, 7).getTime();
+  const { chat, sent } = await setup(t, { replyStatus: () => true, now: () => at });
+  await chat.submit('owner-1', text('开始'));
+  await runTurn(chat, {
+    text: '答案',
+    model: 'm',
+    attempts: [{ inputTokens: 40, outputTokens: 10 }],
+    usage: { inputTokens: 9, outputTokens: 1 },
+  });
+  assert.match(sent[0]!, /消耗 60 tokens/);
+});
+
+test('独立模式：分条时状态行只跟在最后一条，且不顶破单条上限', async (t) => {
+  const at = new Date(2026, 10, 5, 9, 7).getTime();
+  const { chat, sent } = await setup(t, { replyStatus: () => true, now: () => at, maxText: 600 });
+  await chat.submit('owner-1', text('开始'));
+  await runTurn(chat, { text: '长'.repeat(500), model: 'm', usage: { inputTokens: 9, outputTokens: 1 } });
+  assert.ok(sent.length > 1, '超长回答要分条');
+  assert.doesNotMatch(sent.slice(0, -1).join('\n'), /---/, '前面的分条不带状态行');
+  assert.match(sent.at(-1)!, /\n\n---\n模型 m · 消耗 10 tokens · 时间 11-05 09:07$/);
+  for (const part of sent) assert.ok(Buffer.byteLength(part, 'utf8') <= 600, '每一条都不超过单条上限');
+});
+
+test('独立模式：状态行按回合统计，后一轮不带上一轮的 token', async (t) => {
+  let clock = new Date(2026, 1, 1, 8, 0).getTime();
+  const { chat, sent } = await setup(t, { replyStatus: () => true, now: () => clock });
+  await chat.submit('owner-1', text('开始'));
+  await runTurn(chat, { text: '第一轮', model: 'm1', usage: { inputTokens: 90, outputTokens: 10 } });
+  clock += 60_000;
+  await runTurn(chat, { text: '第二轮', model: 'm2', usage: { inputTokens: 4, outputTokens: 1 } });
+  assert.match(sent[0]!, /模型 m1 · 消耗 100 tokens · 时间 02-01 08:00$/);
+  assert.match(sent[1]!, /模型 m2 · 消耗 5 tokens · 时间 02-01 08:01$/);
+});
+
+test('独立模式：没收到 turn/start（插件中途接管）也不带出上一轮的统计', async (t) => {
+  const at = new Date(2026, 1, 1, 8, 0).getTime();
+  const { chat, sent } = await setup(t, { replyStatus: () => true, now: () => at });
+  await chat.submit('owner-1', text('开始'));
+  await runTurn(chat, { text: '第一轮', model: 'm1', usage: { inputTokens: 90, outputTokens: 10 } });
+  // 只有 turn/end 与回答：上一轮的 token 已经在取走时清掉，这一轮没有可报告的。
+  chat.handleEvent('s-1', { type: 'assistant/message', data: { message: { source: { provider: 'p', model: 'm2' }, content: [{ type: 'text', text: '第二轮' }] } } });
+  chat.handleEvent('s-1', { type: 'turn/end', data: { turn: 1 } });
+  await flush();
+  assert.deepEqual(sent[1], '第二轮\n\n---\n模型 m2 · 时间 02-01 08:00');
+});
+
+test('独立模式：面板状态带着状态信息开关', async (t) => {
+  const { chat } = await setup(t, { replyStatus: () => true });
+  assert.equal(chat.status().replyStatus, true);
+});

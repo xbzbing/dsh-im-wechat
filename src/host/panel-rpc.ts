@@ -130,7 +130,13 @@ async function handleEndpoint(
     }
     case ENDPOINTS.DIRECT_SET: {
       const record = payloadOf(payload);
-      const patch: { workspaceId?: string; busyMode?: 'queue' | 'steer'; reset?: boolean; model?: ModelRef | null } = {};
+      const patch: {
+        workspaceId?: string;
+        busyMode?: 'queue' | 'steer';
+        reset?: boolean;
+        model?: ModelRef | null;
+        replyStatus?: boolean;
+      } = {};
       if (record.workspaceId !== undefined) {
         if (typeof record.workspaceId !== 'string') throw codedError('workspaceId 必须是字符串', 'invalid-config');
         patch.workspaceId = record.workspaceId;
@@ -144,6 +150,10 @@ async function handleEndpoint(
       if (record.reset !== undefined) {
         if (typeof record.reset !== 'boolean') throw codedError('reset 必须是布尔值', 'invalid-config');
         patch.reset = record.reset;
+      }
+      if (record.replyStatus !== undefined) {
+        if (typeof record.replyStatus !== 'boolean') throw codedError('replyStatus 必须是布尔值', 'invalid-config');
+        patch.replyStatus = record.replyStatus;
       }
       if (record.model !== undefined) {
         // null 是「跟随 DSH 默认」，与「没传」区分：手机端清空配置要靠它。

@@ -102,6 +102,8 @@ export const zh = {
   'direct.standaloneHint': '未接入超级助理时，本插件直接与会话交互：首次消息按所选工作区新建会话，文字、图片与文件交给会话，回答发回微信。',
   'direct.steerTitle': '回合内插话',
   'direct.steerDescription': '默认打开：插入正在运行的回合；关闭时新消息排队等待当前回合结束。',
+  'direct.replyStatusTitle': '回复附加状态信息',
+  'direct.replyStatusDescription': '在每条独立模式回复下方显示模型、推理等级、本轮消耗的 token 与发送时间。',
   'direct.model': '默认模型',
   'direct.modelDescription': '独立模式的微信会话用哪个模型、哪档推理等级；不选就跟随 DSH 的默认模型。',
   'direct.modelFollowDefault': '跟随 DSH 默认',

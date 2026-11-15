@@ -104,6 +104,8 @@ export const en: Record<WeChatKey, string> = {
   'direct.standaloneHint': 'Without My Superagent, this plugin talks to the session directly: the first message creates a session in the chosen workspace, text, images and files go to the session, and answers come back to WeChat.',
   'direct.steerTitle': 'Steer within a running turn',
   'direct.steerDescription': 'On by default: new messages are inserted into the running turn. Off: they queue until the current turn ends.',
+  'direct.replyStatusTitle': 'Reply status',
+  'direct.replyStatusDescription': 'Show the model, reasoning effort, tokens used this turn and send time under each standalone reply.',
   'direct.model': 'Default model',
   'direct.modelDescription': 'Model and reasoning effort the standalone WeChat session uses; leave it unselected to follow the DSH default model.',
   'direct.modelFollowDefault': 'Follow DSH default',

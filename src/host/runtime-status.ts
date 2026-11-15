@@ -14,7 +14,7 @@ import type { BusyMode } from './config.ts';
 import type { ModelRef } from '../shared/models.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 8;
+export const HOST_CONTRACT = 9;
 
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {
@@ -63,6 +63,8 @@ export interface RuntimeStatus {
     available: boolean;
     /** 直连会话用哪个模型与推理等级；`null` 表示跟随 DSH 的默认模型（ADR-0025、ADR-0026）。 */
     model: ModelRef | null;
+    /** 是否在独立模式的回复末尾附加模型、推理等级、消耗与时间（面板开关）。 */
+    replyStatus: boolean;
     /** 宿主记下的会话标题；还没收到 `session/title` 时没有。 */
     sessionTitle?: string;
   };

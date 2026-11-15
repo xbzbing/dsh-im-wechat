@@ -25,7 +25,9 @@ import type { InboundFiles } from './inbound.ts';
 import { attachmentKind, droppedNotice, fileDropNotice, onlyRejected, unsentFiles, uploadOwnerFiles, withDropped } from './direct-files.ts';
 import type { DroppedKind, HostFileUploader } from './direct-files.ts';
 import type { DirectBinding, DirectBindingStore } from './state/direct-binding.ts';
-import { MAX_TEXT_BYTES, splitText, toWeChatMarkdown } from './superagent/render.ts';
+import { MAX_TEXT_BYTES, toWeChatMarkdown } from './superagent/render.ts';
+import { ReplyMeter, composeReplyParts, formatReplyStatus } from './reply-status.ts';
+import type { ReplyStatusParts } from './reply-status.ts';
 
 export type { HostFileUploader } from './direct-files.ts';
 
@@ -80,6 +82,8 @@ export interface DirectChatOptions {
   send: (text: string) => Promise<boolean>;
   /** 发送者是不是已确认的主人（扫码登录的那个微信用户）。 */
   isOwner: (sender: string) => boolean;
+  /** 是否在回复末尾附加模型、推理等级、消耗与时间（独立模式专用，面板开关）。 */
+  replyStatus?: () => boolean;
   /** 建会话用的标题后缀（主人账号尾号）。 */
   ownerLabel: () => string;
   /**
@@ -127,6 +131,8 @@ export class DirectChat {
   readonly #busyMode: () => BusyMode;
   readonly #send: (text: string) => Promise<boolean>;
   readonly #isOwner: (sender: string) => boolean;
+  readonly #replyStatus: () => boolean;
+  readonly #meter = new ReplyMeter();
   readonly #ownerLabel: () => string;
   readonly #applyModel: ((sessionId: string) => void) | undefined;
   readonly #logger: DirectLogger | undefined;
@@ -151,6 +157,7 @@ export class DirectChat {
     this.#busyMode = options.busyMode;
     this.#send = options.send;
     this.#isOwner = options.isOwner;
+    this.#replyStatus = options.replyStatus ?? (() => false);
     this.#ownerLabel = options.ownerLabel;
     this.#applyModel = options.applyModel;
     this.#logger = options.logger;
@@ -160,7 +167,15 @@ export class DirectChat {
   }
 
   /** 面板展示用：绑定情况与运行态。 */
-  status(): { bound: boolean; sessionId?: string; workspaceId: string; busyMode: BusyMode; running: boolean; available: boolean } {
+  status(): {
+    bound: boolean;
+    sessionId?: string;
+    workspaceId: string;
+    busyMode: BusyMode;
+    running: boolean;
+    available: boolean;
+    replyStatus: boolean;
+  } {
     const binding = this.#store.get();
     return {
       bound: binding !== null,
@@ -169,6 +184,7 @@ export class DirectChat {
       busyMode: this.#busyMode(),
       running: this.#running,
       available: this.#controller() !== null,
+      replyStatus: this.#replyStatus(),
     };
   }
 
@@ -289,17 +305,28 @@ export class DirectChat {
       case 'turn/start':
         this.#running = true;
         this.#answer = '';
+        this.#meter.startTurn();
+        return;
+      // 选择事件只在变化时来：推理等级跨回合沿用，新选择没有等级时清掉旧值。
+      case 'model/selection':
+        this.#meter.observeSelection(data);
         return;
       case 'assistant/message': {
         const text = textFromAssistantMessage(data.message);
         if (text.trim() !== '') this.#answer = text;
+        this.#meter.observeAssistant(data);
         return;
       }
+      // 失败/被重试的那次调用不落消息，但 token 真的产生了：口径见 reply-status.ts。
+      case 'assistant/attempt':
+        this.#meter.observeAttempt(data);
+        return;
       case 'turn/end': {
         this.#running = false;
         const answer = this.#answer.trim();
         this.#answer = '';
-        if (answer !== '') void this.#reply(answer);
+        const stats = this.#meter.take();
+        if (answer !== '') void this.#reply(answer, stats);
         return;
       }
       default:
@@ -307,9 +334,9 @@ export class DirectChat {
     }
   }
 
-  async #reply(answer: string): Promise<void> {
-    const rendered = toWeChatMarkdown(answer);
-    for (const part of splitText(rendered, this.#maxText)) {
+  async #reply(answer: string, stats: ReplyStatusParts): Promise<void> {
+    const footer = this.#replyStatus() ? formatReplyStatus(stats, this.#now()) : undefined;
+    for (const part of composeReplyParts(toWeChatMarkdown(answer), this.#maxText, footer)) {
       const ok = await this.#send(part).catch((error: unknown) => {
         this.#logger?.warn?.('独立模式回复发送失败', messageOf(error));
         return false;

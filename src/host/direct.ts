@@ -25,6 +25,19 @@ import { MAX_TEXT_BYTES, splitText, toWeChatMarkdown } from './superagent/render
 /** 提交方式：与 DSH 的 `InputSubmitMode` 同一套取值。 */
 export type BusyMode = 'queue' | 'steer';
 
+/** 宿主会话列表的一行（`sessionController.list` 的摘要，只取本插件用到的字段）。 */
+export interface HostSessionRow {
+  sessionId?: unknown;
+  running?: unknown;
+  updatedAt?: unknown;
+  cwd?: unknown;
+  blank?: unknown;
+  origin?: unknown;
+  parentSessionId?: unknown;
+  /** 投影汇总：标题在 `projections.values.title`（宿主 `dsh-session-title`）。 */
+  projections?: { values?: Record<string, unknown> } | null;
+}
+
 /** 宿主 `sessionController` 里本模块用到的那几个方法（结构类型，不 import 宿主包）。 */
 export interface DirectController {
   create(request: { workspaceId?: string }): Promise<{ sessionId: string }>;
@@ -36,7 +49,7 @@ export interface DirectController {
   list?(
     request: Record<string, unknown>,
     signal: AbortSignal,
-  ): Promise<{ items?: readonly { sessionId?: string; running?: boolean }[] }>;
+  ): Promise<{ items?: readonly HostSessionRow[] }>;
   /** 读宿主的模型目录（面板下拉与模型校验用；老宿主没有这个方法）。 */
   modelCatalog?(): Promise<unknown>;
 }
@@ -197,7 +210,8 @@ export class DirectChat {
     if (mode === 'steer') {
       // 连发：间隔太短就不回执，只在「隔了一会儿仍在思考」时才确认一次。
       // 第一次提交没有上一条可比，按「隔了很久」处理：会话是重启前就在跑的。
-      if (gap >= STEER_NOTICE_MIN_GAP_MS || gap < 0) {
+      // 图片被丢掉是另一回事：这条必须告诉主人，不能跟着回执一起省掉。
+      if (imageDropped || gap >= STEER_NOTICE_MIN_GAP_MS || gap < 0) {
         await this.#send(withImageDropped(STEER_NOTICE, imageDropped));
       }
       return 'steered';
@@ -309,7 +323,7 @@ export class DirectChat {
     signal: AbortSignal,
   ): Promise<void> {
     const result = await controller.prompt(
-      { ...request, clientTimeZone: timeZone() },
+      { ...request, clientTimeZone: clientTimeZone() },
       signal,
     );
     if (result.accepted !== true) throw new Error('会话没有接受这条消息');
@@ -395,7 +409,8 @@ function isSubmitTimeout(signal: AbortSignal, error: unknown): boolean {
   return reasonName === 'TimeoutError' || errorName === 'TimeoutError';
 }
 
-function timeZone(): string | undefined {
+/** 提交时带的客户端时区；取不到就不带（宿主自己兜底）。 */
+export function clientTimeZone(): string | undefined {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
   } catch {

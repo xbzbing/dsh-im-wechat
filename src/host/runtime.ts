@@ -287,6 +287,8 @@ export class WeixinRuntime {
   /** `sessionController` 服务接入（index.ts 的子 fiber）：独立模式直接往会话里提交消息。 */
   attachSessionController(controller: DirectController | null): void {
     this.#sessionController = controller;
+    // 服务可能比 start() 晚到：到了再补一次会话标题，面板不用等主人改名。
+    if (controller !== null && this.#started) void this.#direct.refreshTitle();
   }
 
   /** `workspaceRegistry` 服务接入：面板用官方工作区列表选会话要加入哪个工作区。 */

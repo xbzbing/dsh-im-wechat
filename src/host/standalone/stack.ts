@@ -131,7 +131,7 @@ export class DirectStack {
     await this.#commandStore.hydrate();
     this.#watcher.start();
     // 旧版本落盘的绑定没有标题：启动时从宿主列表补一次，面板不用等下一次改名。
-    await this.#refreshBindingTitle();
+    await this.refreshTitle();
   }
 
   /** 等挂起的写盘与推送完成（停机时调用）。 */
@@ -216,7 +216,8 @@ export class DirectStack {
     return { queued: busy && mode === 'queue' };
   }
 
-  async #refreshBindingTitle(): Promise<void> {
+  /** 从宿主列表补一次绑定会话的标题；没有绑定或宿主读不到时什么都不做。 */
+  async refreshTitle(): Promise<void> {
     const binding = this.#store.get();
     const controller = this.#controller();
     if (binding === null || controller === null || typeof controller.list !== 'function') return;

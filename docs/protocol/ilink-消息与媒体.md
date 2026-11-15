@@ -18,6 +18,7 @@
   - `ref_msg.message_item.msg_id`：旧版形态；`title` 只是展示文案，不是 id。
   - `ref_msg` 里没有可用 id 时，桥不猜，草稿不带 `replyTo`。
 - 三个 id（`message_id`、`msg_id`、`svr_id`）都可能是 64 位整数，解析时按无损字符串处理（`ilink/json.ts` 的 `INTEGER_KEYS`）；取整会认到错的那条交付。
+- 入站草稿同时把**这条消息自己的平台 id** 写进 `platformMessageId`（取值规则与 `replyTo` 相同）：核心按它建引用目录，用户之后引用**主人自己发过的消息**时才认得回来。`messageId` 是桥合成的渠道 id（`weixin:v1:<账号>:<发送者>:mid:<平台 id>`），不能拿它跟 `replyTo` 比较。没有平台 `message_id` 时这个字段不出现。
 - 被引用消息的**正文与附件都不会被重发**：新版客户端只给 `svr_id`，`title` 只是展示摘要，`partial_text` 只标记选中的片段与它的 md5。要还原内容只能自己留一份——官方实现落 SQLite（写入按入站 `message_id`、查询按 `svr_id`，见其仓库 `docs/quote-cache_zh_CN.md` 与 `messaging/quote-store.ts`），本插件只在内存里留最近若干条（窗口与上界见 [ADR-0029](../adr/0029-独立模式的引用还原.md)）。两处都说明入站 `message_id` 与引用里的 `svr_id` 是同一套 id。
 
 ## 请求壳与 `bot_agent`

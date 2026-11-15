@@ -116,7 +116,9 @@ function imageName(index: number, mediaType: OwnerImage['mediaType'], itemId: st
 }
 
 // 平台 id 统一入口：字符串 trim，数字转字符串，空与非法值都当没有。
-function platformId(value: string | number | undefined): string | undefined {
+// 平台 id 的取值规则：引用（`ref_msg.svr_id`）、自己的 `message_id` 都走这一条，
+// 两边归一化一致，核心才能按 `platformMessageId` 把引用认回来。
+export function platformId(value: string | number | undefined): string | undefined {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     return trimmed === '' ? undefined : trimmed;
@@ -159,11 +161,14 @@ export async function toOwnerMessageDraft(
     : (options.now ?? Date.now)();
 
   const quoted = replyTo(message);
+  const platformMessageId = platformId(message.message_id);
   return {
     messageId,
     sender,
     text,
     at,
+    // 核心按它建引用目录：没有平台 id 的消息将来引用不回来，也不编一个。
+    ...(platformMessageId ? { platformMessageId } : {}),
     ...(quoted ? { replyTo: quoted } : {}),
     ...(images.length > 0 ? { images } : {}),
   };

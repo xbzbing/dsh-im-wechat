@@ -81,6 +81,8 @@ test('入站消息转成草稿交给核心，主人判定由核心的能力声�
     await waitFor(() => superagent.received.length > 0, '入站交给核心');
     assert.deepEqual(superagent.received[0], {
       messageId: `weixin:v1:${ACCOUNT}:${OWNER}:mid:9001`,
+      // 核心拿平台 id 建引用目录；合成的渠道 id 不能用来认引用。
+      platformMessageId: '9001',
       sender: OWNER,
       text: '/status',
       at: 1_760_000_000_000,

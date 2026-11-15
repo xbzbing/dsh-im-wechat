@@ -118,7 +118,7 @@ function imageName(index: number, mediaType: OwnerImage['mediaType'], itemId: st
 // 平台 id 统一入口：字符串 trim，数字转字符串，空与非法值都当没有。
 // 平台 id 的取值规则：引用（`ref_msg.svr_id`）、自己的 `message_id` 都走这一条，
 // 两边归一化一致，核心才能按 `platformMessageId` 把引用认回来。
-export function platformId(value: string | number | undefined): string | undefined {
+function platformId(value: string | number | undefined): string | undefined {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     return trimmed === '' ? undefined : trimmed;

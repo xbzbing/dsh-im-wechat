@@ -454,3 +454,21 @@ test('没有平台 message_id 时不编一个平台 id', async () => {
   assert.equal(draft?.messageId, 'weixin:v1:bot:owner-1:cid:c-1');
   assert.equal(draft && 'platformMessageId' in draft, false);
 });
+
+test('同一条消息：入站草稿的平台 id 与它被引用时的 replyTo 逐字相同', async () => {
+  // 核心按 platformMessageId 建目录、按 replyTo 查；这两个字符串只要有一边多一个空格，
+  // 引用就永远认不回来。所以这里钉的是「同一条消息、两侧取值一致」。
+  const original = await toOwnerMessageDraft(
+    { message_id: '1700000000000000009', from_user_id: 'owner-1', create_time_ms: 5, item_list: [{ type: 1, text_item: { text: '原来那句' } }] },
+    { account: 'bot' },
+  );
+  const quoting = await toOwnerMessageDraft(
+    {
+      message_id: '1700000000000000010', from_user_id: 'owner-1', create_time_ms: 6,
+      item_list: [{ type: 1, text_item: { text: '引用它' }, ref_msg: { svr_id: '1700000000000000009' } }],
+    },
+    { account: 'bot' },
+  );
+  assert.ok(original?.platformMessageId);
+  assert.equal(original.platformMessageId, quoting?.replyTo);
+});

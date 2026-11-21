@@ -14,7 +14,7 @@
 | `src/host/index.ts` | Cordis 入口：只装配与接线 |
 | `src/host/ilink/` | iLink 协议客户端：`types`/`api`（端点、请求头、错误分类）、`json`（64 位消息 id 保真）、`identity`（入站身份）、`login`、`poll`、`send`、`upload`（CDN 上传）、`media`、`session-guard`；只用 Node 内置模块 |
 | `src/host/superagent/` | `my-superagent/v1` 桥适配：`protocol`（结构描述，不 import 核心包）、`render`（Markdown 降级、交互转文字、分条）、`bridge`（`BridgeProvider`）、`quota`（bridge 级发送窗口）、`send-health`（发送失败到健康状态）、`link`（延后注册的 `BridgeBinder`） |
-| `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`reply-pending.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、审批提醒与微信作答（ADR-0023）、两者的开关/等待窗口与入站归属、共用的待答机械件、作答匹配、长任务提醒、按会话来源判根会话 |
+| `src/host/questions.ts`、`approvals.ts`、`reminder-center.ts`、`reply-pending.ts`、`answer-text.ts`、`long-tasks.ts`、`host-agents.ts` | 自有功能（ADR-0006）：问题提醒与竞答、审批提醒与微信作答（ADR-0023）、两者的开关/等待窗口与入站归属、共用的待答机械件、作答匹配、长程任务提醒（含失败开关）、按会话来源判根会话 |
 | `src/host/state/` | 本机状态：登录态、长轮询游标、`context_token`、独立模式绑定、命令快照与跟踪（`commands.json`）、已消费的提醒回复；`files.ts` 私密文件读写、`paths.ts` 目录解析；目录 `0700`、文件 `0600`、原子写 |
 | `src/host/` | `index.ts` 入口、`runtime.ts` 装配与生命周期、`runtime-status.ts` 面板状态、`panel-actions.ts` 面板设置的校验/落盘/生效、`inbound.ts` 入站转换、`inbound-pipeline.ts` 轮询/投递流水线、`owner-channel.ts` 主人收发通道、`typing.ts` 输入状态（ADR-0007）、`direct.ts` 独立模式直连（ADR-0009）、`direct-files.ts` 直连会话的附件暂存与提示（ADR-0028）、`direct-model.ts` 独立模式的模型与推理等级选择、钉模型（ADR-0025、ADR-0026）、`reply-status.ts` 独立模式回复末尾的状态信息、`standalone/` 独立模式的装配与会话命令（ADR-0027）、`present-images.ts` present 图片转发（ADR-0019）、`session-events.ts` 会话事件、`workspace-default.ts` 默认工作区、`bot-agent.ts` 机器人元数据、`prompt-parts.ts` 提交给会话的文字/图片/文件 part（ADR-0017、ADR-0028）、`quotes.ts` 独立模式的引用还原（ADR-0029）、`panel-rpc.ts` 面板 RPC、`send-gate.ts` 提醒节流、`cli.ts` 出站命令逻辑（ADR-0012）、`config.ts` 配置、`host-context.ts` 宿主上下文最小类型 |
 | `src/host/standalone/` | 独立模式专属：`stack`（绑定、模型、直连与命令的装配）、`commands`（文字命令解析与执行）、`command-text`（帮助与表格文案）、`session-list`（宿主会话目录）、`session-watch`（`/send` 等回答、`/trace` 跟踪） |
@@ -41,7 +41,7 @@
 - 子进程一律 argv 数组、不经 shell。
 - 文件不超过约 500 行；超出先拆分再加功能。
 - **自有功能与核心互斥**：`ownFeatures = 启用 && 未接入核心 && 已登录 && 未停机`（与 `runtime.ts` 的 `#ownFeaturesActive` 四项一致）。「接入核心」= 面板开关开 **且** `mySuperagent` 服务在（`#superagentActive`）；核心没装或没启用时开关在面板禁用、host 也拒绝打开，否则入站交给不存在的消费方，IM 就只剩沉默。接入核心时不发自己的提醒，否则同一条提醒会来两遍（ADR-0006）；新增任何「主动提醒主人」的能力都要先过这个判据。同一条界线也管回复的呈现：核心的交付自己带状态行（模型、思考、上下文、用时），本插件的「回复附加状态信息」只加在独立模式的直连回答上，接入核心时整段不进——两边都加就是同一条回复挂两套统计。面板同理：只属于独立模式的设置（提醒开关与两个分钟值、直连会话、会话模型与推理等级、回复附加状态信息）接入核心后在面板锁住，判据是 `logic.ts` 的 `standaloneSettingsLocked`，别在渲染里各写一份。
-- **失败提醒不受开关影响**：长任务提醒的开关只关「完成」提醒；宿主 `error`、`blocked`、非用户原因的 `aborted` 一律立刻提醒，主人自己停的（`reason.reason.kind === 'user'`）不提醒。关掉开关后仍会收到失败提醒是刻意的，不要当 bug 改；判据在 `src/host/long-tasks.ts` 与 `test/unit/long-tasks.test.ts`。注意该不变量在**提醒器层**成立（直连测试覆盖）；集成层里开关与事件门同源，插件停用或接入核心时整段不进提醒——两种表述指向同一现状，别把提醒器层的不变量当集成层 bug 查。
+- **失败提醒有自己的开关，不与完成提醒共用**：完成提醒看「自有功能生效 + 超过阈值」；失败提醒默认开，由 `failureReminders`（面板「失败任务提醒」）单独控制——关掉后 `error`、`blocked`、非用户原因的 `aborted` 也一律静默，**不降级成按阈值的完成提醒**；主人自己停的（`reason.reason.kind === 'user'`）在两种开关下都不提醒。两个开关都关才完全安静；判据在 `src/host/long-tasks.ts` 与 `test/unit/long-tasks.test.ts`。注意该不变量在**提醒器层**成立（直连测试覆盖）；集成层里自有功能总开关与事件门同源，插件停用或接入核心时整段不进提醒——两种表述指向同一现状，别把提醒器层的不变量当集成层 bug 查。
 - 面板 RPC 契约版本（`HOST_CONTRACT` / `REQUIRED_CONTRACT`）两半必须一致：加端点或改返回结构时一起递增，否则「新面板 + 旧 host」会打到不存在的端点。
 - 凭据与 `context_token` 不进日志、不进面板快照；面板正文只显示账号尾号（`accountTail`），完整账号只作为「账号」的悬停提示（`status.account`），不铺在卡片上。
 - 注释只写实现逻辑与不明显的约束，不写演进过程。

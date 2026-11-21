@@ -21,7 +21,7 @@ export const PANEL_ID = 'dsh-im-wechat';
 export const BUNDLE_CONFIG_SLOT = 'plugins.bundle.config';
 
 /** 与 host 半 `HOST_CONTRACT` 一致；对不上就提示重启。 */
-export const REQUIRED_CONTRACT = 9;
+export const REQUIRED_CONTRACT = 10;
 
 /** 静默时的自动刷新周期。 */
 export const REFRESH_INTERVAL_MS = 15_000;
@@ -32,7 +32,7 @@ export const LOGIN_POLL_INTERVAL_MS = 2_000;
 /** 单次面板 RPC 的保底超时：宿主 rpc.call 自身不带超时。 */
 export const RPC_TIMEOUT_MS = 20_000;
 
-/** 长任务阈值的合法区间：与 host 半 `long-tasks.ts` 的 `normalizeLongTaskMinutes` 一致。 */
+/** 长程任务阈值的合法区间：与 host 半 `long-tasks.ts` 的 `normalizeLongTaskMinutes` 一致。 */
 export const MIN_LONG_TASK_MINUTES = 1;
 export const MAX_LONG_TASK_MINUTES = 24 * 60;
 

@@ -81,13 +81,13 @@ test('登出清掉登录态与桥注册', async () => {
   });
 });
 
-test('长任务阈值默认 30 分钟，面板改的值落盘并在重启后沿用', async () => {
+test('长程任务阈值默认 30 分钟，面板改的值落盘并在重启后沿用', async () => {
   await withDir(async (dir) => {
     const runtime = new WeixinRuntime({ config: { dataDir: dir }, workspaceDir: dir, createApi: fakeApi().createApi });
     await runtime.start();
     assert.equal(runtime.status().longTaskThresholdMinutes, 30);
 
-    const status = await saveLongTask(runtime.panelActions(), 45);
+    const status = await saveLongTask(runtime.panelActions(), { minutes: 45 });
     assert.equal(status.longTaskThresholdMinutes, 45);
     const persisted = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')) as {
       longTaskThresholdMinutes?: number;
@@ -112,7 +112,7 @@ test('profile 配置可以改阈值，面板值优先，越界按边界收窄', 
     assert.equal(runtime.status().longTaskThresholdMinutes, 5);
 
     // 面板值盖住 profile 的静态默认，重启后仍是面板值。
-    await saveLongTask(runtime.panelActions(), 45);
+    await saveLongTask(runtime.panelActions(), { minutes: 45 });
     const restarted = new WeixinRuntime({
       config: { dataDir: dir, longTaskThresholdMinutes: 5 },
       createApi: fakeApi().createApi,
@@ -122,8 +122,38 @@ test('profile 配置可以改阈值，面板值优先，越界按边界收窄', 
     await restarted.stop();
 
     // 越界值收窄到 1–1440，而不是把提醒阈值设成 0（等于每条回合都提醒）。
-    assert.equal((await saveLongTask(runtime.panelActions(), 0)).longTaskThresholdMinutes, 1);
-    assert.equal((await saveLongTask(runtime.panelActions(), 1e9)).longTaskThresholdMinutes, 1_440);
+    assert.equal((await saveLongTask(runtime.panelActions(), { minutes: 0 })).longTaskThresholdMinutes, 1);
+    assert.equal((await saveLongTask(runtime.panelActions(), { minutes: 1e9 })).longTaskThresholdMinutes, 1_440);
+    await runtime.stop();
+  });
+});
+
+test('失败提醒默认开；面板关掉后落盘并在重启后沿用，profile 默认也可改', async () => {
+  await withDir(async (dir) => {
+    const runtime = new WeixinRuntime({
+      config: { dataDir: dir, failureReminders: false },
+      workspaceDir: dir,
+      createApi: fakeApi().createApi,
+    });
+    await runtime.start();
+    assert.equal(runtime.status().failureReminders, false);
+
+    // 面板值盖住 profile 默认。
+    const status = await saveLongTask(runtime.panelActions(), { failureReminders: true });
+    assert.equal(status.failureReminders, true);
+    const persisted = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')) as {
+      failureReminders?: boolean;
+    };
+    assert.equal(persisted.failureReminders, true);
+
+    const restarted = new WeixinRuntime({
+      config: { dataDir: dir, failureReminders: false },
+      workspaceDir: dir,
+      createApi: fakeApi().createApi,
+    });
+    await restarted.start();
+    assert.equal(restarted.status().failureReminders, true);
+    await restarted.stop();
     await runtime.stop();
   });
 });

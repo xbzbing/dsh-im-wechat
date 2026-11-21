@@ -187,11 +187,24 @@ async function handleEndpoint(
       return saveQuestionSettings(runtime.panelActions(), patch);
     }
     case ENDPOINTS.LONG_TASK_SET: {
-      const minutes = payloadOf(payload).minutes;
-      if (typeof minutes !== 'number' || !Number.isFinite(minutes)) {
-        throw codedError('minutes 必须是数字', 'invalid-config');
+      const record = payloadOf(payload);
+      const patch: { minutes?: number; failureReminders?: boolean } = {};
+      if (record.minutes !== undefined) {
+        if (typeof record.minutes !== 'number' || !Number.isFinite(record.minutes)) {
+          throw codedError('minutes 必须是数字', 'invalid-config');
+        }
+        patch.minutes = record.minutes;
       }
-      return saveLongTask(runtime.panelActions(), minutes);
+      if (record.failureReminders !== undefined) {
+        if (typeof record.failureReminders !== 'boolean') {
+          throw codedError('failureReminders 必须是布尔值', 'invalid-config');
+        }
+        patch.failureReminders = record.failureReminders;
+      }
+      if (patch.minutes === undefined && patch.failureReminders === undefined) {
+        throw codedError('没有要保存的设置', 'invalid-config');
+      }
+      return saveLongTask(runtime.panelActions(), patch);
     }
     default:
       throw codedError(`未知的面板端点：${endpoint}`, 'unknown-endpoint');

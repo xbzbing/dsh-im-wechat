@@ -79,7 +79,7 @@ export class RootAgents {
   isRootSession(sessionId: string | null): boolean {
     if (sessionId === null || sessionId === '') return false;
     const service = this.#service;
-    // 服务缺席时无从判断：长任务提醒按宽容处理（与旧行为一致）。
+    // 服务缺席时无从判断：长程任务提醒按宽容处理（与旧行为一致）。
     if (service === null || typeof service.get !== 'function') return true;
     let agent: HostAgent | undefined;
     try {

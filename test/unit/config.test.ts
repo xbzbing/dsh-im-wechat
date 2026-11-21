@@ -77,6 +77,31 @@ test('面板设置合并保存：三项互不覆盖，读回仍生效', async ()
   });
 });
 
+test('失败提醒开关：只认布尔值，写坏交给默认（开）', () => {
+  assert.equal(normalizePluginConfig({ failureReminders: false }).failureReminders, false);
+  assert.equal(normalizePluginConfig({ failureReminders: true }).failureReminders, true);
+  // 这是通知不是授权：写坏不静默关掉，交给默认（开）。
+  assert.equal('failureReminders' in normalizePluginConfig({ failureReminders: 'no' }), false);
+  assert.equal('failureReminders' in normalizePluginConfig({ failureReminders: null }), false);
+  assert.equal('failureReminders' in normalizePluginConfig({}), false);
+});
+
+test('面板改的失败提醒开关会落盘，与阈值合并保存互不覆盖', async () => {
+  await withDir(async (dir) => {
+    const store = new LocalConfigStore({ dir });
+    await store.load();
+    await store.save({ failureReminders: false });
+    assert.equal((await new LocalConfigStore({ dir }).load()).failureReminders, false);
+
+    const merged = new LocalConfigStore({ dir });
+    await merged.load();
+    await merged.save({ longTaskThresholdMinutes: 45 });
+    const document = await new LocalConfigStore({ dir }).load();
+    assert.equal(document.failureReminders, false);
+    assert.equal(document.longTaskThresholdMinutes, 45);
+  });
+});
+
 test('磁盘上的阈值越界或不是数字时按边界收窄，不让插件起不来', async () => {
   await withDir(async (dir) => {
     const path = join(dir, 'config.json');

@@ -6,7 +6,7 @@ import { ContextTokenStore } from '../../src/host/state/context-tokens.ts';
 import { LoginStateStore } from '../../src/host/state/login-state.ts';
 import { ACCOUNT, LOGIN, OWNER, fakeApi, waitFor, withDir } from './helpers/runtime-harness.ts';
 
-test('未接入核心时长任务提醒按配置阈值发到主人微信', async () => {
+test('未接入核心时长程任务提醒按配置阈值发到主人微信', async () => {
   await withDir(async (dir) => {
     await new LoginStateStore({ dir }).save(LOGIN);
     // 主人的 context_token 由入站消息带来，这里直接落盘，省掉一轮轮询。
@@ -34,8 +34,8 @@ test('未接入核心时长任务提醒按配置阈值发到主人微信', async
     assert.deepEqual(api.record.sent, []);
 
     turn(6 * 60_000);
-    await waitFor(() => api.record.sent.length > 0, '长任务提醒发出');
-    assert.match(api.record.sent[0], /长任务提醒/);
+    await waitFor(() => api.record.sent.length > 0, '长程任务提醒发出');
+    assert.match(api.record.sent[0], /长程任务提醒/);
     assert.match(api.record.sent[0], /耗时：6分0秒/);
     await runtime.stop();
   });
@@ -62,12 +62,12 @@ test('面板改阈值后判定立即用新值：调低会提醒，调高不再�
     };
 
     // 调低到 2 分钟：6 分钟的回合立刻提醒（默认 30 分钟时这条不会发）。
-    await saveLongTask(runtime.panelActions(), 2);
+    await saveLongTask(runtime.panelActions(), { minutes: 2 });
     turn('sess-low', 1, 6 * 60_000);
     await waitFor(() => api.record.sent.length === 1, '调低阈值后提醒发出');
 
     // 调高到 60 分钟：40 分钟的回合不提醒（阈值没跟着变的话这条会再发一条）。
-    const raised = await saveLongTask(runtime.panelActions(), 60);
+    const raised = await saveLongTask(runtime.panelActions(), { minutes: 60 });
     assert.equal(raised.longTaskThresholdMinutes, 60);
     turn('sess-high', 1, 40 * 60_000);
     await idle();
@@ -151,5 +151,37 @@ test('接入核心后审批提醒不接管；切到独立模式才发提醒并�
 
     await runtime.stop();
     pending.catch(() => {});
+  });
+});
+
+test('关掉失败提醒后失败回合不打扰；长回合完成仍按阈值提醒', async () => {
+  await withDir(async (dir) => {
+    await new LoginStateStore({ dir }).save(LOGIN);
+    const tokens = new ContextTokenStore({ dir });
+    tokens.set(ACCOUNT, OWNER, 'ctx-owner');
+    await tokens.flush();
+
+    const api = fakeApi();
+    const runtime = new WeixinRuntime({
+      config: { dataDir: dir, longTaskThresholdMinutes: 5 },
+      createApi: api.createApi,
+    });
+    await runtime.start();
+    await saveSuperagent(runtime.panelActions(), false);
+    await saveLongTask(runtime.panelActions(), { failureReminders: false });
+
+    const turn = (sessionId: string, turnNo: number, endAt: number, reason: Record<string, unknown>) => {
+      runtime.handleSessionEvent(sessionId, { type: 'turn/start', seq: 1, time: 0, data: { turn: turnNo } });
+      runtime.handleSessionEvent(sessionId, { type: 'turn/end', seq: 2, time: endAt, data: { turn: turnNo, reason } });
+    };
+
+    turn('sess-failed', 1, 60_000, { kind: 'error', error: { message: 'boom' } });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(api.record.sent, [], '失败提醒已关，短失败不打扰');
+
+    turn('sess-done', 1, 6 * 60_000, { kind: 'completed' });
+    await waitFor(() => api.record.sent.length > 0, '完成提醒仍发出');
+    assert.match(api.record.sent[0], /长程任务提醒/);
+    await runtime.stop();
   });
 });

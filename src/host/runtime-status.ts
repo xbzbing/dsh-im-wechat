@@ -14,7 +14,7 @@ import type { BusyMode } from './config.ts';
 import type { ModelRef } from '../shared/models.ts';
 
 /** 面板 RPC 契约版本：加端点或改返回结构时必须递增。 */
-export const HOST_CONTRACT = 9;
+export const HOST_CONTRACT = 10;
 
 /** 宿主 `workspaceRegistry` 里本插件用到的部分（结构类型）。 */
 export interface WorkspaceRegistry {
@@ -37,7 +37,7 @@ export interface RuntimeStatus {
   superagent: boolean;
   /** 宿主里有没有核心服务（装了但没启用也算没有）；面板据此禁用接入开关。 */
   superagentAvailable: boolean;
-  /** 自有功能（问题提醒、长任务提醒）是否生效。 */
+  /** 自有功能（问题提醒、长程任务提醒）是否生效。 */
   ownFeatures: boolean;
   /** 登录态里是否记录了扫码的微信用户（没记录就无法确认主人，自有提醒会静默失效）。 */
   ownerKnown: boolean;
@@ -49,10 +49,12 @@ export interface RuntimeStatus {
   questionReminders: boolean;
   /** 提醒前等多久（分钟）：这段时间在 Web 端答完就不打扰。 */
   questionDelayMinutes: number;
-  /** 正在跟踪的回合数（长任务提醒用）。 */
+  /** 正在跟踪的回合数（长程任务提醒用）。 */
   trackingTasks: number;
-  /** 长任务提醒阈值（分钟）：回合超过它才提醒。 */
+  /** 长程任务提醒阈值（分钟）：回合超过它才提醒。 */
   longTaskThresholdMinutes: number;
+  /** 失败提醒开关：默认开，关掉后失败的任务不再发提醒。 */
+  failureReminders: boolean;
   /** 独立模式（未接入核心）的直连会话状态（ADR-0009）。 */
   direct: {
     bound: boolean;
@@ -94,6 +96,7 @@ export interface StatusInput {
   trackingTasks: number;
   direct: RuntimeStatus['direct'];
   longTaskThresholdMinutes: number;
+  failureReminders: boolean;
   login: LoginState | null;
   loginSnapshot: LoginSnapshot;
   health: BridgeHealth;
@@ -121,6 +124,7 @@ export function buildStatus(input: StatusInput): RuntimeStatus {
     trackingTasks: input.trackingTasks,
     direct: input.direct,
     longTaskThresholdMinutes: input.longTaskThresholdMinutes,
+    failureReminders: input.failureReminders,
     loggedIn: login !== null,
     ...(login
       ? { accountTail: accountTail(login.account), account: login.account, loggedInAt: login.loggedInAt }

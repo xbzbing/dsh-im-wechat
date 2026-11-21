@@ -11,6 +11,9 @@
  * 与如流实现的差别：只用文本、不发卡片；不做「安静期」（用完即发），避免主人
  * 关掉面板后仍然收不到；阈值默认 30 分钟，单位全程是**分钟**（配置、面板、状态
  * 都同一个数），由 `setThresholdMinutes` 改，改完对已经在跟踪的回合也生效。
+ *
+ * 失败提醒有自己的开关（`failureReminders`，默认开）：关掉只静默失败，完成提醒
+ * 仍按阈值与 `configure` 走；完成开关不关失败。
  */
 
 export interface LongTaskLogger {
@@ -38,6 +41,8 @@ export interface LongTaskNotifierOptions {
   logger?: LongTaskLogger;
   /** 超过这么多分钟才算「长任务」；默认 30。 */
   thresholdMinutes?: number;
+  /** 失败提醒开关：默认开；关掉后失败不再提醒（完成提醒不受影响）。 */
+  failureReminders?: boolean;
   /** 单条提醒的字符上限，超长截断（不丢结论的头）。 */
   maxChars?: number;
   /** 同时跟踪的会话上限。 */
@@ -49,7 +54,7 @@ interface SessionRecord {
   turn: number | undefined;
   answer: string;
   running: boolean;
-  /** 本回合里是否问过问题（问过就不再发长任务提醒，问题提醒已经打扰过）。 */
+  /** 本回合里是否问过问题（问过就不再发长程任务提醒，问题提醒已经打扰过）。 */
   interacted: boolean;
   /** 目标的一句话描述：提醒里说清「这是在干什么」。 */
   objective: string;
@@ -57,7 +62,7 @@ interface SessionRecord {
   promptSeen: boolean;
 }
 
-/** 长任务阈值（分钟）：默认半小时；低于 1 分钟没有意义，上限一天。 */
+/** 长程任务阈值（分钟）：默认半小时；低于 1 分钟没有意义，上限一天。 */
 export const DEFAULT_LONG_TASK_MINUTES = 30;
 export const MIN_LONG_TASK_MINUTES = 1;
 export const MAX_LONG_TASK_MINUTES = 24 * 60;
@@ -106,7 +111,7 @@ export function longTaskText(params: {
   answer: string;
   maxChars: number;
 }): string {
-  const heading = `${params.failed ? '任务失败' : '长任务提醒'} · ${params.title}`;
+  const heading = `${params.failed ? '任务失败' : '长程任务提醒'} · ${params.title}`;
   const meta = [
     `耗时：${durationText(params.durationMs)}`,
     params.objective ? `目标：${params.objective.slice(0, 120)}` : '',
@@ -127,12 +132,14 @@ export class LongTaskNotifier {
   /** 目标先于回合到达时暂存，`turn/start` 时带上。 */
   readonly #objectives = new Map<string, string>();
   #enabled = false;
+  #failureReminders: boolean;
 
   constructor(options: LongTaskNotifierOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
     this.#thresholdMinutes = options.thresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES;
     this.#maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
+    this.#failureReminders = options.failureReminders ?? true;
   }
 
   /** 自有功能生效时才打开；关掉时丢弃已有跟踪。 */
@@ -156,9 +163,19 @@ export class LongTaskNotifier {
     this.#thresholdMinutes = minutes;
   }
 
+  /** 失败提醒开关：默认开；只关失败，完成提醒仍按阈值与完成开关走。 */
+  get failureReminders(): boolean {
+    return this.#failureReminders;
+  }
+
+  setFailureReminders(enabled: boolean): void {
+    this.#failureReminders = enabled;
+  }
+
   /** `session/event` 监听器实现。 */
   handleEvent(sessionId: unknown, event: unknown): void {
-    // 开关只管「完成」提醒：失败仍然要跟踪并提醒（ADR-0011），所以这里不拦。
+    // 这里不按开关早退：完成提醒由 `configure` 管，失败由 `failureReminders` 管，
+    // 两个都要继续跟踪到 `turn/end` 才知道该不该发（ADR-0011、ADR-0031）。
     if (typeof sessionId !== 'string' || sessionId === '') return;
     const entry = asRecord(event) as SessionEvent | null;
     if (!entry || typeof entry.type !== 'string') return;
@@ -274,8 +291,13 @@ export class LongTaskNotifier {
     const failed = aborted || (kind !== '' && kind !== 'completed' && kind !== 'max-tokens');
     // 失败原因照原样带上：额度用尽、provider 超时这类信息读原文最快。
     const failure = typeof asRecord(reason?.error)?.message === 'string' ? String(asRecord(reason?.error)?.message) : '';
+    // 失败有自己的开关（默认开）：关掉后失败与完成一样静默，不会降级成完成提醒。
+    if (failed && !this.#failureReminders) {
+      this.#records.delete(sessionId);
+      return;
+    }
     // 失败立刻提醒，不看阈值、也不看主人在这一轮里插过话：任务没做成是必须知道的事。
-    // 开关只关「完成」提醒。
+    // 完成开关只关「完成」提醒，不关失败（失败由上面的开关管）。
     if (!failed && !this.#enabled) {
       this.#records.delete(sessionId);
       return;
@@ -301,7 +323,7 @@ export class LongTaskNotifier {
     });
     this.#records.delete(sessionId);
     void this.#options.send(text).catch((error: unknown) => {
-      this.#options.logger?.warn?.('长任务提醒发送失败', (error as Error)?.message);
+      this.#options.logger?.warn?.('长程任务提醒发送失败', (error as Error)?.message);
     });
   }
 

@@ -2,9 +2,9 @@
  * 插件配置：Cordis 传入的配置 + 面板自己能改的那几项。
  *
  * 配置分两层：
- * - **静态配置**来自 profile 的 patch（`enabled`、`dataDir`、`maxText`、长任务阈值等），
+ * - **静态配置**来自 profile 的 patch（`enabled`、`dataDir`、`maxText`、长程任务阈值与失败提醒等），
  *   改了要重启；
- * - **运行设置**是面板上的「接入微信」「接入我的超级助理」与长任务阈值，落在
+ * - **运行设置**是面板上的「接入微信」「接入我的超级助理」、长程任务阈值与失败提醒，落在
  *   `$DSH_HOME/.dsh-im-wechat/config.json`，与登录态同一个目录，卸载重装后沿用
  *   （与如流桥的开关语义一致）。面板值优先于静态配置。
  *
@@ -36,8 +36,10 @@ export interface PluginConfig {
   maxText?: number;
   /** `base_info.bot_agent`。 */
   botAgent?: string;
-  /** 长任务提醒阈值（分钟）：回合超过它才提醒，默认 30；面板可覆盖。 */
+  /** 长程任务提醒阈值（分钟）：回合超过它才提醒，默认 30；面板可覆盖。 */
   longTaskThresholdMinutes?: number;
+  /** 失败提醒开关：默认开；关掉后失败的任务不再发提醒（完成提醒不受影响）。 */
+  failureReminders?: boolean;
   /** 是否发「正在输入」状态，默认开；真机行为不符预期时可关（ADR-0007）。 */
   typingIndicator?: boolean;
   /**
@@ -137,6 +139,9 @@ export function normalizePluginConfig(input: unknown): PluginConfig {
   if (replyStatus !== undefined) config.replyStatus = replyStatus;
   const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
   if (longTaskMinutes !== undefined) config.longTaskThresholdMinutes = longTaskMinutes;
+  // 写坏了交给默认（开）：这是通知不是授权，静默关掉比多一条提醒更难发现。
+  const failureReminders = asBoolean(record.failureReminders);
+  if (failureReminders !== undefined) config.failureReminders = failureReminders;
   const typingIndicator = asBoolean(record.typingIndicator);
   if (typingIndicator !== undefined) config.typingIndicator = typingIndicator;
   // 这个开关决定「微信消息能否批一次工具授权」：写坏了按关处理，不静默恢复。
@@ -162,8 +167,10 @@ export interface StoredConfig {
   enabled?: boolean;
   /** 是否接入「我的超级助理」；缺省视为接入。 */
   superagent?: boolean;
-  /** 面板上改的长任务阈值（分钟）；缺省用静态配置或默认值。 */
+  /** 面板上改的长程任务阈值（分钟）；缺省用静态配置或默认值。 */
   longTaskThresholdMinutes?: number;
+  /** 面板上改的失败提醒开关；缺省用静态配置或默认开。 */
+  failureReminders?: boolean;
   /** 面板上改的问题与审批提醒开关；缺省视为开。 */
   questionReminders?: boolean;
   /** 面板上改的提醒等待时间（分钟）；缺省用静态配置或默认值。 */
@@ -211,6 +218,7 @@ export class LocalConfigStore {
     const enabled = asBoolean(record.enabled);
     const superagent = asBoolean(record.superagent);
     const longTaskMinutes = normalizeLongTaskMinutes(record.longTaskThresholdMinutes);
+    const failureReminders = asBoolean(record.failureReminders);
     const questionReminders = record.questionReminders === undefined
       ? undefined
       : asBoolean(record.questionReminders) ?? false;
@@ -226,6 +234,7 @@ export class LocalConfigStore {
       ...(enabled !== undefined ? { enabled } : {}),
       ...(superagent !== undefined ? { superagent } : {}),
       ...(longTaskMinutes !== undefined ? { longTaskThresholdMinutes: longTaskMinutes } : {}),
+      ...(failureReminders !== undefined ? { failureReminders } : {}),
       ...(questionReminders !== undefined ? { questionReminders } : {}),
       ...(questionDelay !== undefined ? { questionDelayMinutes: questionDelay } : {}),
       ...(directWorkspaceId !== undefined ? { directWorkspaceId } : {}),
@@ -241,6 +250,7 @@ export class LocalConfigStore {
     enabled?: boolean;
     superagent?: boolean;
     longTaskThresholdMinutes?: number;
+    failureReminders?: boolean;
     questionReminders?: boolean;
     questionDelayMinutes?: number;
     directWorkspaceId?: string;

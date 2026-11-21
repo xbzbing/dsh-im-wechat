@@ -93,7 +93,7 @@ export async function apply(
 }
 
 /**
- * 宿主事件监听：问题提醒与长任务提醒。
+ * 宿主事件监听：问题提醒与长程任务提醒。
  *
  * 提问必须 `prepend`：Web 端的转发监听器在 Host 启动时就注册了，排在它后面永远轮不到
  * 我们（与如流桥同一处坑）。`session/event` 要 `global`：所有会话的事件都要收到。

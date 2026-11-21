@@ -26,7 +26,7 @@ function assistantMessage(text: string): { content: unknown[] } {
   return { content: [{ type: 'text', text }, { type: 'reasoning', text: '不想被看到' }] };
 }
 
-function harness(options: { sendOk?: boolean; root?: boolean } = {}) {
+function harness(options: { sendOk?: boolean; root?: boolean; failureReminders?: boolean } = {}) {
   const sent: string[] = [];
   let clock = 0;
   const notifier = new LongTaskNotifier({
@@ -39,6 +39,7 @@ function harness(options: { sendOk?: boolean; root?: boolean } = {}) {
     titleOf: (id) => (id === 's1' ? '重构设置页' : null),
     now: () => clock,
     thresholdMinutes: TEN_MINUTES,
+    ...(options.failureReminders !== undefined ? { failureReminders: options.failureReminders } : {}),
   });
   notifier.configure(true);
   return { notifier, sent, advance: (ms: number) => { clock += ms; } };
@@ -110,7 +111,7 @@ test('超过阈值的回合结束时发提醒，正文含标题/耗时/结论', 
   h.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 11 * 60_000));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.sent.length, 1);
-  assert.match(h.sent[0], /长任务提醒 · 重构设置页/);
+  assert.match(h.sent[0], /长程任务提醒 · 重构设置页/);
   assert.match(h.sent[0], /耗时：11分0秒/);
   assert.match(h.sent[0], /结果：已完成/);
   assert.match(h.sent[0], /改完了，3 个文件。/);
@@ -220,6 +221,80 @@ test('失败不受「主人在这一轮里插过话」影响；关掉提醒开�
   ok.notifier.handleEvent('s1', event('turn/end', { turn: 1 }, 20 * 60_000));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(ok.sent.length, 0);
+});
+
+test('失败提醒默认开，可单独关掉；关掉后失败不发，完成提醒不受影响', async () => {
+  const h = harness();
+  assert.equal(h.notifier.failureReminders, true);
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'error' } }, 60_000));
+  await flush();
+  assert.equal(h.sent.length, 1);
+
+  h.notifier.setFailureReminders(false);
+  assert.equal(h.notifier.failureReminders, false);
+  // 短失败：不发。
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 2 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 2, reason: { kind: 'error' } }, 60_000));
+  await flush();
+  assert.equal(h.sent.length, 1);
+  // 失败的长回合也不发：失败不会降级成完成提醒。
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 3 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 3, reason: { kind: 'blocked' } }, 40 * 60_000));
+  await flush();
+  assert.equal(h.sent.length, 1);
+
+  // 完成提醒仍按阈值发。
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 4 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 4 }, 40 * 60_000));
+  await flush();
+  assert.equal(h.sent.length, 2);
+  assert.match(h.sent[1], /长程任务提醒/);
+
+  h.notifier.setFailureReminders(true);
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 5 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 5, reason: { kind: 'error' } }, 60_000));
+  await flush();
+  assert.equal(h.sent.length, 3);
+});
+
+test('失败开关关掉后：非用户 aborted 也静默；主人自己停的两种开关下都不提醒', async () => {
+  // AGENTS 判据点名的三类失败（error/blocked/非用户 aborted）都要受这个开关管。
+  const off = harness({ failureReminders: false });
+  off.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  off.notifier.handleEvent('s1', event('turn/end', {
+    turn: 1,
+    reason: { kind: 'aborted', reason: { kind: 'timeout' }, error: { message: '上游超时' } },
+  }, 40 * 60_000));
+  await flush();
+  assert.equal(off.sent.length, 0, '非用户 aborted 在开关关掉后不提醒，也不降级成完成提醒');
+
+  // 主人自己停的：开关开着也不提醒（先于开关判断），关掉同样不提醒。
+  for (const failureReminders of [true, false]) {
+    const h = harness({ failureReminders });
+    h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+    h.notifier.handleEvent('s1', event('turn/end', {
+      turn: 1,
+      reason: { kind: 'aborted', reason: { kind: 'user' } },
+    }, 30 * 60_000));
+    await flush();
+    assert.equal(h.sent.length, 0, `主人自己停的不提醒（failureReminders=${failureReminders}）`);
+  }
+});
+
+test('失败开关只在提醒器层管失败：关掉完成提醒后失败仍按失败开关发', async () => {
+  const h = harness();
+  h.notifier.configure(false);
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 1 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 1, reason: { kind: 'error' } }, 60_000));
+  await flush();
+  assert.equal(h.sent.length, 1, '完成开关关掉，失败仍提醒');
+
+  h.notifier.setFailureReminders(false);
+  h.notifier.handleEvent('s1', event('turn/start', { turn: 2 }, 0));
+  h.notifier.handleEvent('s1', event('turn/end', { turn: 2, reason: { kind: 'error' } }, 60_000));
+  await flush();
+  assert.equal(h.sent.length, 1, '失败开关关掉后失败才静默');
 });
 
 test('主人自己停的回合不提醒', async () => {

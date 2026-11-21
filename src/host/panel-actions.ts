@@ -1,5 +1,5 @@
 /**
- * 面板能改的运行时设置：开关、长任务阈值、提醒等待时间、独立模式选择。
+ * 面板能改的运行时设置：开关、长程任务阈值与失败提醒、提醒等待时间、独立模式选择。
  *
  * 这里只写「校验 → 落盘 → 生效 → 交回状态」的顺序；具体状态与副作用由装配层通过
  * `PanelActionHost` 注入，端口是单向的（读走 `status()`/`catalog()`，写走 setter）。
@@ -75,11 +75,20 @@ export async function saveSuperagent(host: PanelActionHost, enabled: boolean): P
   return host.status();
 }
 
-/** 保存长任务阈值（分钟）：就地生效，不重连微信。 */
-export async function saveLongTask(host: PanelActionHost, minutes: number): Promise<RuntimeStatus> {
-  const next = normalizeLongTaskMinutes(minutes) ?? DEFAULT_LONG_TASK_MINUTES;
-  host.longTasks().setThresholdMinutes(next);
-  await host.save({ longTaskThresholdMinutes: next });
+/** 保存长程任务提醒设置（阈值与失败开关）：就地生效，不重连微信。 */
+export async function saveLongTask(
+  host: PanelActionHost,
+  patch: { minutes?: number; failureReminders?: boolean },
+): Promise<RuntimeStatus> {
+  const minutes = patch.minutes === undefined
+    ? undefined
+    : normalizeLongTaskMinutes(patch.minutes) ?? DEFAULT_LONG_TASK_MINUTES;
+  if (minutes !== undefined) host.longTasks().setThresholdMinutes(minutes);
+  if (patch.failureReminders !== undefined) host.longTasks().setFailureReminders(patch.failureReminders);
+  await host.save({
+    ...(minutes !== undefined ? { longTaskThresholdMinutes: minutes } : {}),
+    ...(patch.failureReminders !== undefined ? { failureReminders: patch.failureReminders } : {}),
+  });
   return host.status();
 }
 

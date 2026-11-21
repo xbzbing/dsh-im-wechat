@@ -24,7 +24,7 @@ export interface SessionEventDeps {
   directHandle(sessionId: string, event: unknown): void;
 }
 
-/** `session/event` 监听器：长任务提醒、输入状态收尾、present 图片转发出站、直连会话跟踪。 */
+/** `session/event` 监听器：长程任务提醒、输入状态收尾、present 图片转发出站、直连会话跟踪。 */
 export function dispatchSessionEvent(deps: SessionEventDeps, session: unknown, event: unknown): void {
   if (!deps.ownFeaturesActive()) return;
   const sessionId = typeof session === 'string'

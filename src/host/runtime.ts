@@ -161,6 +161,7 @@ export class WeixinRuntime {
       now: this.#now,
       logger: this.#logger,
       thresholdMinutes: this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
+      failureReminders: this.#config.failureReminders ?? true,
     });
     this.#defaultWorkspace = new DefaultWorkspace({
       // 工作区与状态目录分开（ADR-0021）：会话 cwd 里不能有 login.json。
@@ -343,6 +344,7 @@ export class WeixinRuntime {
     this.#longTasks.setThresholdMinutes(
       stored.longTaskThresholdMinutes ?? this.#config.longTaskThresholdMinutes ?? DEFAULT_LONG_TASK_MINUTES,
     );
+    this.#longTasks.setFailureReminders(stored.failureReminders ?? this.#config.failureReminders ?? true);
     this.#reminders.configure({
       enabled: stored.questionReminders ?? this.#config.questionReminders ?? true,
       delayMinutes: stored.questionDelayMinutes ?? this.#config.questionDelayMinutes ?? DEFAULT_QUESTION_DELAY_MINUTES,
@@ -397,6 +399,7 @@ export class WeixinRuntime {
       trackingTasks: this.#longTasks.tracking,
       direct: this.#direct.status(),
       longTaskThresholdMinutes: this.#longTasks.thresholdMinutes,
+      failureReminders: this.#longTasks.failureReminders,
       login: this.#loginState,
       loginSnapshot: this.#loginController.snapshot(),
       health: this.#bridge?.health() ?? this.#health,

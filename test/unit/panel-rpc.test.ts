@@ -25,7 +25,10 @@ function harness(options: { recordSave?: boolean } = {}): Harness {
       if (options.recordSave === true) calls.push('save');
     },
     reminders: () => ({ configure: (patch: unknown) => calls.push(`question:${JSON.stringify(patch)}`) }),
-    longTasks: () => ({ setThresholdMinutes: (minutes: number) => calls.push(`longtask:${minutes}`) }),
+    longTasks: () => ({
+      setThresholdMinutes: (minutes: number) => calls.push(`longtask:${minutes}`),
+      setFailureReminders: (enabled: boolean) => calls.push(`longtaskFailure:${enabled}`),
+    }),
     setEnabled: (enabled: boolean) => calls.push(`enabled:${enabled}`),
     setSuperagent: (enabled: boolean) => calls.push(`superagent:${enabled}`),
     startPipeline: () => undefined,
@@ -268,6 +271,19 @@ test('入参校验：验证码不能为空、enabled 必须是布尔', async () 
   const badMinutes = await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: '45' }));
   assert.equal(badMinutes.result.error.code, 'invalid-config');
   assert.deepEqual(h.calls, []);
+});
+
+test('长程任务设置：阈值与失败提醒开关可分别保存，非法值在边界挡住', async () => {
+  const h = harness();
+  await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: 45 }));
+  await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { failureReminders: false }));
+  await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { minutes: 30, failureReminders: true }));
+  assert.deepEqual(h.calls, ['longtask:45', 'longtaskFailure:false', 'longtask:30', 'longtaskFailure:true']);
+
+  const badSwitch = await call(h, envelope(ENDPOINTS.LONG_TASK_SET, { failureReminders: 'yes' }));
+  assert.equal(badSwitch.result.error.code, 'invalid-config');
+  const empty = await call(h, envelope(ENDPOINTS.LONG_TASK_SET, {}));
+  assert.equal(empty.result.error.code, 'invalid-config');
 });
 
 test('两半契约版本一致：加端点或改返回结构时两边要一起递增', () => {

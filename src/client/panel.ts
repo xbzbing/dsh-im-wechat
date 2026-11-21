@@ -130,6 +130,7 @@ export function WeixinSettingsPanel(props: any) {
   }, [refresh]);
 
   const threshold = status?.longTaskThresholdMinutes;
+  const failureReminders = status?.failureReminders !== false;
   const questionDelayValue = status?.questionDelayMinutes;
   const questionReminders = status?.questionReminders !== false;
   /** Host 比面板旧（契约对不上）：新端点还没实现，阈值控件要禁用。 */
@@ -250,6 +251,11 @@ export function WeixinSettingsPanel(props: any) {
       'minutes',
     );
   }, [minutes, rpcCall, applyAction]);
+
+  /** 失败提醒开关：立即生效，不重连微信。 */
+  const toggleFailureReminders = useCallback(async (enabled: boolean) => {
+    await applyAction('longtask', () => rpcCall(ENDPOINTS.setLongTask, { failureReminders: enabled }));
+  }, [rpcCall, applyAction]);
 
   /** 保存提醒等待时间：0 表示立即提醒。 */
   const saveQuestionDelay = useCallback(async () => {
@@ -447,6 +453,7 @@ export function WeixinSettingsPanel(props: any) {
       },
       enabled, superagent, superagentAvailable, minutes, minutesDirty, minutesSaved: savedKey === 'minutes',
       threshold, hostOlder, busy,
+      failureReminders, toggleFailureReminders,
       questionReminders, questionDelay, questionDelayDirty, questionDelaySaved: savedKey === 'questionDelay',
       questionDelayValue,
       onQuestionDelayChange: (value: string) => {

@@ -190,6 +190,9 @@ export function ReminderSection(props: {
   minutesDirty: boolean;
   minutesSaved: boolean;
   threshold: unknown;
+  /** 失败提醒开关：默认开，关掉后失败的任务不再发提醒。 */
+  failureReminders: boolean;
+  toggleFailureReminders: (enabled: boolean) => Promise<void>;
   questionReminders: boolean;
   questionDelay: string;
   questionDelayDirty: boolean;
@@ -203,6 +206,7 @@ export function ReminderSection(props: {
 }) {
   const { t, rpcCall, run, saveMinutes, onMinutesChange } = props;
   const { enabled, superagent, superagentAvailable, minutes, minutesDirty, minutesSaved, threshold, hostOlder, busy } = props;
+  const { failureReminders, toggleFailureReminders } = props;
   const { questionReminders, questionDelay, questionDelayDirty, questionDelaySaved, questionDelayValue } = props;
   const { onQuestionDelayChange, saveQuestionDelay, toggleQuestionReminders } = props;
   const check = validateMinutes(minutes);
@@ -210,7 +214,7 @@ export function ReminderSection(props: {
   const questionCheck = validateQuestionDelay(questionDelay);
   const canSaveQuestionDelay = questionCheck.ok
     && questionCheck.value !== (typeof questionDelayValue === 'number' ? questionDelayValue : -1);
-  // 下面三项只在独立模式生效：接入核心后由核心按自己的设置发，锁住并说明原因。
+  // 下面四项只在独立模式生效：接入核心后由核心按自己的设置发，锁住并说明原因。
   const ownLocked = standaloneSettingsLocked({ superagent, hostOlder, busy });
 
   return h('section', { className: 'wx-panel' },
@@ -280,6 +284,13 @@ export function ReminderSection(props: {
               unit: t('common.minutes'),
             })
             : null,
+        }),
+        h(SwitchRow, {
+          title: t('reminder.failureTitle'),
+          description: t('reminder.failureDescription'),
+          checked: failureReminders,
+          disabled: ownLocked,
+          onChange: (next: boolean) => void toggleFailureReminders(next),
         }))));
 }
 

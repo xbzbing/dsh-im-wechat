@@ -8,7 +8,7 @@
 
 export const PACKAGE_NAME = 'dsh-im-wechat';
 
-export const PLUGIN_VERSION = '0.4.1';
+export const PLUGIN_VERSION = '0.4.2';
 
 /**
  * 跟随 openclaw-weixin 的协议代次。

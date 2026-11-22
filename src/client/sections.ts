@@ -69,8 +69,8 @@ export function ConnectionSection(props: {
       h('div', { className: 'wx-facts' },
         h(Fact, {
           label: t('connection.account'),
-          value: status?.accountTail ?? t('status.signedOut'),
-          ...(typeof status?.account === 'string' && status.account !== '' ? { hint: status.account } : {}),
+          // 面板直接显示完整账号；旧宿主没有 `account` 时才退回尾号。
+          value: status?.account || status?.accountTail || t('status.signedOut'),
         }),
         h(Fact, { label: t('connection.signedInAt'), value: status?.loggedInAt ? formatTime(status.loggedInAt) : '—' }),
         h(Fact, {

@@ -71,8 +71,9 @@ export interface RuntimeStatus {
     sessionTitle?: string;
   };
   loggedIn: boolean;
+  /** 账号尾号：日志、`/status` 等对外文本用；面板不再用它。 */
   accountTail?: string;
-  /** 完整账号：只作为面板「账号」的悬停提示，正文仍显示尾号。 */
+  /** 完整账号：面板「账号」直接显示。 */
   account?: string;
   /** 上次扫码成功的时间；面板的「登录时间」用它。 */
   loggedInAt?: number;

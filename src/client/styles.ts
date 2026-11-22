@@ -92,8 +92,6 @@ export const STYLES = `
 .wx-fact { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .wx-fact span { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 .wx-fact strong { overflow: hidden; color: var(--dsw-alias-label-primary); font-size: 12px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-/* 悬停看全文：账号这类值平时只显示尾号，可悬停的给一点视觉提示。 */
-.wx-fact strong.wx-fact-hint { cursor: help; text-decoration: underline dotted; text-decoration-color: var(--dsw-alias-border-l2); text-underline-offset: 2px; }
 .wx-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .wx-action-hint { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 

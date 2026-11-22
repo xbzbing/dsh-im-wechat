@@ -6,7 +6,7 @@
  */
 export const zh = {
   // 面板与通用
-  'panel.title': '微信',
+  'panel.title': '微信机器人',
   'panel.subtitle': '把微信接入本机 Harness：扫码登录后，消息与交付会在微信和核心之间同步。',
   'panel.refresh': '刷新',
   'banner.hostOlder': '请重启 dsh web：面板比 Host 新',

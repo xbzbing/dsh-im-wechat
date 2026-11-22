@@ -7,7 +7,7 @@
 
 import { catalogModel, effortOptions, modelOptions, modelRowId, modelRowName, providerOptions } from './model-route.ts';
 import { h } from './platform.ts';
-import { Button, Input, MenuPicker, Switch } from './ui.ts';
+import { Button, Input, MenuPicker, Switch, Tooltip } from './ui.ts';
 import type { Translate } from './locales.ts';
 import type { ModelCatalogView } from '../shared/models.ts';
 
@@ -28,10 +28,16 @@ export function SwitchRow({ title, description, checked, disabled, onChange }: a
 }
 
 export function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  const content = h('strong', {
+    ...(hint ? { className: 'wx-fact-hint', 'aria-label': hint } : {}),
+  }, value);
   return h('div', { className: 'wx-fact' },
     h('span', null, label),
     // 悬停看全文：账号这类值平时只显示尾号，不把整串铺在卡片上；读屏也读全文。
-    h('strong', { ...(hint ? { title: hint, 'aria-label': hint } : {}) }, value));
+    // 用宿主的 Tooltip 而不是原生 title：气泡样式与层级跟随 DSH，位置固定在上方。
+    hint
+      ? h(Tooltip, { label: hint, side: 'top', delayMs: 500, portal: true }, content)
+      : content);
 }
 
 /**

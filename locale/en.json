@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "WeChat",
+    "title": "WeChat Bot",
     "description": "IM bridge plugin that connects WeChat (iLink) to DeepSeek Harness"
   },
   "strings": {}

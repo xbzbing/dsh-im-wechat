@@ -233,6 +233,15 @@ test('文案：两种语言键集一致', () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort());
 });
 
+test('插件显示名：插件页与设置页用同一个名字', () => {
+  // 插件页读 locale/<lang>.json 的 meta.title，设置页读面板字典的 panel.title；
+  // 两处各改一半时，用户会看到两个名字，这里直接钉住。
+  for (const [locale, title] of [['zh', zh['panel.title']], ['en', en['panel.title']]] as const) {
+    const document = JSON.parse(readFileSync(new URL(`../../locale/${locale}.json`, import.meta.url), 'utf8'));
+    assert.equal(document.meta.title, title, `${locale} 的插件名与面板标题不一致`);
+  }
+});
+
 test('文案：面板用到的文案都有翻译，且没有未使用的文案', () => {
   const used = usedKeys(['index.ts', 'panel.ts', 'sections.ts', 'rows.ts']);
   for (const label of dynamicLabels()) used.add(label);
@@ -245,7 +254,7 @@ test('文案：面板用到的文案都有翻译，且没有未使用的文案',
 });
 
 test('文案：没有 Host 文案服务时回落到中文，占位符按宿主规则替换', () => {
-  assert.equal(fallbackTranslate('panel.title'), '微信');
+  assert.equal(fallbackTranslate('panel.title'), '微信机器人');
   assert.equal(fallbackTranslate('login.phase.waiting'), '等待扫码');
   assert.equal(
     fallbackTranslate('reminder.invalid', { min: MIN_LONG_TASK_MINUTES, max: MAX_LONG_TASK_MINUTES }),

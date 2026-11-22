@@ -43,6 +43,15 @@ export const MenuSurface: any = UI.MenuSurface ?? function MenuSurfaceFallback(p
   return h('div', props, props.children);
 };
 
+/**
+ * 官方悬停提示；缺失时退回原生 `title`。
+ *
+ * 官方浮层由宿主统一排版（深色气泡、层级与定位），调用方只决定 `side` 与延迟。
+ */
+export const Tooltip: any = UI.Tooltip ?? function TooltipFallback({ label, children }: any) {
+  return h('span', { title: label }, children);
+};
+
 export const IconCheck: any = UI.IconCheckOutlineRegular ?? (() => null);
 export const IconChevronDown: any = UI.IconChevronDownOutlineRegular ?? (() => null);
 export const IconRefresh: any = UI.IconRefreshOutlineRegular ?? (() => null);

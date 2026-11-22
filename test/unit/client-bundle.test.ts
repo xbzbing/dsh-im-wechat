@@ -117,7 +117,7 @@ test('缺少文案服务时回落到中文字典，不把键名露给用户', ()
   const loaded = loadClientBundle({ locale: false });
   for (const registration of loaded.registrations) {
     const dependencies = registration.spec.inject();
-    assert.equal(dependencies.t('panel.title'), '微信');
+    assert.equal(dependencies.t('panel.title'), '微信机器人');
     assert.equal(dependencies.t('login.phase.waiting'), '等待扫码');
     assert.equal(dependencies.t('reminder.invalid', { min: 1, max: 1440 }), '需为 1 到 1440 的整数分钟');
   }

@@ -8,7 +8,7 @@ import type { WeChatKey } from './zh.ts';
 
 export const en: Record<WeChatKey, string> = {
   // 面板与通用
-  'panel.title': 'WeChat',
+  'panel.title': 'WeChat Bot',
   'panel.subtitle': 'Connect WeChat to this Harness: after scanning the QR code, messages and deliveries sync between WeChat and the core.',
   'panel.refresh': 'Refresh',
   'banner.hostOlder': 'Restart dsh web: the panel is newer than the host',
